@@ -29,6 +29,10 @@ function sha256(content: string | null): string | null {
   return createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
+function opaqueIsolationKey(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 24);
+}
+
 function toProtocolPath(value: string): string {
   return value.split(path.sep).join('/');
 }
@@ -203,7 +207,10 @@ export async function prepareRemoteWorkspace(
     workspaceRelativePath: toProtocolPath(workspaceRelative),
     dirtyPatchBase64: patch.toString('base64'),
     untrackedFiles: untracked.files,
-    expectedFiles: await expectedFiles(workspace, editableFiles, config)
+    expectedFiles: await expectedFiles(workspace, editableFiles, config),
+    // Distinguish separate Claude Code/Engineering OS worktrees without exposing the
+    // developer's absolute path or company/project name to the worker health surface.
+    isolationKey: opaqueIsolationKey(`${repoRoot}\n${workspace}`)
   };
 }
 
