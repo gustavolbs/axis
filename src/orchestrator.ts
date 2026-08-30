@@ -26,6 +26,7 @@ export interface LocalPlanTaskRoutingHints {
   requiresArchitecture?: boolean;
   validationKnown?: boolean;
   riskTags?: string[];
+  sensitiveDecisionResolved?: boolean;
 }
 
 export interface LocalPlanTask {
@@ -95,7 +96,6 @@ export interface LocalExecutionPlanResult {
 }
 
 type LocalChatClient = Pick<OllamaClient, 'chat'>;
-
 type SnapshotMap = Map<string, WorkspaceFileSnapshot>;
 
 function dedupe(values: string[]): string[] {
@@ -111,9 +111,7 @@ function topologicalTaskOrder(tasks: LocalPlanTask[]): LocalPlanTask[] {
   const byId = new Map<string, LocalPlanTask>();
 
   for (const task of tasks) {
-    if (byId.has(task.id)) {
-      throw new Error(`Duplicate local plan task id: ${task.id}`);
-    }
+    if (byId.has(task.id)) throw new Error(`Duplicate local plan task id: ${task.id}`);
     byId.set(task.id, task);
   }
 
@@ -122,9 +120,7 @@ function topologicalTaskOrder(tasks: LocalPlanTask[]): LocalPlanTask[] {
       if (!byId.has(dependency)) {
         throw new Error(`Task "${task.id}" depends on unknown task "${dependency}".`);
       }
-      if (dependency === task.id) {
-        throw new Error(`Task "${task.id}" cannot depend on itself.`);
-      }
+      if (dependency === task.id) throw new Error(`Task "${task.id}" cannot depend on itself.`);
     }
   }
 
@@ -241,7 +237,8 @@ function classificationInput(
     requiresArchitecture: task.routing?.requiresArchitecture ?? false,
     estimatedFiles: task.editableFiles.length,
     validationKnown: task.routing?.validationKnown ?? hasValidation,
-    riskTags: task.routing?.riskTags
+    riskTags: task.routing?.riskTags,
+    sensitiveDecisionResolved: task.routing?.sensitiveDecisionResolved
   };
 }
 
@@ -255,9 +252,7 @@ async function preflightPlan(
   preflight: LocalPlanPreflightTask[];
   blockers: string[];
 }> {
-  if (plan.tasks.length === 0) {
-    throw new Error('Local execution plan must contain at least one task.');
-  }
+  if (plan.tasks.length === 0) throw new Error('Local execution plan must contain at least one task.');
 
   const workspace = await resolveWorkspace(plan.workspace);
   const orderedTasks = topologicalTaskOrder(plan.tasks);
@@ -273,9 +268,7 @@ async function preflightPlan(
     ...orderedTasks.flatMap((task) => task.contextFiles ?? [])
   ]);
 
-  for (const file of allReferencedFiles) {
-    resolveWorkspacePath(workspace, file);
-  }
+  for (const file of allReferencedFiles) resolveWorkspacePath(workspace, file);
 
   const preflight = orderedTasks.map((task) => ({
     id: task.id,
@@ -284,7 +277,9 @@ async function preflightPlan(
 
   const blockers: string[] = [];
   for (const task of preflight) {
-    if (task.classification.route === 'local') continue;
+    if (task.classification.route === 'local' || task.classification.route === 'local-supervised') {
+      continue;
+    }
 
     if (task.classification.route === 'deterministic') {
       blockers.push(
@@ -293,13 +288,11 @@ async function preflightPlan(
       continue;
     }
 
-    blockers.push(
-      `Task "${task.id}" must stay in Claude: ${task.classification.reasons.join(' ')}`
-    );
+    blockers.push(`Task "${task.id}" must stay in Claude: ${task.classification.reasons.join(' ')}`);
   }
 
-  // Read every editable path once during preflight so symlink escapes and file-size
-  // violations are detected before any plan task can mutate the workspace.
+  // Resolve/read every editable path before the first mutation so symlink escapes and
+  // file-size violations fail during preflight rather than halfway through the plan.
   await snapshotFiles(workspace, editableFiles, config);
 
   return { workspace, orderedTasks, editableFiles, preflight, blockers };
@@ -311,13 +304,7 @@ export async function executeLocalCodePlan(
   plan: LocalExecutionPlan
 ): Promise<LocalExecutionPlanResult> {
   const preflightResult = await preflightPlan(plan, config);
-  const {
-    workspace,
-    orderedTasks,
-    editableFiles,
-    preflight,
-    blockers
-  } = preflightResult;
+  const { workspace, orderedTasks, editableFiles, preflight, blockers } = preflightResult;
   const taskOrder = orderedTasks.map((task) => task.id);
   const taskResults: LocalPlanTaskResult[] = [];
   let finalValidation: ValidationResult[] = [];
@@ -350,9 +337,7 @@ export async function executeLocalCodePlan(
     const current = await snapshotFiles(workspace, editableFiles, config);
     const delta = diffSnapshots(original, current);
 
-    if (rollbackPlanOnFailure) {
-      await restoreSnapshots(workspace, original);
-    }
+    if (rollbackPlanOnFailure) await restoreSnapshots(workspace, original);
 
     return {
       status: 'escalated',
@@ -380,25 +365,25 @@ export async function executeLocalCodePlan(
         task: task.task,
         editableFiles: dedupe(task.editableFiles),
         contextFiles: dedupe([...(plan.sharedContextFiles ?? []), ...(task.contextFiles ?? [])]),
-        context: combineText(
-          `Overall feature goal: ${plan.goal}`,
-          plan.context,
-          task.context
-        ),
-        constraints: dedupe([...(plan.sharedConstraints ?? []), ...(task.constraints ?? [])]),
+        context: combineText(`Overall feature goal: ${plan.goal}`, plan.context, task.context),
+        constraints: dedupe([
+          ...(plan.sharedConstraints ?? []),
+          ...(task.constraints ?? []),
+          ...(classification.route === 'local-supervised'
+            ? [
+                'The sensitive behavior and security/product decisions were already resolved by Claude. Implement only the explicit bounded behavior; do not redesign auth, credential, permission, secret, or security contracts.'
+              ]
+            : [])
+        ]),
         language: task.language ?? plan.language,
         validation: task.validation,
         maxAttempts: task.maxAttempts,
-        // A failed subtask should never leak its own partial edits. Plan-level rollback
-        // below additionally restores previously successful subtasks when requested.
         rollbackOnFailure: true
       });
 
       taskResults.push({ id: task.id, classification, execution });
 
-      if (execution.status !== 'success') {
-        return await finishEscalated('execution', task.id);
-      }
+      if (execution.status !== 'success') return await finishEscalated('execution', task.id);
     }
 
     finalValidation = await runValidations(
@@ -431,9 +416,7 @@ export async function executeLocalCodePlan(
       totals: totals(plan.tasks.length, taskResults, finalValidation)
     };
   } catch (error) {
-    if (rollbackPlanOnFailure) {
-      await restoreSnapshots(workspace, original);
-    }
+    if (rollbackPlanOnFailure) await restoreSnapshots(workspace, original);
     throw error;
   }
 }
