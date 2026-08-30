@@ -49,10 +49,14 @@ export interface OllamaGeneration {
   completionTokens?: number;
 }
 
+export type OllamaThinkingLevel = boolean | 'low' | 'medium' | 'high';
+
 export interface OllamaChatOptions {
   model?: string;
   numCtx?: number;
   keepAlive?: string | number;
+  /** Ollama native thinking control for reasoning-capable models. */
+  think?: OllamaThinkingLevel;
 }
 
 export class OllamaClient {
@@ -119,6 +123,7 @@ export class OllamaClient {
               { role: 'user', content: userPrompt }
             ],
             ...(format ? { format } : {}),
+            ...(runtime.think !== undefined ? { think: runtime.think } : {}),
             options: {
               temperature: format ? 0 : 0.2,
               num_ctx: runtime.numCtx ?? this.config.ollamaNumCtx ?? 16_384
