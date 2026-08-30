@@ -22,3 +22,41 @@ jobs:
 
       - name: Build and test
         run: npm run check
+
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build TypeScript on Windows
+        run: npm run build
+
+      - name: Check Node installer syntax
+        shell: pwsh
+        run: |
+          node --check scripts/install-claude-windows-remote.mjs
+          node --check scripts/install-claude-remote-worker.mjs
+
+      - name: Check PowerShell host setup syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path .\scripts\setup-windows-host.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
