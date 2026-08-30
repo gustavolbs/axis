@@ -41,7 +41,14 @@ jobs:
         run: npm run build
 
       - name: Run remote-agent tests on Windows
-        run: npx tsx --test test/remote-execution.test.ts test/worker-workspace.test.ts test/worker-scheduler.test.ts test/local-engineer.test.ts
+        run: >-
+          npx tsx --test
+          test/remote-execution.test.ts
+          test/worker-workspace.test.ts
+          test/worker-scheduler.test.ts
+          test/local-engineer.test.ts
+          test/repo-intelligence.test.ts
+          test/qwen38-thinking.test.ts
 
       - name: Check Node installer syntax
         shell: pwsh
