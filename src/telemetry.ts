@@ -7,7 +7,7 @@ export interface TelemetryEvent {
   timestamp: string;
   kind: TelemetryKind;
   model?: string;
-  route?: 'deterministic' | 'local' | 'claude';
+  route?: 'deterministic' | 'local' | 'local-supervised' | 'claude';
   status?: 'success' | 'escalated' | 'error';
   attempts?: number;
   promptTokens?: number;
@@ -26,6 +26,7 @@ export interface TelemetrySummary {
     total: number;
     deterministic: number;
     local: number;
+    localSupervised: number;
     claude: number;
   };
   delegations: {
@@ -119,6 +120,7 @@ export class TelemetryStore {
         total: classifications.length,
         deterministic: classifications.filter((event) => event.route === 'deterministic').length,
         local: classifications.filter((event) => event.route === 'local').length,
+        localSupervised: classifications.filter((event) => event.route === 'local-supervised').length,
         claude: classifications.filter((event) => event.route === 'claude').length
       },
       delegations: {
