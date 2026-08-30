@@ -1,0 +1,33 @@
+{
+  "name": "real-repository-local-coder-benchmark",
+  "tasks": [
+    {
+      "id": "example-known-test-task",
+      "workspace": "/absolute/path/to/a/disposable/worktree",
+      "task": "Add a missing unit test for the already-understood behavior.",
+      "editableFiles": [
+        "src/example.test.ts"
+      ],
+      "contextFiles": [
+        "src/example.ts"
+      ],
+      "constraints": [
+        "Follow the existing test style",
+        "Do not change production behavior"
+      ],
+      "language": "TypeScript + Vitest",
+      "validation": [
+        {
+          "command": "npm",
+          "args": [
+            "test",
+            "--",
+            "example"
+          ]
+        }
+      ],
+      "solutionKnown": true,
+      "maxAttempts": 2
+    }
+  ]
+}
