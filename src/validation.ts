@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 
+import { resolveSpawnInvocation } from './platform-command.js';
+
 export interface ValidationCommand {
   command: string;
   args?: string[];
@@ -53,12 +55,6 @@ function assertValidationAllowed(
   }
 }
 
-function validationExecutable(command: string): string {
-  if (process.platform !== 'win32') return command;
-  if (['npm', 'pnpm', 'yarn'].includes(command)) return `${command}.cmd`;
-  return command;
-}
-
 export async function runValidationCommand(
   workspace: string,
   validation: ValidationCommand,
@@ -69,10 +65,11 @@ export async function runValidationCommand(
   assertValidationAllowed(validation, allowedCommands);
 
   const args = validation.args ?? [];
+  const invocation = resolveSpawnInvocation(validation.command, args);
   const startedAt = Date.now();
 
   return await new Promise<ValidationResult>((resolve, reject) => {
-    const child = spawn(validationExecutable(validation.command), args, {
+    const child = spawn(invocation.command, invocation.args, {
       cwd: workspace,
       shell: false,
       env: process.env,
