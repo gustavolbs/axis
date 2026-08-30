@@ -63,7 +63,10 @@ config.mcpServers['local-coder'] = {
     LOCAL_CODER_EXECUTION_MODE: 'remote',
     LOCAL_CODER_REMOTE_WORKER_URL: `http://${host}:${port}`,
     LOCAL_CODER_REMOTE_WORKER_TOKEN: token,
-    LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS: '1800000',
+    // Open-ended local_engineer jobs can legitimately wait behind another Claude
+    // session in the Windows queue, so the control-plane timeout is deliberately
+    // much larger than an individual Ollama generation timeout.
+    LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS: '7200000',
     LOCAL_CODER_REMOTE_MAX_DELTA_BYTES: '8000000',
     LOCAL_CODER_ADAPTIVE_MODELS: 'false',
     LOCAL_CODER_MODEL: model,
@@ -81,5 +84,6 @@ fs.writeFileSync(claudeConfigPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8
 console.log(`Configured local-coder in strict remote-worker mode at http://${host}:${port}.`);
 console.log(`Expected worker model: ${model}`);
 console.log('The bearer token was written only to the user Claude config and is not printed here.');
+console.log('Independent Claude sessions may submit work concurrently; the Windows worker queues heavy jobs by default.');
 console.log('Remote mode does not silently fall back to local Mac inference if the worker is unavailable.');
 console.log('Fully quit and reopen Claude Code Desktop before testing local_coder_health.');
