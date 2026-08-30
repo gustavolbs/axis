@@ -90,6 +90,12 @@ function assertWorkspace(value: unknown): asserts value is RemoteWorkspaceSnapsh
   if (!Array.isArray(value.untrackedFiles) || !Array.isArray(value.expectedFiles)) {
     throw new Error('workspace file payloads must be arrays.');
   }
+  if (
+    value.memoryScopeKey !== undefined &&
+    (typeof value.memoryScopeKey !== 'string' || !/^[a-f0-9]{16,64}$/i.test(value.memoryScopeKey))
+  ) {
+    throw new Error('workspace.memoryScopeKey must be an opaque hexadecimal key.');
+  }
 }
 
 function isolationKey(snapshot: RemoteWorkspaceSnapshot): string {
@@ -207,7 +213,11 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
 
   const output = await scheduler.enqueue('engineer', isolationKey(request.workspace), () =>
     withWorkerWorkspace(request.workspace, config, async (workspace) =>
-      executeLocalEngineerWithRepoIntelligence(ollama, config, { ...request.input, workspace })
+      executeLocalEngineerWithRepoIntelligence(ollama, config, {
+        ...request.input,
+        workspace,
+        repoMemoryScopeKey: request.workspace.memoryScopeKey
+      })
     )
   );
 
