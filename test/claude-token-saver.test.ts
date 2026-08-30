@@ -59,6 +59,11 @@ test('installer preserves existing settings and installs user-level token guards
       settingsPath,
       JSON.stringify({
         env: { EXISTING_SETTING: 'keep-me' },
+        permissions: {
+          allow: ['Bash(git status)'],
+          ask: ['Bash(git push *)'],
+          deny: ['Read(./secrets/**)']
+        },
         hooks: {
           PostToolUse: [
             {
@@ -71,24 +76,39 @@ test('installer preserves existing settings and installs user-level token guards
       'utf8'
     );
 
-    const result = spawnSync(process.execPath, [installerPath], {
+    const firstRun = spawnSync(process.execPath, [installerPath], {
       env: { ...process.env, HOME: home },
       encoding: 'utf8'
     });
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(firstRun.status, 0, firstRun.stderr);
+
+    const secondRun = spawnSync(process.execPath, [installerPath], {
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8'
+    });
+    assert.equal(secondRun.status, 0, secondRun.stderr);
 
     const settings = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as {
       env: Record<string, string>;
+      permissions: { allow: string[]; ask: string[]; deny: string[] };
       hooks: { PostToolUse: Array<{ matcher?: string; hooks?: Array<{ command?: string }> }> };
     };
     assert.equal(settings.env.EXISTING_SETTING, 'keep-me');
     assert.equal(settings.env.ENABLE_TOOL_SEARCH, 'true');
     assert.equal(settings.env.MAX_MCP_OUTPUT_TOKENS, '8000');
+    assert.deepEqual(settings.permissions.ask, ['Bash(git push *)']);
+    assert.deepEqual(settings.permissions.deny, ['Read(./secrets/**)']);
+    assert.ok(settings.permissions.allow.includes('Bash(git status)'));
+    assert.equal(
+      settings.permissions.allow.filter((rule) => rule === 'mcp__local-coder__*').length,
+      1
+    );
     assert.ok(settings.hooks.PostToolUse.some((entry) => entry.matcher === 'Write'));
-    assert.ok(
-      settings.hooks.PostToolUse.some((entry) =>
+    assert.equal(
+      settings.hooks.PostToolUse.filter((entry) =>
         entry.hooks?.some((hook) => hook.command?.includes('compact-claude-bash-output.mjs'))
-      )
+      ).length,
+      1
     );
 
     const installedHook = path.join(
