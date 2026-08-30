@@ -11,8 +11,8 @@ export interface LocalCoderConfig {
   allowedValidationCommands: Set<string>;
   telemetryEnabled: boolean;
   telemetryPath: string;
-  runStorePath?: string;
-  contextIndexPath?: string;
+  runStorePath: string;
+  contextIndexPath: string;
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
