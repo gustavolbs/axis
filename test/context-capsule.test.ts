@@ -57,7 +57,7 @@ test('builds ranked file:line context and reuses unchanged index entries', async
 
     assert.equal(first.packageManager, undefined);
     assert.deepEqual(first.validationCandidates, ['test', 'typecheck']);
-    assert.equal(first.relevantFiles[0]?.path, path.join('src', 'analytics', 'Dashboard.tsx'));
+    assert.equal(first.relevantFiles[0]?.path, 'src/analytics/Dashboard.tsx');
     assert.ok(first.relevantFiles[0]?.evidence.some((item) => item.startLine >= 1));
     assert.match(first.relevantFiles[0]?.evidence[0]?.content ?? '', /Dashboard|Spinner|Loading/i);
 

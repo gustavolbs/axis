@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { LocalCoderConfig } from './config.js';
+import { resolveSpawnInvocation } from './platform-command.js';
 import type {
   RemoteFileChange,
   RemoteWorkspaceSnapshot
@@ -72,7 +73,8 @@ async function runChecked(
   args: string[],
   options: { cwd?: string; input?: Buffer; timeoutMs?: number } = {}
 ): Promise<ProcessResult> {
-  const result = await runProcess(command, args, options);
+  const invocation = resolveSpawnInvocation(command, args);
+  const result = await runProcess(invocation.command, invocation.args, options);
   if (result.exitCode !== 0) {
     const output = result.stderr.toString('utf8').trim().slice(-6000);
     throw new Error(`${command} ${args.join(' ')} failed (${result.exitCode}): ${output}`);
