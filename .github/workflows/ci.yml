@@ -48,19 +48,32 @@ jobs:
           test/worker-scheduler.test.ts
           test/local-engineer.test.ts
 
-      - name: Run repo-intelligence tests on Windows
-        run: npx tsx --test test/repo-intelligence.test.ts
+      - name: Run repo-intelligence fingerprint scenario on Windows
+        run: >-
+          npx tsx --test
+          --test-name-pattern="fingerprints dirty"
+          test/repo-intelligence.test.ts
+
+      - name: Run repo-intelligence isolation scenario on Windows
+        if: always()
+        run: >-
+          npx tsx --test
+          --test-name-pattern="isolates repositories"
+          test/repo-intelligence.test.ts
 
       - name: Run Qwen3.8 reasoning tests on Windows
+        if: always()
         run: npx tsx --test test/qwen38-thinking.test.ts
 
       - name: Check Node installer syntax
+        if: always()
         shell: pwsh
         run: |
           node --check scripts/install-claude-windows-remote.mjs
           node --check scripts/install-claude-remote-worker.mjs
 
       - name: Check PowerShell installer syntax
+        if: always()
         shell: pwsh
         run: |
           $scripts = @(
