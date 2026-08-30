@@ -4,22 +4,25 @@ import os from 'node:os';
 
 import { loadConfig } from './config.js';
 import { executeAgenticCodeTask } from './executor.js';
+import { executeLocalEngineer } from './local-engineer.js';
 import { OllamaClient } from './ollama.js';
 import { executeLocalCodePlan } from './orchestrator.js';
 import {
   REMOTE_WORKER_PROTOCOL_VERSION,
   assertProtocolVersion,
   type RemoteChatRequest,
+  type RemoteEngineerRequest,
   type RemotePlanRequest,
   type RemoteTaskRequest,
   type RemoteWorkspaceSnapshot
 } from './remote-protocol.js';
+import { WorkerScheduler } from './worker-scheduler.js';
 import { withWorkerWorkspace } from './worker-workspace.js';
 
-const WORKER_VERSION = '0.8.0';
+const WORKER_VERSION = '0.9.0';
 const config = loadConfig();
 const ollama = new OllamaClient(config);
-let executionTail: Promise<void> = Promise.resolve();
+const scheduler = new WorkerScheduler(config.workerMaxConcurrentJobs ?? 1);
 
 function json(
   response: ServerResponse,
@@ -89,13 +92,8 @@ function assertWorkspace(value: unknown): asserts value is RemoteWorkspaceSnapsh
   }
 }
 
-function enqueue<T>(run: () => Promise<T>): Promise<T> {
-  const current = executionTail.then(run, run);
-  executionTail = current.then(
-    () => undefined,
-    () => undefined
-  );
-  return current;
+function isolationKey(snapshot: RemoteWorkspaceSnapshot): string {
+  return snapshot.isolationKey?.trim() || `${snapshot.repositoryUrl}|${snapshot.workspaceRelativePath}`;
 }
 
 async function health(response: ServerResponse): Promise<void> {
@@ -109,6 +107,7 @@ async function health(response: ServerResponse): Promise<void> {
       platform: process.platform,
       model: config.model,
       bootstrap: config.workerBootstrap,
+      scheduler: scheduler.snapshot(),
       ollama: ollamaHealth
     });
   } catch (error) {
@@ -116,6 +115,7 @@ async function health(response: ServerResponse): Promise<void> {
       protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
       workerVersion: WORKER_VERSION,
       ok: false,
+      scheduler: scheduler.snapshot(),
       error: error instanceof Error ? error.message : String(error)
     });
   }
@@ -129,7 +129,7 @@ async function handleChat(body: unknown, response: ServerResponse): Promise<void
   }
 
   const request = body as unknown as RemoteChatRequest;
-  const generation = await enqueue(() =>
+  const generation = await scheduler.enqueue('chat', 'model-chat', () =>
     ollama.chat(request.systemPrompt, request.userPrompt, request.format)
   );
   json(response, 200, {
@@ -149,7 +149,7 @@ async function handleTask(body: unknown, response: ServerResponse): Promise<void
     throw new Error('input.editableFiles is required.');
   }
 
-  const output = await enqueue(() =>
+  const output = await scheduler.enqueue('task', isolationKey(request.workspace), () =>
     withWorkerWorkspace(request.workspace, config, async (workspace) =>
       executeAgenticCodeTask(ollama, config, { ...request.input, workspace })
     )
@@ -173,7 +173,7 @@ async function handlePlan(body: unknown, response: ServerResponse): Promise<void
     throw new Error('input.tasks is required.');
   }
 
-  const output = await enqueue(() =>
+  const output = await scheduler.enqueue('plan', isolationKey(request.workspace), () =>
     withWorkerWorkspace(request.workspace, config, async (workspace) =>
       executeLocalCodePlan(ollama, config, { ...request.input, workspace })
     )
@@ -183,6 +183,32 @@ async function handlePlan(body: unknown, response: ServerResponse): Promise<void
     protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
     result: output.result,
     changes: output.changes
+  });
+}
+
+async function handleEngineer(body: unknown, response: ServerResponse): Promise<void> {
+  assertObject(body, 'request');
+  assertProtocolVersion(body.protocolVersion);
+  assertWorkspace(body.workspace);
+  assertObject(body.input, 'input');
+
+  const request = body as unknown as RemoteEngineerRequest;
+  if (typeof request.input.goal !== 'string' || !request.input.goal.trim()) {
+    throw new Error('input.goal is required.');
+  }
+
+  const output = await scheduler.enqueue('engineer', isolationKey(request.workspace), () =>
+    withWorkerWorkspace(request.workspace, config, async (workspace) =>
+      executeLocalEngineer(ollama, config, { ...request.input, workspace })
+    )
+  );
+
+  // The local engineer discovers its editable set only after investigation/planning,
+  // so it owns dynamic before/after snapshots and returns its own bounded changes.
+  json(response, 200, {
+    protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+    result: output.result.result,
+    changes: output.result.changes
   });
 }
 
@@ -222,6 +248,10 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     await handlePlan(body, response);
     return;
   }
+  if (request.url === '/v1/engineer') {
+    await handleEngineer(body, response);
+    return;
+  }
 
   json(response, 404, {
     protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
@@ -255,6 +285,6 @@ server.keepAliveTimeout = 5_000;
 
 server.listen(config.workerPort, config.workerHost, () => {
   console.error(
-    `local-coder worker v${WORKER_VERSION} listening on http://${config.workerHost}:${config.workerPort} (model: ${config.model}, bootstrap: ${config.workerBootstrap})`
+    `local-coder worker v${WORKER_VERSION} listening on http://${config.workerHost}:${config.workerPort} (model: ${config.model}, bootstrap: ${config.workerBootstrap}, maxJobs: ${config.workerMaxConcurrentJobs ?? 1})`
   );
 });
