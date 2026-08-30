@@ -2,7 +2,11 @@ import { createTwoFilesPatch } from 'diff';
 import * as z from 'zod/v4';
 
 import type { LocalCoderConfig } from './config.js';
-import type { OllamaClient, OllamaGeneration } from './ollama.js';
+import {
+  codingThinkingForModel,
+  type OllamaClient,
+  type OllamaGeneration
+} from './ollama.js';
 import {
   readWorkspaceFile,
   resolveWorkspace,
@@ -327,7 +331,8 @@ export async function executeAgenticCodeTask(
         {
           model: selected.model,
           numCtx: selected.numCtx,
-          keepAlive: selected.keepAlive
+          keepAlive: selected.keepAlive,
+          think: codingThinkingForModel(selected.model)
         }
       );
       generations.push(generationMetadata(generation, selected.tier));
