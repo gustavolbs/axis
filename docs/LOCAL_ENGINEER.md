@@ -1,8 +1,8 @@
 # Local Engineer — Claude interface, local engineering loop
 
-`local_engineer` is the preferred v0.9 entry point for an **open-ended repository engineering goal**.
+`local_engineer` is the preferred v0.10 entry point for an **open-ended repository engineering goal**.
 
-Claude remains the interface the developer talks to. The local worker is responsible for doing as much normal engineering work as possible before consuming premium Claude reasoning.
+Claude remains the interface the developer talks to. The Windows worker should perform as much normal engineering work as possible before consuming premium Claude reasoning.
 
 ```text
 Developer
@@ -14,14 +14,16 @@ Claude Desktop / Claude Code
    v
 Windows local-coder worker
    |
-   +--> bounded repo map / persistent context evidence
-   +--> investigation (thinking=high)
-   +--> targeted literal searches
-   +--> evidence-backed planning (thinking=high)
+   +--> retrieve persistent repo intelligence
+   +--> bounded current repo evidence
+   +--> investigation / reasoning
+   +--> targeted searches
+   +--> evidence-backed planning
    +--> bounded task execution / retries
    +--> deterministic validation
-   +--> adversarial review (thinking=high)
+   +--> adversarial review
    +--> bounded repair
+   +--> learn reusable source-backed facts
    |
    +--> success ----------------------> Claude summarizes
    |
@@ -39,23 +41,49 @@ Windows local-coder worker
          local_engineer resumes
 ```
 
+## Default model profile
+
+The recommended Windows worker uses:
+
+```text
+qwen3.8:27b
+context=16384
+parallel inference=1
+```
+
+The local-engineer stages express **model-agnostic reasoning intent**:
+
+```text
+investigation  high
+planning       high
+review         high
+learning       low
+coding         low/off where appropriate
+```
+
+For Qwen3.8, the Ollama client maps `high` intent to `think:true`, allowing the model's current template to select its default **xhigh** reasoning mode instead of sending the unsupported literal `high` value. Other models keep the existing behavior.
+
+The model supports a much larger advertised context, but the worker intentionally starts at 16K. Repo intelligence and targeted evidence retrieval should improve quality before context size is increased.
+
 ## Why this is not just "ask a smaller model to act like Opus"
 
-The local model is deliberately placed inside a stricter engineering protocol:
+The local model is inside a stricter engineering protocol:
 
-1. inspect repository structure;
-2. retrieve bounded file evidence;
-3. formulate targeted searches;
-4. reason from collected evidence instead of model memory;
-5. refuse implementation while material ambiguity remains;
-6. decompose into small exact-file tasks;
-7. execute through the existing transactional executor;
-8. run real deterministic validation;
-9. review the resulting diff adversarially;
-10. repair only within the already-approved scope;
-11. escalate compactly when confidence/research/judgment is insufficient.
+1. retrieve relevant repository memory;
+2. inspect current repository structure and source evidence;
+3. invalidate stale memory when source changed;
+4. formulate targeted searches;
+5. reason from evidence instead of model memory alone;
+6. refuse implementation while material ambiguity remains;
+7. decompose into small exact-file tasks;
+8. execute through the transactional executor;
+9. run real deterministic validation;
+10. review the diff adversarially;
+11. repair only inside the approved scope;
+12. persist only reusable source-backed lessons after successful work;
+13. escalate compactly when confidence/research/judgment is insufficient.
 
-The goal is outcome quality through **model + tools + evidence + decomposition + feedback**, not claiming that a local model has the same raw reasoning capability as Claude/Opus.
+The target is **model + tools + evidence + accumulated repo knowledge + decomposition + feedback**, not pretending local raw intelligence equals Claude/Opus.
 
 ## Example
 
@@ -74,15 +102,33 @@ local_engineer
   goal=<developer request>
 ```
 
-The developer does not need to manually prepare a detailed implementation plan first.
+The developer does not need to manually prepare an implementation plan first.
 
-The local worker gathers evidence, creates a plan and executes it when safe.
+## Persistent repo intelligence
+
+Before investigation, the worker retrieves a compact set of relevant memories such as:
+
+```text
+architecture boundaries
+conventions
+invariants
+procedures
+past task lessons
+past failure lessons
+recent Git changes
+```
+
+Current source and tests remain authoritative. Every source-backed memory carries fingerprints and becomes stale when its supporting file changes, including uncommitted changes.
+
+After a successful run, a low-effort learning pass extracts a small number of reusable source-backed facts. Failed/escalated work is not promoted into durable architectural truth.
+
+See [REPO_INTELLIGENCE.md](./REPO_INTELLIGENCE.md).
 
 ## Escalation contract
 
-A non-success local result is not an instruction for Claude to redo the entire task.
+A non-success local result is **not** an instruction for Claude to redo the entire task.
 
-It contains an `escalation` object with:
+It contains:
 
 ```text
 kind
@@ -93,7 +139,7 @@ evidence[]
 resumeWith
 ```
 
-Claude should resolve only that missing information.
+Claude resolves only that missing information.
 
 Example:
 
@@ -110,7 +156,7 @@ Example:
 }
 ```
 
-Claude can then use web/repository tools and call the local worker again:
+Claude can then call:
 
 ```text
 local_engineer
@@ -119,55 +165,44 @@ local_engineer
   claudeGuidance="Official documentation confirms ...; use contract X ..."
 ```
 
-The local worker re-investigates with that premium evidence available and continues locally.
+The worker resumes locally with the premium evidence available.
 
 ## When the local engineer intentionally asks for Claude
 
-Current host-level hard premium gates include:
+Host-level hard premium gates include:
 
 - cryptographic/encryption/signature/key-derivation design;
 - destructive production-data operations;
 - production access-control/IAM/credential decisions.
 
-The evidence-backed planner may also escalate when:
+The planner may also escalate when:
 
-- external/current documentation is required;
-- a product or architecture choice is materially ambiguous;
+- current external documentation is required;
+- product/architecture judgment is materially ambiguous;
 - a sensitive auth/credential/permission behavior is unresolved;
 - repository evidence is too weak;
 - implementation validation fails to converge;
 - adversarial review cannot establish confidence.
 
-When Claude supplies the missing decision through `claudeGuidance`, bounded mechanical implementation can return to the local worker.
-
 ## Rollback semantics
 
-The local engineer is transactional from the developer workspace's perspective.
+If investigation/planning escalates, no implementation is applied.
 
-If investigation/planning escalates, no implementation has been applied.
+If implementation fails or review requires Claude, the worker restores the execution workspace to its pre-engineer snapshots and returns no changes for Mac application.
 
-If implementation later fails or review requires Claude, the local execution workspace is restored to its pre-engineer snapshots and the remote response contains no changes to apply to the Mac.
-
-A successful remote run returns file contents with before-state SHA-256 preconditions. The Mac applies them only if its concrete worktree has not changed while the Windows job was running.
+A successful remote run returns file contents with before-state SHA-256 preconditions. The Mac applies them only when its concrete worktree still matches the state that started the run.
 
 ## Local review
 
-The reviewer uses the same local model family as the planner/coder, so it is not treated as independent proof.
+The reviewer uses the same model family as planner/coder, so it is **not** independent proof.
 
-It is deliberately adversarial and receives:
+It receives the original goal, evidence-backed plan, actual diff and deterministic validation output, and is instructed to falsify correctness rather than confirm the coder.
 
-- original goal;
-- plan decisions;
-- actual diff;
-- deterministic validation output.
-
-Tests/typecheck/lint/build remain the strongest independent evidence. A low-confidence review escalates rather than silently approving.
+Tests/typecheck/lint/build remain the strongest independent evidence. Low confidence escalates rather than silently approving.
 
 ## Multiple Claude sessions
 
-There is **one Windows worker service**, not one heavyweight model process per Claude session.
-
-Every Claude Desktop/Code session may connect through its own local stdio MCP process and submit work to the same Windows worker.
+There is one Windows worker service, not one Qwen process per Claude session.
 
 Default:
 
@@ -176,93 +211,50 @@ LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS=1
 OLLAMA_NUM_PARALLEL=1
 ```
 
-This means:
+So:
 
 ```text
-Claude session A -> job A -----> running
-Claude session B -> job B -----> queued
-Claude session C -> job C -----> queued
+Claude session A -> running
+Claude session B -> queued
+Claude session C -> queued
 ```
 
-The sessions remain independent; only the Windows execution resource is serialized.
+This protects the Ryzen/RTX workstation from model/build resource thrashing while still allowing any number of Claude sessions to submit work.
 
-`local_coder_health` exposes compact queue metadata (`activeJobs`, `queuedJobs`, job kind and opaque isolation key) without exposing prompts/company names.
+`local_coder_health` exposes compact queue metadata without prompts/company names.
 
-### Why default to one heavy job
+### Optional concurrency
 
-For the initial Ryzen 9 / RTX 3060 12 GB / 64 GB RAM host, the priority is stable interactive development and avoiding resource thrashing.
+If later raised to `2`:
 
-A local-engineer job may combine:
-
-- a ~23 GB model;
-- model context/KV cache;
-- Git mirror/worktree I/O;
-- package bootstrap;
-- TypeScript/test/build processes.
-
-Sequential heavy jobs are safer than running multiple 35B pipelines simultaneously.
-
-## Optional concurrency
-
-If resource observation later justifies it:
-
-```powershell
-[Environment]::SetEnvironmentVariable(
-  "LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS",
-  "2",
-  "User"
-)
-```
-
-Restart the Windows worker afterwards.
-
-With `2`:
-
-- different concrete worktree isolation keys may overlap in non-inference phases;
-- jobs for the same concrete checkout never overlap;
+- different concrete worktree jobs may overlap in non-inference phases;
+- jobs for the same checkout never overlap;
 - Ollama inference remains machine-wide serialized;
-- tests/builds may overlap and therefore consume more CPU/RAM.
+- tests/builds can consume CPU/RAM concurrently.
 
-Do not raise concurrency merely because many Claude sessions exist. Queueing is an intentional resource-control mechanism.
+Do not raise it merely because many Claude sessions exist.
 
-## Claude Engineering OS compatibility
+## Engineering OS / Work Broker isolation
 
-The Engineering OS remains authoritative for repository/task isolation.
+Engineering OS remains authoritative for company/project/session/worktree identity. Work Broker remains authoritative for company-scoped integrations and credentials.
 
-Use the workspace/worktree belonging to the current Project/session. `local-coder` hashes the concrete checkout path into an opaque isolation key; it does not merge company/project/session context.
+`local-coder` receives the concrete workspace from the active Claude session and does not merge context across companies.
 
-For mutable parallel work in the same repository, create/use separate validated worktrees according to the Engineering OS policy.
+For repo intelligence:
 
-## Work Broker compatibility
+- linked worktrees from the same Git clone share an opaque memory scope;
+- separate clones get different memory scopes even when the origin URL is identical;
+- monorepo sub-workspaces remain distinct identities;
+- memory lives outside target repositories on the Windows worker.
 
-Work Broker remains a separate company/integration MCP. It owns company-scoped operational context and credentials.
-
-`local-coder` does not infer or combine `company_id` values and does not use Work Broker as a hidden cross-company state store. Claude passes only the active repository workspace and task context relevant to the current session.
+This gives parallel worktrees shared repo familiarity without allowing a separate clone/trust context to inherit it accidentally.
 
 ## Which local-coder tool should Claude choose?
 
-Use:
+Use `local_engineer` when the user gives an outcome and expects investigation/planning/implementation.
 
-```text
-local_engineer
-```
+Use `execute_local_code_task_compact` when the approach and exact editable files are already known.
 
-when the user gives an outcome and expects the system to investigate/plan/implement.
-
-Use:
-
-```text
-execute_local_code_task_compact
-```
-
-when the approach and exact editable files are already known.
-
-Use:
-
-```text
-execute_local_code_plan_compact
-```
-
-when Claude already has a concrete dependency-ordered implementation plan.
+Use `execute_local_code_plan_compact` when Claude already has a concrete dependency-ordered implementation plan.
 
 `get_local_run` remains lazy; full diffs/plans should not be loaded into Claude context unless needed.
