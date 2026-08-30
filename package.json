@@ -1,8 +1,8 @@
 {
   "name": "local-coder-mcp",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
-  "description": "Claude-facing local software engineering agent with local or remote Ollama execution.",
+  "description": "Claude-facing local software engineering agent with persistent per-repository intelligence and local or remote Ollama execution.",
   "type": "module",
   "engines": {
     "node": ">=20"
