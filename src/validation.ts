@@ -53,6 +53,12 @@ function assertValidationAllowed(
   }
 }
 
+function validationExecutable(command: string): string {
+  if (process.platform !== 'win32') return command;
+  if (['npm', 'pnpm', 'yarn'].includes(command)) return `${command}.cmd`;
+  return command;
+}
+
 export async function runValidationCommand(
   workspace: string,
   validation: ValidationCommand,
@@ -66,7 +72,7 @@ export async function runValidationCommand(
   const startedAt = Date.now();
 
   return await new Promise<ValidationResult>((resolve, reject) => {
-    const child = spawn(validation.command, args, {
+    const child = spawn(validationExecutable(validation.command), args, {
       cwd: workspace,
       shell: false,
       env: process.env,
