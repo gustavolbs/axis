@@ -35,10 +35,12 @@ export function buildReviewCapsule(input: {
   diff: string;
   changedFiles: string[];
   validationPassed: boolean;
+  forceFullDiff?: boolean;
+  additionalFlags?: string[];
 }): ReviewCapsule {
   const { additions, deletions } = diffCounts(input.diff);
   const files = input.changedFiles.length > 0 ? input.changedFiles : changedFileNames(input.diff);
-  const flags: string[] = [];
+  const flags: string[] = [...new Set(input.additionalFlags ?? [])];
   const joinedFiles = files.join('\n').toLowerCase();
   const diff = input.diff;
 
@@ -60,11 +62,13 @@ export function buildReviewCapsule(input: {
   }
   if (!input.validationPassed) flags.push('validation-not-clean');
   if (files.length > 12 || additions + deletions > 700) flags.push('large-change-set');
+  if (input.forceFullDiff) flags.push('full-diff-required-by-routing');
 
-  const high = flags.some((flag) =>
+  const uniqueFlags = [...new Set(flags)];
+  const high = input.forceFullDiff === true || uniqueFlags.some((flag) =>
     ['security-sensitive-signal', 'environment-file-touched', 'high-impact-file-signal', 'validation-not-clean'].includes(flag)
   );
-  const medium = flags.length > 0 || files.length > 6 || additions + deletions > 300;
+  const medium = uniqueFlags.length > 0 || files.length > 6 || additions + deletions > 300;
   const risk: ReviewCapsule['risk'] = high ? 'high' : medium ? 'medium' : 'low';
 
   return {
@@ -72,9 +76,9 @@ export function buildReviewCapsule(input: {
     additions,
     deletions,
     risk,
-    flags,
+    flags: uniqueFlags,
     reviewTargets: files.slice(0, 12),
     validationPassed: input.validationPassed,
-    fullDiffRecommended: risk === 'high' || additions + deletions > 500
+    fullDiffRecommended: input.forceFullDiff === true || risk === 'high' || additions + deletions > 500
   };
 }
