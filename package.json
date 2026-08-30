@@ -1,8 +1,8 @@
 {
   "name": "local-coder-mcp",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
-  "description": "Global MCP bridge from Claude to a local Ollama coding executor.",
+  "description": "Global MCP bridge from Claude to local or remote Ollama coding execution.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -14,6 +14,7 @@
     "test": "tsx --test test/**/*.test.ts",
     "check": "npm run build && npm test",
     "install:claude": "node scripts/install-claude-user.mjs",
+    "install:claude:windows": "node scripts/install-claude-windows-remote.mjs",
     "install:routing": "node scripts/install-claude-routing-rule.mjs",
     "install:claude-token-saver": "node scripts/install-claude-token-saver.mjs",
     "benchmark": "npm run build && node scripts/benchmark-local.mjs"
