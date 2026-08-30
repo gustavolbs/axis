@@ -29,7 +29,7 @@ export interface TaskClassification {
 }
 
 const BLOCKING_RISK_PATTERNS: Array<[RegExp, string]> = [
-  [/\b(cryptograph|encryption|decrypt|signing|key derivation|certificate validation)\b/i, 'cryptography design'],
+  [/\b(cryptography|cryptographic|encryption|decryption|decrypt|signing|key derivation|certificate validation)\b/i, 'cryptography design'],
   [/\b(migration|schema change|drop table|production data|backfill)\b/i, 'data migration'],
   [/\b(kubernetes|terraform|production infra|deployment pipeline|iam|cloudformation)\b/i, 'production infrastructure'],
   [/\b(race condition|deadlock|concurren|thread safety|atomicity)\b/i, 'concurrency'],
@@ -40,7 +40,7 @@ const BLOCKING_RISK_PATTERNS: Array<[RegExp, string]> = [
 
 const SUPERVISED_RISK_PATTERNS: Array<[RegExp, string]> = [
   [/\b(auth(?:entication|orization)?|oauth|permission|permissions|rbac|acl)\b/i, 'authentication/authorization'],
-  [/\b(secret|credential|credentials|access token|refresh token|session token|api key)\b/i, 'sensitive credential handling']
+  [/\b(secret|secrets|credential|credentials|access token|refresh token|session token|api key)\b/i, 'sensitive credential handling']
 ];
 
 const LOCAL_FRIENDLY_PATTERNS: Array<[RegExp, string]> = [
