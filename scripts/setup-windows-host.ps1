@@ -9,7 +9,7 @@ param(
 
   [int]$WorkerPort = 7337,
 
-  [string]$Model = "qwen3.6:35b-a3b-coding",
+  [string]$Model = "qwen3.8:27b",
 
   [string]$WorkerToken = "",
 
@@ -139,6 +139,8 @@ Set-UserEnvironmentVariable "LOCAL_CODER_ADAPTIVE_MODELS" "false"
 Set-UserEnvironmentVariable "LOCAL_CODER_MODEL" $Model
 Set-UserEnvironmentVariable "LOCAL_CODER_FAST_MODEL" $Model
 Set-UserEnvironmentVariable "LOCAL_CODER_STRONG_MODEL" $Model
+# Qwen3.8 advertises a much larger context, but 16K is deliberate on the RTX 3060 12 GB
+# worker: focused repo-intelligence/evidence capsules are cheaper and leave RAM for builds.
 Set-UserEnvironmentVariable "LOCAL_CODER_NUM_CTX" "16384"
 Set-UserEnvironmentVariable "LOCAL_CODER_MAX_CONTEXT_BYTES" "96000"
 Set-UserEnvironmentVariable "LOCAL_CODER_TIMEOUT_MS" "600000"
@@ -168,6 +170,8 @@ try {
 Write-Host ""
 Write-Host "Windows execution worker configured." -ForegroundColor Green
 Write-Host "Worker URL: http://<WINDOWS_IP_OR_MESHNET_NAME>:$WorkerPort"
+Write-Host "Model: $Model"
+Write-Host "Context: 16384 (focused default; do not raise just because the model supports more)"
 Write-Host "Allowed Git hosts: $AllowedGitHosts"
 Write-Host "Bootstrap mode: $Bootstrap"
 Write-Host "Heavy job concurrency: $MaxConcurrentJobs"
