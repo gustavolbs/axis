@@ -56,10 +56,10 @@ const routingSchema = z.object({
 
 function createServer(): McpServer {
   const server = new McpServer(
-    { name: 'local-coder-mcp', version: '0.9.0' },
+    { name: 'local-coder-mcp', version: '0.10.0' },
     {
       instructions:
-        'Claude is the user interface, but local-coder should own as much normal engineering work as possible. For an open-ended repository goal prefer local_engineer: it performs bounded evidence gathering, high-effort local investigation/planning, coding, deterministic validation, adversarial review, and limited repair on the configured local/remote worker. If it returns needs-claude/escalated, Claude should resolve only the exact escalation questions or external research requests, then call local_engineer again with claudeGuidance. Keep existing bounded compact executors for already-known changes. In strict remote mode never silently move heavy work back to the Mac.'
+        'Claude is the user interface, but local-coder should own as much normal engineering work as possible. For an open-ended repository goal prefer local_engineer: it retrieves persistent evidence-backed repo intelligence, verifies current source, performs high-effort local investigation/planning, coding, deterministic validation, adversarial review, bounded repair, and learns reusable source-backed facts after successful work. Current source/tests always override remembered repo facts. If local_engineer returns needs-claude/escalated, Claude should resolve only the exact escalation questions or external research requests, then call local_engineer again with claudeGuidance. Keep existing bounded compact executors for already-known changes. In strict remote mode never silently move heavy work back to the Mac.'
     }
   );
 
@@ -437,5 +437,5 @@ function createServer(): McpServer {
 
 void serveStdio(createServer);
 console.error(
-  `local-coder-mcp v0.9.0 ready (mode: ${runtime.mode}, model: ${config.model}, worker: ${config.remoteWorkerUrl ?? 'none'})`
+  `local-coder-mcp v0.10.0 ready (mode: ${runtime.mode}, model: ${config.model}, worker: ${config.remoteWorkerUrl ?? 'none'})`
 );
