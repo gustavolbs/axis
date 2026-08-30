@@ -10,6 +10,7 @@ import { OllamaClient } from './ollama.js';
 import { executeLocalCodePlan } from './orchestrator.js';
 import { buildTaskPrompt, LOCAL_CODER_SYSTEM_PROMPT } from './prompt.js';
 import { TelemetryStore, type TelemetryEvent } from './telemetry.js';
+import { registerTokenKillerTools } from './token-killer-tools.js';
 
 const config = loadConfig();
 const ollama = new OllamaClient(config);
@@ -46,10 +47,16 @@ const validationSchema = z.object({
 });
 
 function createServer(): McpServer {
-  const server = new McpServer({
-    name: 'local-coder-mcp',
-    version: '0.4.0'
-  });
+  const server = new McpServer(
+    {
+      name: 'local-coder-mcp',
+      version: '0.5.0'
+    },
+    {
+      instructions:
+        'Local coding execution and token-saving context tools. Prefer prepare_local_context before broad repository reads; use compact task/plan executors for bounded implementation and get_local_run only when more review detail is necessary. Claude owns architecture, ambiguity, security-sensitive decisions, decomposition of large features, and final review.'
+    }
+  );
 
   server.registerTool(
     'local_coder_health',
@@ -261,7 +268,7 @@ function createServer(): McpServer {
     {
       title: 'Execute Code Task Locally',
       description:
-        'Delegate one already-reasoned coding task to the local model. The MCP reads only explicitly listed repository files, lets the model modify only explicitly listed editable files, runs caller-supplied allowlisted validation commands, retries locally, and returns the exact invocation diff for Claude review. Failed tasks escalate and roll back by default.',
+        'Compatibility full-result executor. Prefer execute_local_code_task_compact to reduce Claude context usage.',
       inputSchema: z.object({
         workspace: z
           .string()
@@ -350,7 +357,7 @@ function createServer(): McpServer {
     {
       title: 'Execute Large Feature Plan Locally',
       description:
-        'Execute a Claude-designed large-feature plan as a sequence of bounded local coding subtasks. Claude must decide architecture and decomposition first. The orchestrator preflights every subtask with the task classifier, resolves dependencies, executes local-safe tasks sequentially, validates each task, runs final integration validation, aggregates the whole-plan diff, and rolls the entire plan back on failure by default.',
+        'Compatibility full-result large-feature orchestrator. Prefer execute_local_code_plan_compact to reduce Claude context usage.',
       inputSchema: z.object({
         workspace: z.string().min(1).describe('Absolute repository/workspace path.'),
         goal: z
@@ -481,6 +488,8 @@ function createServer(): McpServer {
     }
   );
 
+  registerTokenKillerTools(server, { config, ollama, recordTelemetry });
+
   server.registerTool(
     'local_coder_telemetry',
     {
@@ -514,4 +523,4 @@ function createServer(): McpServer {
 }
 
 void serveStdio(createServer);
-console.error(`local-coder-mcp v0.4.0 ready (model: ${config.model})`);
+console.error(`local-coder-mcp v0.5.0 ready (model: ${config.model})`);
