@@ -55,10 +55,10 @@ const routingSchema = z.object({
 
 function createServer(): McpServer {
   const server = new McpServer(
-    { name: 'local-coder-mcp', version: '0.6.0' },
+    { name: 'local-coder-mcp', version: '0.7.0' },
     {
       instructions:
-        'Local coding execution and token-saving context tools. Prefer compact context/results. Claude owns architecture, ambiguity, sensitive decisions and final review; already-resolved auth/credential/permission/security implementation may use local-supervised with mandatory full-diff Claude review.'
+        'Local coding execution and token-saving context tools. Prefer compact context/results. Adaptive execution uses the fast local model first and escalates a failed attempt to the strong local model; local inference is serialized to reduce workstation memory pressure. Claude owns architecture, ambiguity, sensitive decisions and final review; already-resolved auth/credential/permission/security implementation may use local-supervised with mandatory full-diff Claude review.'
     }
   );
 
@@ -66,7 +66,7 @@ function createServer(): McpServer {
     'local_coder_health',
     {
       title: 'Local Coder Health',
-      description: 'Check Ollama connectivity and configured model availability.',
+      description: 'Check Ollama connectivity plus fast/strong adaptive model availability and resource settings.',
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true }
     },
     async () => {
@@ -175,7 +175,7 @@ function createServer(): McpServer {
     'delegate_code_task',
     {
       title: 'Delegate Read-only Code Task to Local Model',
-      description: 'Ask the local model for bounded code/analysis text without modifying repository files.',
+      description: 'Ask the fast local model for bounded code/analysis text without modifying repository files.',
       inputSchema: z.object({
         task: z.string().min(1),
         context: z.string().optional(),
@@ -224,7 +224,7 @@ function createServer(): McpServer {
     {
       title: 'Execute Code Task Locally',
       description:
-        'Compatibility full-result executor. Prefer execute_local_code_task_compact, which includes routing preflight and supervised-sensitive review enforcement.',
+        'Compatibility full-result executor. Prefer execute_local_code_task_compact, which includes routing preflight, adaptive fast-to-strong retry, and supervised-sensitive review enforcement.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         task: z.string().min(1),
@@ -276,7 +276,7 @@ function createServer(): McpServer {
     {
       title: 'Execute Large Feature Plan Locally',
       description:
-        'Compatibility full-result orchestrator. Supports local-supervised subtasks after Claude resolves sensitive decisions; prefer the compact orchestrator for enforced review behavior.',
+        'Compatibility full-result orchestrator. Supports local-supervised subtasks and adaptive fast-to-strong retry; prefer the compact orchestrator for enforced review behavior.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         goal: z.string().min(1),
@@ -347,7 +347,7 @@ function createServer(): McpServer {
     'local_coder_telemetry',
     {
       title: 'Local Coder Telemetry',
-      description: 'Aggregate privacy-preserving routing/execution/orchestration telemetry.',
+      description: 'Aggregate privacy-preserving routing/execution/orchestration telemetry including exact per-model Ollama inference usage.',
       inputSchema: z.object({
         days: z.number().int().min(1).max(3650).default(30)
       }),
@@ -370,4 +370,6 @@ function createServer(): McpServer {
 }
 
 void serveStdio(createServer);
-console.error(`local-coder-mcp v0.6.0 ready (model: ${config.model})`);
+console.error(
+  `local-coder-mcp v0.7.0 ready (fast: ${config.model}, strong: ${config.strongModel ?? config.model}, num_ctx: ${config.ollamaNumCtx ?? 16384})`
+);
