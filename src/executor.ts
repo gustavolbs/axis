@@ -43,8 +43,10 @@ export interface AgenticExecutionResult {
   validation: ValidationResult[];
   rolledBack: boolean;
   summary: string;
+  modelEscalated: boolean;
   generations: Array<{
     model: string;
+    tier?: 'fast' | 'strong';
     doneReason?: string;
     totalDurationNs?: number;
     promptTokens?: number;
@@ -82,13 +84,35 @@ function dedupe(values: string[]): string[] {
   return [...new Set(values)];
 }
 
-function generationMetadata(generation: OllamaGeneration) {
+function generationMetadata(generation: OllamaGeneration, tier: 'fast' | 'strong') {
   return {
     model: generation.model,
+    tier,
     doneReason: generation.doneReason,
     totalDurationNs: generation.totalDurationNs,
     promptTokens: generation.promptTokens,
     completionTokens: generation.completionTokens
+  };
+}
+
+function modelForAttempt(config: LocalCoderConfig, attempt: number): {
+  model: string;
+  tier: 'fast' | 'strong';
+  keepAlive: string;
+  numCtx: number;
+} {
+  const fastModel = config.model;
+  const strongModel = config.strongModel ?? fastModel;
+  const adaptive = config.adaptiveModelsEnabled ?? false;
+  const useStrong = adaptive && attempt > 1 && strongModel !== fastModel;
+
+  return {
+    model: useStrong ? strongModel : fastModel,
+    tier: useStrong ? 'strong' : 'fast',
+    keepAlive: useStrong
+      ? config.strongModelKeepAlive ?? '30s'
+      : config.fastModelKeepAlive ?? '90s',
+    numCtx: config.ollamaNumCtx ?? 16_384
   };
 }
 
@@ -178,9 +202,7 @@ function buildExecutorPrompt(
     );
   }
 
-  sections.push(
-    '# OUTPUT\nReturn JSON only. Include complete content only for files you changed.'
-  );
+  sections.push('# OUTPUT\nReturn JSON only. Include complete content only for files you changed.');
 
   return sections.join('\n\n');
 }
@@ -262,6 +284,19 @@ function buildDiff(
   return { changedFiles, diff: patches.join('\n') };
 }
 
+function retryFeedback(error: unknown): ValidationResult[] {
+  return [
+    {
+      command: 'local-coder',
+      args: [],
+      ok: false,
+      exitCode: null,
+      output: error instanceof Error ? error.message : String(error),
+      durationMs: 0
+    }
+  ];
+}
+
 export async function executeAgenticCodeTask(
   ollama: LocalChatClient,
   config: LocalCoderConfig,
@@ -284,14 +319,29 @@ export async function executeAgenticCodeTask(
     for (attempts = 1; attempts <= maxAttempts; attempts += 1) {
       const promptFiles = await loadPromptFiles(workspace, contextFiles, config);
       const prompt = buildExecutorPrompt(input, promptFiles, validationFeedback);
+      const selected = modelForAttempt(config, attempts);
       const generation = await ollama.chat(
         EXECUTOR_SYSTEM_PROMPT,
         prompt,
-        responseFormat(editableFiles)
+        responseFormat(editableFiles),
+        {
+          model: selected.model,
+          numCtx: selected.numCtx,
+          keepAlive: selected.keepAlive
+        }
       );
-      generations.push(generationMetadata(generation));
+      generations.push(generationMetadata(generation, selected.tier));
 
-      const proposal = parseProposal(generation.content, allowedFiles, config.maxFileBytes);
+      let proposal: EditProposal;
+      try {
+        proposal = parseProposal(generation.content, allowedFiles, config.maxFileBytes);
+      } catch (error) {
+        lastValidation = retryFeedback(error);
+        validationFeedback = lastValidation;
+        lastSummary = 'Local model returned an unusable edit proposal.';
+        continue;
+      }
+
       lastSummary = proposal.summary;
 
       for (const file of proposal.files) {
@@ -302,16 +352,7 @@ export async function executeAgenticCodeTask(
       const delta = buildDiff(original, current);
 
       if (delta.changedFiles.length === 0) {
-        validationFeedback = [
-          {
-            command: 'local-coder',
-            args: [],
-            ok: false,
-            exitCode: null,
-            output: 'No file changes were produced. Implement the requested task.',
-            durationMs: 0
-          }
-        ];
+        validationFeedback = retryFeedback('No file changes were produced. Implement the requested task.');
         lastValidation = validationFeedback;
         continue;
       }
@@ -333,6 +374,7 @@ export async function executeAgenticCodeTask(
           validation: lastValidation,
           rolledBack: false,
           summary: lastSummary,
+          modelEscalated: generations.some((item) => item.tier === 'strong'),
           generations
         };
       }
@@ -356,6 +398,7 @@ export async function executeAgenticCodeTask(
       validation: lastValidation,
       rolledBack: rollbackOnFailure,
       summary: lastSummary || 'Local executor could not complete the task.',
+      modelEscalated: generations.some((item) => item.tier === 'strong'),
       generations
     };
   } catch (error) {
