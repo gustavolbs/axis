@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const BLOCKED_SEGMENTS = new Set(['.git', 'node_modules', '.ssh']);
+const SAFE_ENV_EXAMPLES = new Set(['.env.example', '.env.sample', '.env.template']);
 
 function hasBlockedSegment(relativePath: string): boolean {
   return relativePath.split(path.sep).some((segment) => BLOCKED_SEGMENTS.has(segment));
@@ -9,7 +10,33 @@ function hasBlockedSegment(relativePath: string): boolean {
 
 function isSensitiveEnvFile(relativePath: string): boolean {
   const basename = path.basename(relativePath);
+  if (SAFE_ENV_EXAMPLES.has(basename)) return false;
   return basename === '.env' || basename.startsWith('.env.');
+}
+
+function assertWithinWorkspace(workspace: string, resolvedPath: string, label: string): void {
+  const relative = path.relative(workspace, resolvedPath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`Path escapes workspace through ${label}.`);
+  }
+}
+
+async function assertRealPathWithinWorkspace(workspace: string, targetPath: string): Promise<void> {
+  let candidate = targetPath;
+
+  while (true) {
+    try {
+      const real = await fs.realpath(candidate);
+      assertWithinWorkspace(workspace, real, 'symlink resolution');
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+
+      const parent = path.dirname(candidate);
+      if (parent === candidate) throw error;
+      candidate = parent;
+    }
+  }
 }
 
 export async function resolveWorkspace(workspace: string): Promise<string> {
@@ -60,6 +87,7 @@ export async function readWorkspaceFile(
   const absolutePath = resolveWorkspacePath(workspace, relativePath);
 
   try {
+    await assertRealPathWithinWorkspace(workspace, absolutePath);
     const stat = await fs.stat(absolutePath);
 
     if (!stat.isFile()) {
@@ -76,6 +104,7 @@ export async function readWorkspaceFile(
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      await assertRealPathWithinWorkspace(workspace, path.dirname(absolutePath));
       return { path: relativePath, content: null };
     }
 
@@ -89,6 +118,7 @@ export async function writeWorkspaceFile(
   content: string
 ): Promise<void> {
   const absolutePath = resolveWorkspacePath(workspace, relativePath);
+  await assertRealPathWithinWorkspace(workspace, absolutePath);
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, content, 'utf8');
 }
@@ -98,6 +128,7 @@ export async function restoreWorkspaceFile(
   snapshot: WorkspaceFileSnapshot
 ): Promise<void> {
   const absolutePath = resolveWorkspacePath(workspace, snapshot.path);
+  await assertRealPathWithinWorkspace(workspace, absolutePath);
 
   if (snapshot.content === null) {
     await fs.rm(absolutePath, { force: true });
