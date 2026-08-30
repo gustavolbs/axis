@@ -1,7 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export type TelemetryKind = 'classification' | 'delegation' | 'execution' | 'orchestration';
+export type TelemetryKind =
+  | 'classification'
+  | 'delegation'
+  | 'execution'
+  | 'orchestration'
+  | 'inference';
 
 export interface TelemetryEvent {
   timestamp: string;
@@ -17,6 +22,14 @@ export interface TelemetryEvent {
   changedFiles?: number;
   tasks?: number;
   completedTasks?: number;
+}
+
+export interface ModelInferenceSummary {
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  generationDurationMs: number;
 }
 
 export interface TelemetrySummary {
@@ -57,11 +70,13 @@ export interface TelemetrySummary {
     averageCompletedTasksPerPlan: number;
   };
   localInference: {
+    calls: number;
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
     generationDurationMs: number;
     validationDurationMs: number;
+    byModel: Record<string, ModelInferenceSummary>;
     apiCostUsd: 0;
     costScopeNote: string;
   };
@@ -69,6 +84,29 @@ export interface TelemetrySummary {
 
 function safeNumber(value: number | undefined): number {
   return Number.isFinite(value) ? value ?? 0 : 0;
+}
+
+function summarizeModels(events: TelemetryEvent[]): Record<string, ModelInferenceSummary> {
+  const byModel: Record<string, ModelInferenceSummary> = {};
+
+  for (const event of events) {
+    if (!event.model) continue;
+    const current = byModel[event.model] ?? {
+      calls: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      generationDurationMs: 0
+    };
+    current.calls += 1;
+    current.promptTokens += safeNumber(event.promptTokens);
+    current.completionTokens += safeNumber(event.completionTokens);
+    current.totalTokens = current.promptTokens + current.completionTokens;
+    current.generationDurationMs += safeNumber(event.generationDurationMs);
+    byModel[event.model] = current;
+  }
+
+  return byModel;
 }
 
 export class TelemetryStore {
@@ -93,6 +131,16 @@ export class TelemetryStore {
     const delegations = filtered.filter((event) => event.kind === 'delegation');
     const executions = filtered.filter((event) => event.kind === 'execution');
     const orchestrations = filtered.filter((event) => event.kind === 'orchestration');
+    const exactInferences = filtered.filter((event) => event.kind === 'inference');
+
+    // v0.7 records every Ollama generation directly. For older telemetry files without
+    // inference events, retain the previous aggregate behavior for backwards compatibility.
+    const inferenceSource =
+      exactInferences.length > 0
+        ? exactInferences
+        : filtered.filter((event) =>
+            ['delegation', 'execution', 'orchestration'].includes(event.kind)
+          );
 
     const success = executions.filter((event) => event.status === 'success').length;
     const escalated = executions.filter((event) => event.status === 'escalated').length;
@@ -110,8 +158,14 @@ export class TelemetryStore {
       0
     );
 
-    const promptTokens = filtered.reduce((sum, event) => sum + safeNumber(event.promptTokens), 0);
-    const completionTokens = filtered.reduce((sum, event) => sum + safeNumber(event.completionTokens), 0);
+    const promptTokens = inferenceSource.reduce(
+      (sum, event) => sum + safeNumber(event.promptTokens),
+      0
+    );
+    const completionTokens = inferenceSource.reduce(
+      (sum, event) => sum + safeNumber(event.completionTokens),
+      0
+    );
 
     return {
       since: sinceDate.toISOString(),
@@ -153,10 +207,11 @@ export class TelemetryStore {
           orchestrations.length === 0 ? 0 : completedTasks / orchestrations.length
       },
       localInference: {
+        calls: inferenceSource.length,
         promptTokens,
         completionTokens,
         totalTokens: promptTokens + completionTokens,
-        generationDurationMs: filtered.reduce(
+        generationDurationMs: inferenceSource.reduce(
           (sum, event) => sum + safeNumber(event.generationDurationMs),
           0
         ),
@@ -164,9 +219,10 @@ export class TelemetryStore {
           (sum, event) => sum + safeNumber(event.validationDurationMs),
           0
         ),
+        byModel: summarizeModels(inferenceSource),
         apiCostUsd: 0,
         costScopeNote:
-          'API inference cost is $0 for the local Ollama executor. Hardware depreciation, electricity, and Claude planning/review usage are intentionally not estimated.'
+          'API inference cost is $0 for local Ollama. v0.7 tracks exact per-generation usage by model; hardware, electricity, and Claude subscription usage are not estimated.'
       }
     };
   }
