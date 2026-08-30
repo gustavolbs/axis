@@ -2,7 +2,7 @@
 
 v0.10 makes `local_engineer` progressively more effective on repositories it has already worked with.
 
-This is **not** model fine-tuning. Qwen weights do not change. The improvement comes from a persistent, evidence-backed knowledge layer stored beside the Windows worker state.
+This is **not model fine-tuning**. Qwen weights do not change. Improvement comes from persistent, evidence-backed knowledge stored on the execution worker and retrieved before each engineering run.
 
 ```text
 Claude UI
@@ -25,43 +25,68 @@ local_engineer
 reason -> plan -> code -> validate -> review
    |
    v
-learn reusable evidence-backed facts
+learn reusable source-backed facts
 ```
 
-The intended effect is that a generic local model becomes increasingly similar to an engineer who already knows the codebase, while current source code and tests remain authoritative.
+The intended effect is to combine a strong local model with accumulated codebase familiarity while keeping current source/tests authoritative.
 
 ## Storage
 
-Repo intelligence is kept outside target repositories.
+Memory is kept **outside target repositories**.
 
-Default worker location:
+Default Windows worker location:
 
 ```text
 ~/.local-coder-mcp/worker/repo-intelligence/<identity-key>/memory.json
 ```
 
-On the recommended Mac -> Windows architecture this path is on the **Windows execution machine**, not the Mac and not the company repository.
+No `.local-coder` memory directory is written into company source trees.
 
-The identity key is a SHA-256-derived opaque value from:
+## Identity and isolation
+
+v0.10 distinguishes three concepts:
 
 ```text
-Git origin URL + workspace-relative path
+concrete checkout/worktree  -> scheduling isolation
+Git clone/common-dir        -> memory trust scope
+workspace path in repo      -> sub-project identity
 ```
 
-The raw company/project name is not needed for the memory filename.
+The Mac derives two opaque hashes:
 
-A monorepo package used as a distinct workspace gets a distinct identity from the monorepo root.
+- `isolationKey` from the concrete checkout/worktree path;
+- `memoryScopeKey` from Git's `--git-common-dir`.
+
+The worker never needs the raw Mac path.
+
+The final repo-memory identity is derived from:
+
+```text
+opaque clone memory scope
++ Git origin URL
++ workspace-relative path
+```
+
+Consequences:
+
+- linked worktrees created from the **same clone** share repo intelligence;
+- two independent clones of the same origin do **not** share memory;
+- different origins do not share memory;
+- monorepo sub-workspaces get independent memory identities;
+- separate company/trust contexts can remain isolated simply by using separate clones/worktree roots managed by the Engineering OS.
+
+In local-only execution, local-coder derives the same clone scope directly from the local Git common-dir.
 
 ## What is remembered
 
-Durable facts are bounded and classified as:
+Durable facts are bounded and typed as:
 
 - `architecture` — code boundaries, layers, ownership relationships;
-- `convention` — recurring code/project conventions;
+- `convention` — recurring repository conventions;
 - `invariant` — behavior that must remain true;
 - `procedure` — repeatable project-specific workflows;
 - `episodic` — useful facts about a previous task;
-- `failure` — reusable lessons from an approach/review problem.
+- `failure` — reusable lessons from a failed approach/review issue.
 
 Each fact records:
 
@@ -86,24 +111,26 @@ Architecture/convention/invariant/procedure memories require repository source e
 
 `local_engineer`:
 
-1. resolves the Git repository/workspace identity;
-2. loads the repo's memory document;
-3. compares the previous known SHA with current HEAD;
+1. resolves repo/clone/workspace identity;
+2. loads that identity's memory document;
+3. compares previous known SHA with current HEAD;
 4. checks fingerprints of source files supporting stored facts;
 5. marks changed knowledge stale;
-6. retrieves only the highest-value facts related to the new goal;
+6. retrieves only high-value facts related to the new goal;
 7. injects a compact memory capsule into investigation/planning context.
 
-The whole memory file is never dumped into the model context.
+The whole memory file is never dumped into the model prompt.
 
 ### During a task
 
-Memory is advisory.
-
-The prompt explicitly tells the local engineer:
+Memory is advisory:
 
 ```text
-current source/tests > repo intelligence
+current source + tests + explicit requirements
+            >
+repo intelligence
+            >
+generic model memory
 ```
 
 Stale facts are labeled:
@@ -112,11 +139,11 @@ Stale facts are labeled:
 STALE: verify source before relying
 ```
 
-They are also heavily down-ranked during retrieval.
+and heavily down-ranked during retrieval.
 
 ### After a successful task
 
-A low-effort local learner call receives a bounded summary of:
+A low-reasoning local learner pass receives a bounded task result:
 
 ```text
 goal
@@ -128,21 +155,21 @@ repair rounds
 bounded diff
 ```
 
-It extracts at most 12 reusable facts.
+For the recommended Qwen3.8 worker this learner uses `think=low`; expensive reasoning is reserved for investigation/planning/review.
 
-Only source paths that were part of the actual evidence/plan/change set are accepted for durable source-backed facts. This makes it harder for the learner to invent unsupported architecture knowledge.
+The learner extracts at most a small set of reusable facts. Durable source-backed facts are accepted only when their cited source paths participated in actual evidence/plan/change scope.
 
-The run is also recorded as an episode.
+The successful run is also stored as an episode.
 
-### After an escalation/failure
+### After escalation/failure
 
-The historical outcome may be recorded, but speculative durable architecture/convention facts are **not** learned from a non-success result.
+Historical outcome may be recorded, but speculative architecture/convention/invariant/procedure facts are not learned from a non-success result.
 
-This avoids training the memory on an approach that was never accepted.
+This prevents failed approaches from silently becoming future “truth”.
 
-## Detecting stale knowledge
+## Stale knowledge detection
 
-v0.10 uses two mechanisms.
+v0.10 uses both Git history and file fingerprints.
 
 ### Git SHA delta
 
@@ -152,33 +179,31 @@ When HEAD advances:
 lastSeenSha..currentSha
 ```
 
-is inspected with Git. Changed paths are recorded as a Git-change episode and matching memories are marked stale.
+changed paths are detected. Matching memories are marked stale and the change is stored as a Git-change episode.
 
 ### File fingerprints
 
-Every source-backed fact stores SHA-256 fingerprints of its supporting files.
+Source-backed facts store SHA-256 fingerprints of supporting files.
 
-Before reuse, the current file fingerprints are compared.
-
-This catches changes that have **not been committed yet**:
+Before reuse, fingerprints are compared against the current worktree. This catches uncommitted changes even when HEAD is unchanged:
 
 ```text
 fact learned
-   |
+   ↓
 source file edited locally
-   |
+   ↓
 HEAD unchanged
-   |
+   ↓
 fingerprint differs
-   |
-memory becomes stale
+   ↓
+fact becomes stale
 ```
 
-This is important because the Mac workspace may contain dirty changes when it is sent to the Windows worker.
+This matters because dirty Mac source state is reconstructed on the Windows disposable worktree before local engineering starts.
 
 ## Familiarity score
 
-Each `local_engineer` result can include:
+A local-engineer result can surface:
 
 ```json
 {
@@ -201,15 +226,11 @@ Each `local_engineer` result can include:
 }
 ```
 
-The score is diagnostic, not a trust permission.
+The score is diagnostic, not a trust permission. High familiarity enables more targeted investigation; it never permits skipping validation.
 
-A high score means the worker can usually perform more targeted investigation. It never permits skipping validation or ignoring current repository evidence.
+## Multiple companies / projects / worktrees
 
-## Multiple companies / projects
-
-Repo intelligence does not replace Work Broker or Claude Engineering OS identity/isolation.
-
-Recommended ownership remains:
+Ownership remains:
 
 ```text
 Work Broker / Engineering OS
@@ -219,31 +240,42 @@ local-coder
   -> execution + repository-local learned knowledge
 ```
 
-Different Git repository/workspace identities use different memory directories and cannot retrieve each other's facts.
+The worker does not learn company credentials or merge company context.
 
-Memory files remain outside every target repo, so no `.local-coder` knowledge is accidentally committed to a company repository.
+The clone-scoped memory key is deliberately compatible with Engineering OS worktrees:
 
-When multiple Windows jobs operate on different worktrees of the same repository, repo-intelligence updates use a **per-repository filesystem lock** plus atomic file replacement. This prevents concurrent jobs from silently losing each other's learned facts.
+```text
+clone A
+  worktree A1 ─┐
+  worktree A2 ─┼─ share repo memory A
+  worktree A3 ─┘
+
+separate clone B of same origin
+  worktree B1 ─── independent repo memory B
+```
+
+Mutable job scheduling still uses the concrete checkout isolation key, so sharing memory does not mean concurrent jobs can edit the same worktree.
+
+Repo-memory writes use a filesystem lock plus atomic replacement so concurrent worktrees cannot silently lose each other's learned updates.
 
 ## Memory quality rules
 
-Persistent memory follows these rules:
-
-1. current source code and tests always win;
+1. current source/tests always win;
 2. stale memories must be verified before use;
-3. source-backed durable facts require source paths;
+3. durable architecture/convention/invariant/procedure facts require source paths;
 4. successful execution/review is required before durable learning;
-5. confidence is capped below 1.0;
-6. memory is bounded (facts and episodes are retained within fixed limits);
-7. corrupt/incompatible memory is moved aside and rebuilt instead of blocking engineering;
-8. repo-intelligence failure never invalidates an otherwise-correct `local_engineer` run;
-9. secrets, credentials, tokens, personal/user data, and transient generated values must not be persisted by the learner.
+5. fact confidence is capped below 1.0;
+6. memory is bounded by fixed fact/episode limits;
+7. corrupt/incompatible memory is moved aside and rebuilt;
+8. repo-intelligence failure never invalidates an otherwise-correct engineering run;
+9. secrets, credentials, tokens, personal/user data and transient generated values must not be persisted by the learner;
+10. a separate clone/trust scope never retrieves another clone's memory merely because the Git origin matches.
 
 ## Configuration
 
 Repo intelligence is enabled by default.
 
-Disable it on a worker:
+Disable:
 
 ```powershell
 [Environment]::SetEnvironmentVariable(
@@ -277,9 +309,11 @@ Override storage location:
 
 If unset, storage lives under the existing worker state directory.
 
-## Resetting one repo's memory
+## Resetting one repo memory
 
-The compact `local_engineer` result exposes an opaque `identityKey` in the detailed run result. The corresponding directory can be removed on the Windows worker while no local-coder job is running:
+The detailed local-engineer result exposes the opaque `identityKey`.
+
+While no worker job is writing that memory, remove:
 
 ```text
 ~/.local-coder-mcp/worker/repo-intelligence/<identity-key>/
@@ -287,28 +321,26 @@ The compact `local_engineer` result exposes an opaque `identityKey` in the detai
 
 The next run starts with empty knowledge and rebuilds familiarity naturally.
 
-Do not delete memory files while a worker job is actively writing them.
-
 ## Why not fine-tune per repository?
 
-For a changing repository, persistent evidence-backed memory is preferable initially because it can:
+For a changing repository, evidence-backed persistent memory is preferable because it can:
 
 - become stale explicitly;
 - be revalidated against source;
-- forget/reset individual facts;
-- update immediately after a commit;
+- forget/reset individual repo identities;
+- update immediately after Git/source changes;
 - remain auditable;
-- avoid training/serving a separate adapter for every repository.
+- avoid serving a separate adapter for every repository.
 
-A future LoRA/fine-tuning layer may be useful for organization-wide coding style or repeated patterns across many repositories, but it should not be used as the primary store for facts that change with the codebase.
+Future LoRA/fine-tuning may make sense for organization-wide style or recurring patterns across many repositories, but not as the primary store for facts that evolve with a codebase.
 
 ## Expected progression
 
 Early use:
 
 ```text
-familiarity low
--> broad but bounded discovery
+low familiarity
+-> broader bounded discovery
 -> more source reads
 -> cautious planning
 ```
@@ -316,12 +348,12 @@ familiarity low
 After repeated successful work:
 
 ```text
-familiarity higher
+higher familiarity
 -> retrieve relevant architecture/invariants
--> targeted verification
+-> targeted source verification
 -> smaller investigation context
 -> faster planning
 -> fewer unnecessary Claude escalations
 ```
 
-The objective is not to make Qwen intrinsically as capable as a premium model. The objective is to combine a capable model with accumulated repository knowledge, evidence, deterministic tooling, validation, and repair loops so the **engineering outcome** improves over time.
+The goal is not to make Qwen intrinsically equal to a premium model. The goal is to make **engineering outcomes improve over time** through a capable local model plus accumulated codebase knowledge, evidence, deterministic validation and repair loops.
