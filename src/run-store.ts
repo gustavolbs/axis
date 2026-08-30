@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export type RunKind = 'task' | 'plan';
+export type RunKind = 'task' | 'plan' | 'engineer';
 export type RunView = 'summary' | 'diff' | 'validation' | 'full';
 
 export interface StoredRun<T = unknown> {
@@ -85,17 +85,35 @@ export class RunStore {
       payload = (stored.result as Record<string, unknown>).diff ?? '';
     } else if (view === 'validation') {
       const result = stored.result as Record<string, unknown>;
-      payload = stored.kind === 'plan'
-        ? {
-            taskValidation: Array.isArray(result.taskResults)
-              ? (result.taskResults as Array<Record<string, unknown>>).map((task) => ({
-                  id: task.id,
-                  validation: (task.execution as Record<string, unknown> | undefined)?.validation
-                }))
-              : [],
-            finalValidation: result.finalValidation ?? []
-          }
-        : { validation: result.validation ?? [] };
+      if (stored.kind === 'plan') {
+        payload = {
+          taskValidation: Array.isArray(result.taskResults)
+            ? (result.taskResults as Array<Record<string, unknown>>).map((task) => ({
+                id: task.id,
+                validation: (task.execution as Record<string, unknown> | undefined)?.validation
+              }))
+            : [],
+          finalValidation: result.finalValidation ?? []
+        };
+      } else if (stored.kind === 'engineer') {
+        const execution = result.execution as Record<string, unknown> | undefined;
+        payload = {
+          validation: result.validation ?? [],
+          execution: execution
+            ? {
+                finalValidation: execution.finalValidation ?? [],
+                taskValidation: Array.isArray(execution.taskResults)
+                  ? (execution.taskResults as Array<Record<string, unknown>>).map((task) => ({
+                      id: task.id,
+                      validation: (task.execution as Record<string, unknown> | undefined)?.validation
+                    }))
+                  : []
+              }
+            : undefined
+        };
+      } else {
+        payload = { validation: result.validation ?? [] };
+      }
     } else {
       payload = stored;
     }
