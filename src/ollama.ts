@@ -53,7 +53,11 @@ export class OllamaClient {
     };
   }
 
-  async chat(systemPrompt: string, userPrompt: string): Promise<OllamaGeneration> {
+  async chat(
+    systemPrompt: string,
+    userPrompt: string,
+    format?: 'json' | Record<string, unknown>
+  ): Promise<OllamaGeneration> {
     const response = await this.request('/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -64,8 +68,9 @@ export class OllamaClient {
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
+        ...(format ? { format } : {}),
         options: {
-          temperature: 0.2
+          temperature: format ? 0 : 0.2
         }
       })
     });
