@@ -1,11 +1,13 @@
 import type { LocalCoderConfig } from './config.js';
 import type { AgenticCodeTask, AgenticExecutionResult } from './executor.js';
+import type { LocalEngineerInput, LocalEngineerResult } from './local-engineer.js';
 import type { OllamaGeneration } from './ollama.js';
 import type { LocalExecutionPlan, LocalExecutionPlanResult } from './orchestrator.js';
 import {
   REMOTE_WORKER_PROTOCOL_VERSION,
   assertProtocolVersion,
   type RemoteChatResponse,
+  type RemoteEngineerResponse,
   type RemotePlanResponse,
   type RemoteTaskResponse,
   type RemoteWorkerHealth
@@ -101,6 +103,37 @@ export class RemoteWorkerClient {
     response.result.workspace = input.workspace;
     for (const task of response.result.taskResults) {
       task.execution.workspace = input.workspace;
+    }
+    return response.result;
+  }
+
+  async executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult> {
+    // The editable set is intentionally unknown at submission time. The remote local
+    // engineer discovers it after evidence-backed investigation/planning and returns
+    // dynamic before-hash guarded changes of its own.
+    const snapshot = await prepareRemoteWorkspace(input.workspace, [], this.config);
+    const { workspace: _workspace, ...remoteInput } = input;
+    const response = await this.request<RemoteEngineerResponse>('/v1/engineer', {
+      protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+      workspace: snapshot,
+      input: remoteInput
+    });
+    assertProtocolVersion(response.protocolVersion);
+
+    if (response.result.status !== 'success' && response.changes.length > 0) {
+      throw new Error('Remote local engineer returned changes for a non-success result.');
+    }
+
+    if (response.result.status === 'success') {
+      await applyRemoteChanges(input.workspace, response.changes, this.config);
+    }
+
+    response.result.workspace = input.workspace;
+    if (response.result.execution) {
+      response.result.execution.workspace = input.workspace;
+      for (const task of response.result.execution.taskResults) {
+        task.execution.workspace = input.workspace;
+      }
     }
     return response.result;
   }
