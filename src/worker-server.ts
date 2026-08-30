@@ -4,7 +4,6 @@ import os from 'node:os';
 
 import { loadConfig } from './config.js';
 import { executeAgenticCodeTask } from './executor.js';
-import { executeLocalEngineer } from './local-engineer.js';
 import { OllamaClient } from './ollama.js';
 import { executeLocalCodePlan } from './orchestrator.js';
 import {
@@ -16,10 +15,11 @@ import {
   type RemoteTaskRequest,
   type RemoteWorkspaceSnapshot
 } from './remote-protocol.js';
+import { executeLocalEngineerWithRepoIntelligence } from './repo-intelligence.js';
 import { WorkerScheduler } from './worker-scheduler.js';
 import { withWorkerWorkspace } from './worker-workspace.js';
 
-const WORKER_VERSION = '0.9.0';
+const WORKER_VERSION = '0.10.0';
 const config = loadConfig();
 const ollama = new OllamaClient(config);
 const scheduler = new WorkerScheduler(config.workerMaxConcurrentJobs ?? 1);
@@ -108,6 +108,14 @@ async function health(response: ServerResponse): Promise<void> {
       model: config.model,
       bootstrap: config.workerBootstrap,
       scheduler: scheduler.snapshot(),
+      repoIntelligence: {
+        enabled:
+          process.env.LOCAL_CODER_REPO_INTELLIGENCE_ENABLED === undefined ||
+          !['0', 'false', 'no', 'off'].includes(
+            process.env.LOCAL_CODER_REPO_INTELLIGENCE_ENABLED.trim().toLowerCase()
+          ),
+        storage: 'worker-local'
+      },
       ollama: ollamaHealth
     });
   } catch (error) {
@@ -199,7 +207,7 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
 
   const output = await scheduler.enqueue('engineer', isolationKey(request.workspace), () =>
     withWorkerWorkspace(request.workspace, config, async (workspace) =>
-      executeLocalEngineer(ollama, config, { ...request.input, workspace })
+      executeLocalEngineerWithRepoIntelligence(ollama, config, { ...request.input, workspace })
     )
   );
 
