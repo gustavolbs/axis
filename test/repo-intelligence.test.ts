@@ -130,13 +130,15 @@ test('repo intelligence persists useful facts and marks them stale after uncommi
   }
 });
 
-test('repo intelligence notices committed Git changes and isolates different repositories', async () => {
+test('repo intelligence notices Git changes and isolates repositories and separate same-origin clones', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-intelligence-isolation-'));
   const config = { workerStatePath: path.join(root, 'state') };
 
   try {
-    const repoA = await createRepo(root, 'repo-a', 'https://github.com/example/repo-a.git');
+    const sharedOrigin = 'https://github.com/example/repo-a.git';
+    const repoA = await createRepo(root, 'repo-a', sharedOrigin);
     const repoB = await createRepo(root, 'repo-b', 'https://github.com/example/repo-b.git');
+    const repoASeparateClone = await createRepo(root, 'repo-a-other-clone', sharedOrigin);
 
     const sessionA = await prepareRepoIntelligence(repoA, 'service', config);
     await recordRepoIntelligenceLearning(sessionA, config, {
@@ -156,6 +158,16 @@ test('repo intelligence notices committed Git changes and isolates different rep
     assert.notEqual(sessionA.identityKey, sessionB.identityKey);
     assert.equal(sessionB.retrieved.length, 0);
     assert.equal(sessionB.familiarity.facts, 0);
+
+    const separateClone = await prepareRepoIntelligence(
+      repoASeparateClone,
+      'service invariant',
+      config
+    );
+    assert.notEqual(sessionA.memoryScopeKey, separateClone.memoryScopeKey);
+    assert.notEqual(sessionA.identityKey, separateClone.identityKey);
+    assert.equal(separateClone.retrieved.length, 0);
+    assert.equal(separateClone.familiarity.facts, 0);
 
     await fs.writeFile(
       path.join(repoA, 'src', 'service.ts'),
