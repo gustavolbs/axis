@@ -31,7 +31,11 @@ function clampChars(value: number | undefined): number {
 }
 
 export class RunStore {
-  constructor(private readonly baseDirectory: string) {}
+  private readonly baseDirectory: string;
+
+  constructor(baseDirectory?: string) {
+    this.baseDirectory = baseDirectory ?? path.join(process.cwd(), '.local-coder-mcp', 'runs');
+  }
 
   async save<T>(kind: RunKind, summary: Record<string, unknown>, result: T): Promise<string> {
     const runId = randomUUID();
