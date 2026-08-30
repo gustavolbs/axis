@@ -1,0 +1,86 @@
+{
+  "workspace": "/Users/me/WORK/my-app",
+  "goal": "Implement the planned analytics dashboard using existing design-system and query-layer patterns.",
+  "language": "TypeScript + React + Vitest",
+  "context": "Claude already decided the dashboard architecture, data flow, component contracts, and acceptance criteria.",
+  "sharedContextFiles": [
+    "src/ui/Card.tsx",
+    "src/ui/Table.tsx",
+    "src/analytics/types.ts"
+  ],
+  "sharedConstraints": [
+    "Do not add dependencies",
+    "Preserve existing public APIs",
+    "Use existing design-system primitives"
+  ],
+  "tasks": [
+    {
+      "id": "shell",
+      "task": "Implement the already-designed dashboard shell and responsive layout.",
+      "editableFiles": [
+        "src/analytics/Dashboard.tsx"
+      ],
+      "validation": [
+        {
+          "command": "npm",
+          "args": ["run", "typecheck"]
+        }
+      ]
+    },
+    {
+      "id": "metric-cards",
+      "task": "Implement the planned metric-card components using the existing Card primitive.",
+      "dependsOn": ["shell"],
+      "editableFiles": [
+        "src/analytics/MetricCard.tsx",
+        "src/analytics/MetricCard.test.tsx"
+      ],
+      "validation": [
+        {
+          "command": "npm",
+          "args": ["test", "--", "MetricCard"]
+        }
+      ]
+    },
+    {
+      "id": "table",
+      "task": "Implement the planned analytics table with the already-defined columns and data mapping.",
+      "dependsOn": ["shell"],
+      "editableFiles": [
+        "src/analytics/AnalyticsTable.tsx",
+        "src/analytics/AnalyticsTable.test.tsx"
+      ],
+      "validation": [
+        {
+          "command": "npm",
+          "args": ["test", "--", "AnalyticsTable"]
+        }
+      ]
+    },
+    {
+      "id": "integration",
+      "task": "Wire the completed metric cards and analytics table into the dashboard shell according to the existing plan.",
+      "dependsOn": ["metric-cards", "table"],
+      "editableFiles": [
+        "src/analytics/Dashboard.tsx"
+      ],
+      "validation": [
+        {
+          "command": "npm",
+          "args": ["run", "typecheck"]
+        }
+      ]
+    }
+  ],
+  "finalValidation": [
+    {
+      "command": "npm",
+      "args": ["test", "--", "analytics"]
+    },
+    {
+      "command": "npm",
+      "args": ["run", "typecheck"]
+    }
+  ],
+  "rollbackPlanOnFailure": true
+}
