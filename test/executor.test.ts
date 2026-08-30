@@ -17,6 +17,10 @@ function config(overrides: Partial<LocalCoderConfig> = {}): LocalCoderConfig {
     maxFileBytes: 100_000,
     maxContextBytes: 500_000,
     allowedValidationCommands: new Set(['npm', 'pnpm', 'yarn', 'bun']),
+    telemetryEnabled: false,
+    telemetryPath: path.join(os.tmpdir(), 'unused-local-coder-telemetry.jsonl'),
+    runStorePath: path.join(os.tmpdir(), 'unused-local-coder-runs'),
+    contextIndexPath: path.join(os.tmpdir(), 'unused-local-coder-indexes'),
     ...overrides
   };
 }
