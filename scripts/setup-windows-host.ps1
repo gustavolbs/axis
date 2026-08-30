@@ -47,7 +47,12 @@ function Set-UserEnvironmentVariable {
 
 function New-WorkerToken {
   $bytes = New-Object byte[] 32
-  [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+  $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+  try {
+    $rng.GetBytes($bytes)
+  } finally {
+    $rng.Dispose()
+  }
   return [Convert]::ToBase64String($bytes)
 }
 
