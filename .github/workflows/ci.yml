@@ -40,8 +40,8 @@ jobs:
       - name: Build TypeScript on Windows
         run: npm run build
 
-      - name: Run remote workspace tests on Windows
-        run: npx tsx --test test/remote-execution.test.ts test/worker-workspace.test.ts
+      - name: Run remote-agent tests on Windows
+        run: npx tsx --test test/remote-execution.test.ts test/worker-workspace.test.ts test/worker-scheduler.test.ts test/local-engineer.test.ts
 
       - name: Check Node installer syntax
         shell: pwsh
