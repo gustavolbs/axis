@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { TelemetryStore } from '../src/telemetry.js';
 
-test('aggregates routing, success, retries, tokens, and durations', async () => {
+test('aggregates routing, executions, orchestrations, tokens, and durations', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-telemetry-'));
   const filePath = path.join(directory, 'telemetry.jsonl');
 
@@ -31,20 +31,39 @@ test('aggregates routing, success, retries, tokens, and durations', async () => 
       completionTokens: 10,
       generationDurationMs: 300
     });
+    await store.record({
+      kind: 'orchestration',
+      status: 'success',
+      model: 'test-model',
+      attempts: 4,
+      tasks: 3,
+      completedTasks: 3,
+      promptTokens: 300,
+      completionTokens: 75,
+      generationDurationMs: 3200,
+      validationDurationMs: 450,
+      changedFiles: 5
+    });
 
     const summary = await store.summary(30);
-    assert.equal(summary.events, 3);
+    assert.equal(summary.events, 4);
     assert.equal(summary.classifications.local, 1);
     assert.equal(summary.executions.total, 1);
     assert.equal(summary.executions.success, 1);
     assert.equal(summary.executions.retriedTasks, 1);
     assert.equal(summary.executions.averageAttempts, 2);
     assert.equal(summary.executions.changedFiles, 2);
-    assert.equal(summary.localInference.promptTokens, 120);
-    assert.equal(summary.localInference.completionTokens, 35);
-    assert.equal(summary.localInference.totalTokens, 155);
-    assert.equal(summary.localInference.generationDurationMs, 1800);
-    assert.equal(summary.localInference.validationDurationMs, 250);
+    assert.equal(summary.orchestrations.total, 1);
+    assert.equal(summary.orchestrations.success, 1);
+    assert.equal(summary.orchestrations.plannedTasks, 3);
+    assert.equal(summary.orchestrations.completedTasks, 3);
+    assert.equal(summary.orchestrations.taskCompletionRate, 1);
+    assert.equal(summary.orchestrations.averageTasksPerPlan, 3);
+    assert.equal(summary.localInference.promptTokens, 420);
+    assert.equal(summary.localInference.completionTokens, 110);
+    assert.equal(summary.localInference.totalTokens, 530);
+    assert.equal(summary.localInference.generationDurationMs, 5000);
+    assert.equal(summary.localInference.validationDurationMs, 700);
     assert.equal(summary.localInference.apiCostUsd, 0);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });

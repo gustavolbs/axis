@@ -7,6 +7,7 @@ import { loadConfig } from './config.js';
 import { discoverWorkspace, searchWorkspace } from './discovery.js';
 import { executeAgenticCodeTask } from './executor.js';
 import { OllamaClient } from './ollama.js';
+import { executeLocalCodePlan } from './orchestrator.js';
 import { buildTaskPrompt, LOCAL_CODER_SYSTEM_PROMPT } from './prompt.js';
 import { TelemetryStore, type TelemetryEvent } from './telemetry.js';
 
@@ -36,10 +37,18 @@ function durationNsToMs(value: number | undefined): number {
   return value ? value / 1_000_000 : 0;
 }
 
+const validationSchema = z.object({
+  command: z
+    .string()
+    .min(1)
+    .describe('Executable name from the configured validation allowlist.'),
+  args: z.array(z.string()).max(40).optional().describe('Arguments passed without a shell.')
+});
+
 function createServer(): McpServer {
   const server = new McpServer({
     name: 'local-coder-mcp',
-    version: '0.3.0'
+    version: '0.4.0'
   });
 
   server.registerTool(
@@ -252,7 +261,7 @@ function createServer(): McpServer {
     {
       title: 'Execute Code Task Locally',
       description:
-        'Delegate an already-reasoned coding task to the local model. The MCP reads only explicitly listed repository files, lets the model modify only explicitly listed editable files, runs caller-supplied allowlisted validation commands, retries locally, and returns the exact invocation diff for Claude review. Failed tasks escalate and roll back by default.',
+        'Delegate one already-reasoned coding task to the local model. The MCP reads only explicitly listed repository files, lets the model modify only explicitly listed editable files, runs caller-supplied allowlisted validation commands, retries locally, and returns the exact invocation diff for Claude review. Failed tasks escalate and roll back by default.',
       inputSchema: z.object({
         workspace: z
           .string()
@@ -280,15 +289,7 @@ function createServer(): McpServer {
           .describe('Hard implementation constraints.'),
         language: z.string().optional().describe('Language/framework hint.'),
         validation: z
-          .array(
-            z.object({
-              command: z
-                .string()
-                .min(1)
-                .describe('Executable name from the configured validation allowlist.'),
-              args: z.array(z.string()).max(40).optional().describe('Arguments passed without a shell.')
-            })
-          )
+          .array(validationSchema)
           .max(8)
           .optional()
           .describe('Validation commands to run sequentially after local edits.'),
@@ -345,11 +346,147 @@ function createServer(): McpServer {
   );
 
   server.registerTool(
+    'execute_local_code_plan',
+    {
+      title: 'Execute Large Feature Plan Locally',
+      description:
+        'Execute a Claude-designed large-feature plan as a sequence of bounded local coding subtasks. Claude must decide architecture and decomposition first. The orchestrator preflights every subtask with the task classifier, resolves dependencies, executes local-safe tasks sequentially, validates each task, runs final integration validation, aggregates the whole-plan diff, and rolls the entire plan back on failure by default.',
+      inputSchema: z.object({
+        workspace: z.string().min(1).describe('Absolute repository/workspace path.'),
+        goal: z
+          .string()
+          .min(1)
+          .describe('Overall feature goal already understood and planned by Claude.'),
+        context: z
+          .string()
+          .optional()
+          .describe('Shared architecture decisions, invariants, acceptance criteria, and planner context.'),
+        language: z.string().optional().describe('Default language/framework for plan tasks.'),
+        sharedContextFiles: z
+          .array(z.string().min(1))
+          .max(60)
+          .optional()
+          .describe('Read-only files useful to multiple subtasks. Keep this minimal.'),
+        sharedConstraints: z
+          .array(z.string().min(1))
+          .max(60)
+          .optional()
+          .describe('Hard constraints inherited by every subtask.'),
+        tasks: z
+          .array(
+            z.object({
+              id: z
+                .string()
+                .min(1)
+                .max(80)
+                .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+                .describe('Stable task identifier used by dependencies.'),
+              task: z
+                .string()
+                .min(1)
+                .describe('One bounded implementation objective whose solution is already decided.'),
+              dependsOn: z
+                .array(z.string().min(1).max(80))
+                .max(30)
+                .optional()
+                .describe('Task ids that must complete before this task.'),
+              editableFiles: z
+                .array(z.string().min(1))
+                .min(1)
+                .max(12)
+                .describe('Exact workspace-relative files this subtask may modify.'),
+              contextFiles: z
+                .array(z.string().min(1))
+                .max(24)
+                .optional()
+                .describe('Additional workspace-relative read-only context for this subtask.'),
+              context: z
+                .string()
+                .optional()
+                .describe('Task-specific acceptance criteria or planner decisions.'),
+              constraints: z.array(z.string().min(1)).max(30).optional(),
+              language: z.string().optional(),
+              validation: z
+                .array(validationSchema)
+                .max(8)
+                .optional()
+                .describe('Targeted validation after this subtask.'),
+              maxAttempts: z.number().int().min(1).max(3).default(2),
+              routing: z
+                .object({
+                  solutionKnown: z.boolean().default(true),
+                  requiresDiscovery: z.boolean().default(false),
+                  requiresArchitecture: z.boolean().default(false),
+                  validationKnown: z.boolean().optional(),
+                  riskTags: z.array(z.string().min(1)).max(20).optional()
+                })
+                .optional()
+                .describe('Optional classifier hints. Architecture/discovery tasks will be rejected from local execution.')
+            })
+          )
+          .min(1)
+          .max(30)
+          .describe('Claude-decomposed bounded subtasks. Do not pass one giant feature as a single task.'),
+        finalValidation: z
+          .array(validationSchema)
+          .max(12)
+          .optional()
+          .describe('Integration-level checks after all subtasks succeed.'),
+        rollbackPlanOnFailure: z
+          .boolean()
+          .default(true)
+          .describe('Restore every plan-editable file to its pre-plan snapshot if any subtask or final validation fails.')
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+        idempotentHint: false
+      }
+    },
+    async (input) => {
+      try {
+        const result = await executeLocalCodePlan(ollama, config, input);
+        const lastModel = result.taskResults
+          .flatMap((task) => task.execution.generations)
+          .at(-1)?.model;
+        await recordTelemetry({
+          kind: 'orchestration',
+          status: result.status,
+          model: lastModel ?? config.model,
+          attempts: result.totals.totalAttempts,
+          promptTokens: result.totals.promptTokens,
+          completionTokens: result.totals.completionTokens,
+          generationDurationMs: result.totals.generationDurationMs,
+          validationDurationMs: result.totals.validationDurationMs,
+          changedFiles: result.changedFiles.length,
+          tasks: result.totals.tasks,
+          completedTasks: result.totals.completedTasks
+        });
+
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+          structuredContent: result
+        };
+      } catch (error) {
+        await recordTelemetry({
+          kind: 'orchestration',
+          status: 'error',
+          model: config.model,
+          tasks: input.tasks.length,
+          completedTasks: 0
+        });
+        return errorResult(error);
+      }
+    }
+  );
+
+  server.registerTool(
     'local_coder_telemetry',
     {
       title: 'Local Coder Telemetry',
       description:
-        'Return aggregate local routing/execution telemetry without storing prompts or source code. Includes success/escalation rates, retries, tokens, local generation time, validation time, and local API cost scope.',
+        'Return aggregate local routing/execution/orchestration telemetry without storing prompts or source code. Includes success/escalation rates, plan completion, retries, tokens, local generation time, validation time, and local API cost scope.',
       inputSchema: z.object({
         days: z.number().int().min(1).max(3650).default(30).describe('Lookback window in days.')
       }),
@@ -377,4 +514,4 @@ function createServer(): McpServer {
 }
 
 void serveStdio(createServer);
-console.error(`local-coder-mcp v0.3.0 ready (model: ${config.model})`);
+console.error(`local-coder-mcp v0.4.0 ready (model: ${config.model})`);
