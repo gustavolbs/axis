@@ -114,10 +114,11 @@ Architecture/convention/invariant/procedure memories require repository source e
 1. resolves repo/clone/workspace identity;
 2. loads that identity's memory document;
 3. compares previous known SHA with current HEAD;
-4. checks fingerprints of source files supporting stored facts;
-5. marks changed knowledge stale;
-6. retrieves only high-value facts related to the new goal;
-7. injects a compact memory capsule into investigation/planning context.
+4. treats changed Git paths as revalidation signals;
+5. compares fingerprints of the actual current source against stored evidence;
+6. marks only fingerprint-invalid knowledge stale;
+7. retrieves only high-value facts related to the new goal;
+8. injects a compact memory capsule into investigation/planning context.
 
 The whole memory file is never dumped into the model prompt.
 
@@ -179,7 +180,27 @@ When HEAD advances:
 lastSeenSha..currentSha
 ```
 
-changed paths are detected. Matching memories are marked stale and the change is stored as a Git-change episode.
+changed paths are detected and stored as a Git-change episode. A changed path means **revalidate the source-backed fact**, not automatically invalidate it.
+
+This distinction matters for the common lifecycle:
+
+```text
+local_engineer edits dirty source
+   ↓
+validation/review pass
+   ↓
+repo intelligence learns from that exact file content
+   ↓
+user commits the same content
+   ↓
+HEAD changes
+   ↓
+fingerprint still matches
+   ↓
+memory remains fresh
+```
+
+If the committed content differs from what supported the fact, the fingerprint changes and the memory becomes stale.
 
 ### File fingerprints
 
