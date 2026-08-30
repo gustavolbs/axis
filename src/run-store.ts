@@ -27,7 +27,7 @@ function assertRunId(runId: string): void {
 }
 
 function clampChars(value: number | undefined): number {
-  return Math.max(1_000, Math.min(value ?? 12_000, 50_000));
+  return Math.max(1_000, Math.min(value ?? 12_000, 24_000));
 }
 
 export class RunStore {
