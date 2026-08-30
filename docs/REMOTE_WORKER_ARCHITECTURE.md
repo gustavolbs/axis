@@ -2,9 +2,7 @@
 
 ## Goal
 
-Make the Mac the **control plane** and the Windows workstation the **execution plane**.
-
-The final design keeps Claude Code on macOS but moves heavy local work to Windows without mounting the live Mac repository over SMB/SSHFS.
+Make the Mac the **control plane** and the Windows workstation the **execution plane** without mounting the live Mac repository over SMB/SSHFS.
 
 ```text
 Mac control plane
@@ -14,89 +12,121 @@ Claude Code
           -> Windows execution worker
               -> repository mirror/cache
               -> disposable worktree
-              -> Mac workspace delta
-              -> context/index
+              -> reconstructed Mac workspace state
               -> local model
               -> edits + retries
               -> lint/tests/typecheck/build
-              -> result + changed-file payloads
-      <- compact result + bounded changes
+              -> bounded changed-file payloads
+      <- execution result + changes
   -> compare-and-swap source-state verification
   -> apply changes locally
   -> Claude review
 ```
 
+## v0.8 implementation status
+
+Implemented in this release:
+
+- `LOCAL_CODER_EXECUTION_MODE=local|remote|auto`;
+- authenticated HTTP worker protocol version 1;
+- strict remote mode with no silent Mac inference fallback;
+- Windows repository mirror/cache;
+- disposable worktree per run;
+- tracked dirty-patch transport;
+- safe untracked-file transport;
+- editable-file SHA-256 preconditions;
+- existing task executor on Windows;
+- existing plan/orchestrator on Windows;
+- validation/retry/build execution on Windows;
+- bounded changed-file return;
+- conflict-safe/rollback-safe apply on the Mac;
+- Windows Firewall/setup/startup scripts.
+
+Still intentionally control-plane-local in the first v0.8 cut:
+
+- `prepare_local_context` index/capsule generation;
+- compact run store used by `get_local_run`;
+- aggregate control-plane telemetry.
+
+Those components are much lighter than model inference/builds and are candidates for the next migration phase.
+
 ## Why not edit the Mac filesystem over a network share
 
-A direct SMB/SSHFS workspace would create several avoidable problems:
+Direct SMB/SSHFS editing would add avoidable failure modes:
 
 - Windows and macOS filesystem semantics differ;
 - package-manager/native dependencies can be platform-specific;
-- Node build tools may behave differently over network filesystems;
-- lock/watch behavior becomes less predictable;
-- a network interruption can occur during a write;
-- validation would still exercise the Mac's live workspace and disk.
+- Node build/watch tools can behave differently over network filesystems;
+- locking becomes less predictable;
+- a network interruption can occur during a live write;
+- tests/builds would still exercise the Mac's live workspace/I/O.
 
-Instead, Windows receives enough source-state information to reconstruct the Mac workspace in a local disposable worktree. It returns only task-produced changes.
+Instead, the worker reconstructs the invocation source state locally and returns task-produced changes.
 
 ## Workspace identity
 
 Each remote run is tied to:
 
 ```text
-repository remote identity
+origin repository URL
 + base commit SHA
 + workspace-relative root
-+ dirty tracked patch
-+ relevant untracked files
-+ expected hashes for editable files
++ tracked dirty binary patch
++ safe untracked files
++ expected SHA-256 hashes for editable files
 ```
 
-This lets the worker faithfully reconstruct a dirty working tree without forcing the developer to commit before delegation.
+This preserves dirty working-tree state without requiring a commit before delegation.
 
-## Proposed protocol
+Sensitive paths already blocked by the local-coder workspace policy are not transported, including real `.env*` secret files, `.ssh`, `.git`, and `node_modules`.
 
-Protocol versioning is mandatory from the first remote-worker release.
+## Protocol v1
 
-### Worker health
+Every endpoint requires:
 
 ```text
-GET /v1/health
 Authorization: Bearer <worker-token>
 ```
 
-Response contains:
+The worker rejects a mismatched protocol version.
 
-- protocol version;
-- worker version;
-- Windows hostname/platform;
-- configured execution model;
-- Ollama health;
-- available model(s);
-- execution queue state/capabilities.
+### Health
+
+```text
+GET /v1/health
+```
+
+Reports worker/protocol version, Windows hostname/platform, configured model, bootstrap policy, and Ollama health.
+
+### Read-only model generation
+
+```text
+POST /v1/chat
+```
+
+Used by `delegate_code_task` in remote mode so even read-only model generation stays off the Mac.
 
 ### Execute bounded task
 
 ```text
 POST /v1/execute-task
-Authorization: Bearer <worker-token>
 Content-Type: application/json
 ```
 
-Request conceptually contains:
+Conceptual request:
 
 ```json
 {
   "protocolVersion": 1,
   "workspace": {
-    "repository": "git@github.com:org/repo.git",
+    "repositoryUrl": "git@github.com:org/repo.git",
     "baseSha": "...",
     "workspaceRelativePath": "...",
-    "dirtyPatch": "...",
+    "dirtyPatchBase64": "...",
     "untrackedFiles": [],
-    "editableFileHashes": {}
+    "expectedFiles": []
   },
-  "task": {
+  "input": {
     "task": "...",
     "editableFiles": [],
     "contextFiles": [],
@@ -105,215 +135,197 @@ Request conceptually contains:
 }
 ```
 
-The worker:
-
-1. resolves/updates its local repository mirror;
-2. verifies the requested base SHA;
-3. creates a unique disposable worktree;
-4. applies the tracked dirty delta;
-5. restores relevant untracked files;
-6. verifies editable-file hashes;
-7. prepares dependencies/workspace according to worker policy;
-8. executes the existing bounded executor;
-9. validates/retries on Windows;
-10. returns compact metadata plus actual changed file contents/hash preconditions;
-11. destroys/prunes the disposable worktree.
-
-### Apply result on Mac
-
-The Mac bridge must never blindly overwrite files.
-
-Before writing anything it verifies that **all** editable files still have the same hashes captured when the remote run started.
+### Execute Claude-planned task graph
 
 ```text
-hashes still match
-    -> atomically apply bounded file changes
-
-hash changed while worker ran
-    -> apply nothing
-    -> return conflict/escalation to Claude
+POST /v1/execute-plan
 ```
 
-If any write fails midway, the bridge restores its pre-apply snapshots.
+The same workspace snapshot is reconstructed once; the existing transactional plan executor runs in that worktree.
 
-This compare-and-swap behavior prevents a delayed worker result from overwriting developer/Claude edits made while the remote task was running.
+## Worker run lifecycle
+
+For a task or plan the worker:
+
+1. validates authentication/protocol/body limits;
+2. checks the repository host allowlist when configured;
+3. clones a bare mirror or fetches/prunes an existing mirror;
+4. checks out the exact requested base SHA into a unique detached worktree;
+5. applies the binary tracked delta;
+6. restores safe untracked files;
+7. verifies expected editable-file hashes;
+8. bootstraps dependencies according to worker policy;
+9. executes the bounded executor/orchestrator using local Windows Ollama;
+10. runs requested validation/retries on Windows;
+11. returns only changed editable files plus the normal execution result;
+12. removes/prunes the disposable worktree in `finally`.
+
+Heavy worker execution is serialized initially to avoid concurrent large model/build workloads on the workstation.
+
+## Mac apply lifecycle
+
+The worker never writes directly to the Mac.
+
+Before applying a response, the bridge snapshots all target files and verifies every current hash against the precondition captured at invocation start.
+
+```text
+all hashes still match
+    -> apply bounded changed files
+
+any hash changed
+    -> apply nothing
+    -> report conflict
+```
+
+If a local write fails after apply begins, all target files are restored to their pre-apply snapshots.
+
+This prevents a delayed remote result from overwriting developer/Claude edits made while Windows was working.
 
 ## Repository authentication on Windows
 
 The worker does not receive GitHub credentials from the Mac.
 
-Windows must already be able to clone/fetch the relevant repositories through normal developer authentication, for example:
+Windows must already be able to clone/fetch the origin URL through normal developer authentication, e.g.:
 
 - Git Credential Manager for HTTPS;
 - SSH key + agent;
-- GitHub CLI-backed Git credential setup;
+- GitHub CLI-backed Git credentials;
 - company-specific GitHub Enterprise credentials.
 
-Credentials remain on Windows and are not included in worker API payloads or telemetry.
+Credentials stay on Windows and are never included in worker requests/telemetry.
 
-## Worker authentication
+## Worker authentication / network boundary
 
-Unlike raw Ollama LAN access used by v0.8 Phase 0, the execution worker will require a high-entropy pre-shared bearer token.
+Worker mode uses a high-entropy pre-shared bearer token plus host firewall restriction.
 
-Controls:
+The provided Windows setup does the following:
 
-- bind to a private interface only;
-- Windows Firewall restricts the worker port to the Mac IP;
-- bearer token required for every endpoint, including health;
-- request/body size limits;
-- optional Git host allowlist;
-- no internet/router port forwarding;
-- token is never written to repository files.
+- worker listens on TCP `7337`;
+- Windows Firewall allows only the supplied Mac IP on `Private` profiles;
+- every endpoint, including health, requires the token;
+- request bodies have a size limit;
+- repository Git hosts can be allowlisted;
+- Ollama remains on Windows loopback (`127.0.0.1:11434`);
+- no router port forwarding is required or recommended.
 
-## Execution isolation
+The worker currently uses HTTP on the trusted LAN. Do not expose it to an untrusted/public network. A private overlay/TLS transport is a future hardening option.
 
-Each run gets a unique ID and worktree.
+## Worker state
 
-Worker state:
+Default root:
 
 ```text
 %USERPROFILE%\.local-coder-mcp\worker\
-  repos\         bare repository mirrors
-  worktrees\     disposable run workspaces
-  runs\          compact run metadata/artifacts
-  indexes\       persistent repo indexes
-  telemetry\     metadata-only telemetry
 ```
 
-The worker will serialize model inference machine-wide and initially serialize heavy execution to avoid simultaneously running multiple TypeScript builds/tests and large-model generations on the workstation.
+Current worker uses:
+
+```text
+repos\       bare Git mirrors
+worktrees\   disposable run workspaces
+```
+
+Future worker-side index/run artifact migration can add:
+
+```text
+indexes\
+runs\
+telemetry\
+```
 
 ## Model policy
 
-The remote protocol is model-agnostic.
+The protocol is model-agnostic.
 
-The initial Windows deployment uses:
+The provided Windows installer currently selects:
 
 ```text
 qwen3.6:35b-a3b-coding
 num_ctx=16384
-parallel=1
-max loaded models=1
+OLLAMA_NUM_PARALLEL=1
+OLLAMA_MAX_LOADED_MODELS=1
 ```
 
-The model is configuration, not part of the protocol contract. Future model upgrades do not require changing Claude's MCP tool workflow.
+Model selection is configuration, not protocol state.
 
 ## Dependency/bootstrap policy
 
-A disposable worktree needs dependencies before validation can run. The first implementation should support explicit worker bootstrap policies:
+Worker bootstrap modes:
 
 ```text
 none
-  caller/repository guarantees validation does not need installed dependencies
+  do not install dependencies before execution
 
 auto
-  detect lockfile/package manager and perform frozen/reproducible install
-
-command
-  administrator-configured worker bootstrap command; never supplied by the model
+  detect root package-manager lockfile and install dependencies on Windows
 ```
 
-Longer term, repo-specific dependency caches/template worktrees can eliminate repeated installs.
+`auto` currently maps:
 
-## What stays on the Mac
+```text
+pnpm-lock.yaml     -> pnpm install --frozen-lockfile
+yarn.lock          -> yarn install --frozen-lockfile
+bun.lock/bun.lockb -> bun install --frozen-lockfile
+package-lock.json  -> npm ci
+package.json only  -> npm install
+```
 
-Final remote mode keeps only low-cost control responsibilities:
+Bootstrap commands are host policy; the model cannot invent an arbitrary bootstrap shell command.
 
-- Claude reasoning/planning/review;
-- MCP stdio connection expected by Claude Code;
-- routing/sensitive-decision metadata;
-- Git source-state snapshot/delta creation;
-- remote request/response transport;
-- conflict-safe application of returned file changes.
-
-No local Ollama generation is required in `remote` mode.
-
-## What moves to Windows
-
-- local model weights/KV cache/inference;
-- repository mirror/worktree I/O;
-- context index/capsule generation;
-- bounded edits and retries;
-- lint/test/typecheck/build;
-- remote run artifacts;
-- execution telemetry.
-
-## Modes
-
-Target configuration:
+## Execution modes
 
 ```text
 LOCAL_CODER_EXECUTION_MODE=local
-  current laptop behavior
+  existing laptop behavior
 
 LOCAL_CODER_EXECUTION_MODE=remote
   Windows worker required; never silently fall back to Mac inference
 
 LOCAL_CODER_EXECUTION_MODE=auto
-  prefer worker; optional explicit fallback policy
+  prefer worker; local fallback only when the worker is classified unavailable
 ```
 
-`remote` must fail clearly when the worker is unavailable. This prevents a network outage from unexpectedly loading a large model on the Mac.
+For the dedicated Windows-workstation topology, `remote` is recommended so a network outage cannot unexpectedly load Qwen on the Mac.
 
-## Delivery phases
+## What stays on the Mac in current v0.8
 
-### Phase 0 — remote inference
+- Claude reasoning/planning/review;
+- stdio MCP process expected by Claude Code;
+- routing/sensitive-decision metadata;
+- Git source-state snapshot/delta creation;
+- authenticated worker transport;
+- conflict-safe application of returned file changes;
+- context-capsule index (for now);
+- compact run store/aggregate telemetry (for now).
 
-Implemented first because it provides immediate thermal relief with minimal moving parts.
+## What moves to Windows in current v0.8
 
-- Ollama/model on Windows;
-- restricted LAN firewall rule;
-- Mac MCP points `OLLAMA_BASE_URL` at Windows;
-- model inference leaves the Mac.
+- model weights/KV cache/inference;
+- repo mirror/worktree I/O;
+- bounded edits/retries;
+- task/final validation;
+- lint/test/typecheck/build initiated by the execution plan;
+- dependency bootstrap for disposable worktrees.
 
-### Phase 1 — worker API and authentication
+## Next reliability work
 
-- health/version negotiation;
-- bearer auth;
-- task/plan endpoints;
-- request limits/queue;
-- worker installer/startup.
+Planned follow-ups:
 
-### Phase 2 — Git workspace reconstruction
+- move context index/run artifacts fully to worker;
+- cancellation propagation and active-run status;
+- stale mirror/worktree/cache retention policy;
+- dependency cache/template worktrees;
+- worker token rotation helper;
+- optional Tailscale/private-overlay + TLS for off-LAN use.
 
-- repository mirror;
-- base SHA verification;
-- dirty tracked patch;
-- untracked file transport;
-- editable-file hash preconditions;
-- disposable worktrees.
+## Acceptance criteria for this v0.8 cut
 
-### Phase 3 — remote execution integration
-
-- existing executor/orchestrator run on Windows;
-- validation/build run on Windows;
-- bounded file changes returned and conflict-safely applied on Mac;
-- compact/full run semantics preserved.
-
-### Phase 4 — index/artifact migration
-
-- context index generated/stored on worker;
-- run store/telemetry moved to worker;
-- lazy `get_local_run` fetches remote artifacts.
-
-### Phase 5 — reliability
-
-- cancellation propagation;
-- stale run/worktree cleanup;
-- restart recovery;
-- dependency caches;
-- token rotation;
-- optional Tailscale/private-overlay support for off-LAN use.
-
-## Acceptance criteria
-
-The remote execution milestone is complete when:
-
-- Claude sees the same preferred MCP tool names/contracts;
-- dirty tracked and relevant untracked Mac state can be reconstructed remotely;
-- tests/build execute on Windows;
-- Mac does not run local model inference in remote mode;
-- returned changes cannot overwrite files modified after the run started;
-- failed/rolled-back remote runs leave the Mac unchanged;
-- supervised-sensitive runs preserve mandatory full-diff Claude review;
-- worker unavailable/conflict/cancellation are explicit states, not silent local fallback;
-- two Claude sessions cannot concurrently overload the worker or corrupt the same source state.
+- same preferred MCP tool names/contracts from Claude's perspective;
+- dirty tracked and safe untracked Mac state can be reconstructed remotely;
+- task/plan validation executes on Windows;
+- remote mode performs no local Ollama generation on the Mac;
+- returned files cannot overwrite source modified after run start;
+- failed/rolled-back remote runs do not apply worker changes to the Mac;
+- `local-supervised` still forces mandatory full-diff Claude review;
+- worker unavailability/conflict is explicit in strict remote mode;
+- worker serializes heavy execution to avoid concurrent workstation overload.
