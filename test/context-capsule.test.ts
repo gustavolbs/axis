@@ -17,7 +17,9 @@ function config(): LocalCoderConfig {
     maxContextBytes: 500_000,
     allowedValidationCommands: new Set(['npm']),
     telemetryEnabled: false,
-    telemetryPath: path.join(os.tmpdir(), 'unused-telemetry.jsonl')
+    telemetryPath: path.join(os.tmpdir(), 'unused-telemetry.jsonl'),
+    runStorePath: path.join(os.tmpdir(), 'unused-local-coder-runs'),
+    contextIndexPath: path.join(os.tmpdir(), 'unused-local-coder-indexes')
   };
 }
 
