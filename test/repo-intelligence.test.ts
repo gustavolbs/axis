@@ -85,7 +85,15 @@ function successfulResult(workspace: string): LocalEngineerResult {
   };
 }
 
-test('repo intelligence persists useful facts and marks them stale after uncommitted source changes', async () => {
+const boundaryFact = {
+  kind: 'architecture' as const,
+  text: 'src/service.ts is the repository service boundary; callers should use it instead of bypassing it.',
+  tags: ['service', 'boundary'],
+  sourcePaths: ['src/service.ts'],
+  confidence: 0.94
+};
+
+test('repo intelligence fingerprints dirty changes and keeps matching learned content fresh after commit', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-intelligence-'));
   const config = { workerStatePath: path.join(root, 'state') };
 
@@ -97,15 +105,7 @@ test('repo intelligence persists useful facts and marks them stale after uncommi
 
     const recorded = await recordRepoIntelligenceLearning(first, config, {
       result: successfulResult(repo),
-      facts: [
-        {
-          kind: 'architecture',
-          text: 'src/service.ts is the repository service boundary; callers should use it instead of bypassing it.',
-          tags: ['service', 'boundary'],
-          sourcePaths: ['src/service.ts'],
-          confidence: 0.94
-        }
-      ]
+      facts: [boundaryFact]
     });
     assert.equal(recorded.learnedFacts, 1);
     assert.ok(recorded.familiarity.overall > 0);
@@ -125,6 +125,20 @@ test('repo intelligence persists useful facts and marks them stale after uncommi
     assert.equal(third.retrieved.length, 1);
     assert.equal(third.retrieved[0].stale, true);
     assert.match(third.capsule, /STALE: verify source before relying/);
+
+    // Simulate a successful local-engineer run that validated the dirty v2 source and
+    // refreshed the same durable fact before that working-tree change was committed.
+    await recordRepoIntelligenceLearning(third, config, {
+      result: successfulResult(repo),
+      facts: [boundaryFact]
+    });
+
+    await run('git', ['add', '.'], repo);
+    await run('git', ['commit', '-m', 'commit validated service change'], repo);
+
+    const committed = await prepareRepoIntelligence(repo, 'change the service boundary', config);
+    assert.ok(committed.gitChangesDetected.includes('src/service.ts'));
+    assert.equal(committed.retrieved[0]?.stale, false);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
