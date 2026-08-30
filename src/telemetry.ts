@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export type TelemetryKind = 'classification' | 'delegation' | 'execution';
+export type TelemetryKind = 'classification' | 'delegation' | 'execution' | 'orchestration';
 
 export interface TelemetryEvent {
   timestamp: string;
@@ -15,6 +15,8 @@ export interface TelemetryEvent {
   generationDurationMs?: number;
   validationDurationMs?: number;
   changedFiles?: number;
+  tasks?: number;
+  completedTasks?: number;
 }
 
 export interface TelemetrySummary {
@@ -40,6 +42,18 @@ export interface TelemetrySummary {
     totalAttempts: number;
     averageAttempts: number;
     changedFiles: number;
+  };
+  orchestrations: {
+    total: number;
+    success: number;
+    escalated: number;
+    errors: number;
+    successRate: number;
+    plannedTasks: number;
+    completedTasks: number;
+    taskCompletionRate: number;
+    averageTasksPerPlan: number;
+    averageCompletedTasksPerPlan: number;
   };
   localInference: {
     promptTokens: number;
@@ -77,10 +91,24 @@ export class TelemetryStore {
     const classifications = filtered.filter((event) => event.kind === 'classification');
     const delegations = filtered.filter((event) => event.kind === 'delegation');
     const executions = filtered.filter((event) => event.kind === 'execution');
+    const orchestrations = filtered.filter((event) => event.kind === 'orchestration');
+
     const success = executions.filter((event) => event.status === 'success').length;
     const escalated = executions.filter((event) => event.status === 'escalated').length;
     const executionErrors = executions.filter((event) => event.status === 'error').length;
     const totalAttempts = executions.reduce((sum, event) => sum + safeNumber(event.attempts), 0);
+
+    const orchestrationSuccess = orchestrations.filter((event) => event.status === 'success').length;
+    const orchestrationEscalated = orchestrations.filter(
+      (event) => event.status === 'escalated'
+    ).length;
+    const orchestrationErrors = orchestrations.filter((event) => event.status === 'error').length;
+    const plannedTasks = orchestrations.reduce((sum, event) => sum + safeNumber(event.tasks), 0);
+    const completedTasks = orchestrations.reduce(
+      (sum, event) => sum + safeNumber(event.completedTasks),
+      0
+    );
+
     const promptTokens = filtered.reduce((sum, event) => sum + safeNumber(event.promptTokens), 0);
     const completionTokens = filtered.reduce((sum, event) => sum + safeNumber(event.completionTokens), 0);
 
@@ -107,6 +135,20 @@ export class TelemetryStore {
         totalAttempts,
         averageAttempts: executions.length === 0 ? 0 : totalAttempts / executions.length,
         changedFiles: executions.reduce((sum, event) => sum + safeNumber(event.changedFiles), 0)
+      },
+      orchestrations: {
+        total: orchestrations.length,
+        success: orchestrationSuccess,
+        escalated: orchestrationEscalated,
+        errors: orchestrationErrors,
+        successRate:
+          orchestrations.length === 0 ? 0 : orchestrationSuccess / orchestrations.length,
+        plannedTasks,
+        completedTasks,
+        taskCompletionRate: plannedTasks === 0 ? 0 : completedTasks / plannedTasks,
+        averageTasksPerPlan: orchestrations.length === 0 ? 0 : plannedTasks / orchestrations.length,
+        averageCompletedTasksPerPlan:
+          orchestrations.length === 0 ? 0 : completedTasks / orchestrations.length
       },
       localInference: {
         promptTokens,
