@@ -11,6 +11,8 @@ export interface LocalCoderConfig {
   allowedValidationCommands: Set<string>;
   telemetryEnabled: boolean;
   telemetryPath: string;
+  runStorePath: string;
+  contextIndexPath: string;
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -36,6 +38,8 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConfig {
+  const localCoderHome = path.join(os.homedir(), '.local-coder-mcp');
+
   return {
     ollamaBaseUrl: (env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434').replace(/\/$/, ''),
     model: env.LOCAL_CODER_MODEL ?? 'qwen2.5-coder:14b',
@@ -45,7 +49,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
     maxContextBytes: parsePositiveInt(env.LOCAL_CODER_MAX_CONTEXT_BYTES, 600_000),
     allowedValidationCommands: parseCommandSet(env.LOCAL_CODER_ALLOWED_COMMANDS),
     telemetryEnabled: parseBoolean(env.LOCAL_CODER_TELEMETRY_ENABLED, true),
-    telemetryPath:
-      env.LOCAL_CODER_TELEMETRY_PATH ?? path.join(os.homedir(), '.local-coder-mcp', 'telemetry.jsonl')
+    telemetryPath: env.LOCAL_CODER_TELEMETRY_PATH ?? path.join(localCoderHome, 'telemetry.jsonl'),
+    runStorePath: env.LOCAL_CODER_RUN_STORE_PATH ?? path.join(localCoderHome, 'runs'),
+    contextIndexPath: env.LOCAL_CODER_CONTEXT_INDEX_PATH ?? path.join(localCoderHome, 'indexes')
   };
 }
