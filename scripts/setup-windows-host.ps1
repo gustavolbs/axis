@@ -18,6 +18,9 @@ param(
   [ValidateSet("none", "auto")]
   [string]$Bootstrap = "auto",
 
+  [ValidateRange(1, 8)]
+  [int]$MaxConcurrentJobs = 1,
+
   [switch]$StartWorker
 )
 
@@ -126,9 +129,10 @@ Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_PORT" "$WorkerPort"
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_TOKEN" $WorkerToken
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_ALLOWED_GIT_HOSTS" $AllowedGitHosts
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_BOOTSTRAP" $Bootstrap
+Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS" "$MaxConcurrentJobs"
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_MAX_BODY_BYTES" "12000000"
 Set-UserEnvironmentVariable "LOCAL_CODER_REMOTE_MAX_DELTA_BYTES" "8000000"
-Set-UserEnvironmentVariable "LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS" "1800000"
+Set-UserEnvironmentVariable "LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS" "7200000"
 Set-UserEnvironmentVariable "LOCAL_CODER_ADAPTIVE_MODELS" "false"
 Set-UserEnvironmentVariable "LOCAL_CODER_MODEL" $Model
 Set-UserEnvironmentVariable "LOCAL_CODER_FAST_MODEL" $Model
@@ -163,6 +167,12 @@ Write-Host "Windows execution worker configured." -ForegroundColor Green
 Write-Host "Worker URL: http://<WINDOWS_IP>:$WorkerPort"
 Write-Host "Allowed Git hosts: $AllowedGitHosts"
 Write-Host "Bootstrap mode: $Bootstrap"
+Write-Host "Heavy job concurrency: $MaxConcurrentJobs"
+if ($MaxConcurrentJobs -eq 1) {
+  Write-Host "Multiple Claude sessions may submit jobs, but heavy jobs execute sequentially to protect GPU/RAM." -ForegroundColor Cyan
+} else {
+  Write-Host "Different checkout/worktree jobs may overlap; same-checkout jobs and Ollama inference remain serialized." -ForegroundColor Yellow
+}
 Write-Host ""
 Write-Host "WORKER TOKEN - copy this once to the Mac installer:" -ForegroundColor Yellow
 Write-Host $WorkerToken -ForegroundColor Yellow
