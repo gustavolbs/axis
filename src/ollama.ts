@@ -59,6 +59,10 @@ export interface OllamaChatOptions {
   think?: OllamaThinkingLevel;
 }
 
+function isQwen38(model: string): boolean {
+  return /^qwen3\.8(?::|$)/i.test(model);
+}
+
 /**
  * Qwen3.8 exposes xhigh as its default maximum reasoning effort, but its current
  * chat template does not accept the literal `high` string. Ollama's native
@@ -69,8 +73,18 @@ export function normalizeThinkingForModel(
   model: string,
   think: OllamaThinkingLevel | undefined
 ): OllamaThinkingLevel | undefined {
-  if (/^qwen3\.8(?::|$)/i.test(model) && think === 'high') return true;
+  if (isQwen38(model) && think === 'high') return true;
   return think;
+}
+
+/**
+ * Bounded code generation already receives a planner-owned task, exact editable
+ * paths, repository context and host-side validation. Qwen3.8 should still reason,
+ * but at low effort so expensive xhigh thinking is reserved for investigation,
+ * planning and adversarial review. Legacy/non-thinking models keep their old call.
+ */
+export function codingThinkingForModel(model: string): OllamaThinkingLevel | undefined {
+  return isQwen38(model) ? 'low' : undefined;
 }
 
 export class OllamaClient {
