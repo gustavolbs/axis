@@ -1,4 +1,9 @@
 import type { AgenticCodeTask, AgenticExecutionResult } from './executor.js';
+import type {
+  LocalEngineerInput,
+  LocalEngineerResult,
+  LocalEngineerFileChange
+} from './local-engineer.js';
 import type { OllamaGeneration } from './ollama.js';
 import type { LocalExecutionPlan, LocalExecutionPlanResult } from './orchestrator.js';
 
@@ -21,6 +26,8 @@ export interface RemoteWorkspaceSnapshot {
   dirtyPatchBase64: string;
   untrackedFiles: RemoteUntrackedFile[];
   expectedFiles: RemoteExpectedFile[];
+  /** Opaque hash derived on the Mac from the concrete checkout/worktree path. */
+  isolationKey?: string;
 }
 
 export interface RemoteFileChange {
@@ -37,6 +44,7 @@ export interface RemoteWorkerHealth {
   platform: NodeJS.Platform;
   model: string;
   bootstrap: string;
+  scheduler?: unknown;
   ollama: unknown;
 }
 
@@ -74,6 +82,18 @@ export interface RemotePlanResponse {
   protocolVersion: typeof REMOTE_WORKER_PROTOCOL_VERSION;
   result: LocalExecutionPlanResult;
   changes: RemoteFileChange[];
+}
+
+export interface RemoteEngineerRequest {
+  protocolVersion: typeof REMOTE_WORKER_PROTOCOL_VERSION;
+  workspace: RemoteWorkspaceSnapshot;
+  input: Omit<LocalEngineerInput, 'workspace'>;
+}
+
+export interface RemoteEngineerResponse {
+  protocolVersion: typeof REMOTE_WORKER_PROTOCOL_VERSION;
+  result: LocalEngineerResult;
+  changes: LocalEngineerFileChange[];
 }
 
 export interface RemoteErrorResponse {
