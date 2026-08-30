@@ -37,6 +37,12 @@ export interface LocalCoderConfig {
   workerMaxBodyBytes: number;
   workerAllowedGitHosts: Set<string>;
   workerBootstrap: WorkerBootstrapMode;
+  /**
+   * Heavy jobs accepted from independent Claude sessions. Default 1 deliberately
+   * queues them; higher values permit separate worktrees to overlap while Ollama
+   * inference remains serialized by the machine-wide inference lock.
+   */
+  workerMaxConcurrentJobs: number;
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -131,6 +137,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
       env.LOCAL_CODER_WORKER_STATE_PATH ?? path.join(localCoderHome, 'worker'),
     workerMaxBodyBytes: parsePositiveInt(env.LOCAL_CODER_WORKER_MAX_BODY_BYTES, 12_000_000),
     workerAllowedGitHosts: parseStringSet(env.LOCAL_CODER_WORKER_ALLOWED_GIT_HOSTS),
-    workerBootstrap: parseBootstrapMode(env.LOCAL_CODER_WORKER_BOOTSTRAP)
+    workerBootstrap: parseBootstrapMode(env.LOCAL_CODER_WORKER_BOOTSTRAP),
+    workerMaxConcurrentJobs: Math.min(
+      8,
+      parsePositiveInt(env.LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS, 1)
+    )
   };
 }
