@@ -1,41 +1,122 @@
 # local-coder-mcp
 
-Global MCP bridge for keeping Claude focused on reasoning, architecture, sensitive decisions, and review while delegating bounded implementation and context preprocessing to local Ollama models.
+Global MCP bridge that keeps Claude focused on reasoning, architecture, sensitive decisions, decomposition, and review while delegating bounded implementation to an Ollama coding executor.
 
-## Architecture
+v0.8 supports two execution topologies:
 
 ```text
-User task
-   |
-   +--> deterministic work --------------------------> normal tools
-   |
-   +--> prepare_local_context -----------------------> compact file:line capsule
-   |                                                     |
-   |                                                     v
-   +-------------------------------------------------- Claude decides
-                                                         |
-                  +-------------------+------------------+------------------+
-                  |                   |                                     |
-               normal local      local-supervised                         Claude
-                  |                   |                                     |
-                  |          sensitive decision already                     |
-                  |          resolved by Claude                             |
-                  |                   |                                     |
-                  +---------+---------+                                     |
-                            |                                               |
-                 compact task / Claude-planned feature                     |
-                            |                                               |
-                 Ollama edit -> validate -> retry                          |
-                            |                                               |
-                    compact review capsule                                 |
-                            |                                               |
-                full diff mandatory if supervised                          |
-                            +---------------------> Claude final review <----+
+LOCAL
+Claude Code -> stdio MCP -> Ollama + repo execution on the same machine
+
+REMOTE (recommended for a Mac + Windows workstation)
+Claude Code on Mac
+  -> thin stdio MCP bridge on Mac
+  -> authenticated LAN worker on Windows
+      -> Git mirror + disposable worktree
+      -> Ollama/Qwen
+      -> edits/retries
+      -> lint/tests/typecheck/build
+  -> bounded changes back to Mac
+  -> source-state verification + apply
+  -> Claude review
 ```
 
-## v0.6 capabilities
+The remote design avoids mounting the live Mac repository over SMB/SSHFS. Windows reconstructs the source state from Git metadata and a bounded dirty-workspace delta, executes in a disposable worktree, and returns only allowed file changes.
 
-The server exposes twelve MCP tools:
+## Why
+
+The intended ownership split is:
+
+```text
+Claude
+- ambiguous requirements
+- architecture/system design
+- unknown-root-cause investigation
+- sensitive product/security decisions
+- decomposition
+- final review
+
+local-coder execution plane
+- bounded implementation with known behavior
+- retries
+- lint/tests/typecheck/build
+- deterministic repository context processing
+```
+
+The guiding rule is:
+
+> Claude should receive less information, not less important information.
+
+## v0.8 Windows remote execution
+
+For a dedicated Windows workstation, use strict remote mode so a worker outage never silently loads a large model on the Mac.
+
+Recommended topology:
+
+```text
+Mac = control plane
+Windows = execution plane
+```
+
+Windows Worker mode exposes only the authenticated worker port to the private LAN. Ollama stays loopback-only on Windows.
+
+Full installation, Windows Firewall rules, Git authentication, Mac/Claude connection, startup task, troubleshooting, and rollback:
+
+**[docs/WINDOWS_REMOTE_SETUP.md](docs/WINDOWS_REMOTE_SETUP.md)**
+
+Protocol and source-state design:
+
+**[docs/REMOTE_WORKER_ARCHITECTURE.md](docs/REMOTE_WORKER_ARCHITECTURE.md)**
+
+### Quick shape
+
+Windows, PowerShell as Administrator:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-windows-host.ps1 `
+  -MacIp <MAC_LAN_IP> `
+  -Mode Worker `
+  -StartWorker
+```
+
+Copy the generated worker token. Then on the Mac:
+
+```bash
+npm run install:claude:worker -- \
+  --host <WINDOWS_LAN_IP> \
+  --token '<WORKER_TOKEN>'
+```
+
+Fully restart Claude Code/Desktop and check `local_coder_health`.
+
+The Windows setup currently defaults its execution model to:
+
+```text
+qwen3.6:35b-a3b-coding
+num_ctx=16384
+parallel inference=1
+max loaded models=1
+```
+
+The remote protocol is model-agnostic; the model can be replaced later without changing Claude's MCP workflow.
+
+## Execution modes
+
+| Mode | Behavior |
+| --- | --- |
+| `local` | Existing local Ollama + local repository execution. Default for backwards compatibility. |
+| `remote` | Authenticated worker required. No silent fallback to local model execution. Recommended for the Windows workstation setup. |
+| `auto` | Remote preferred; falls back locally only when the worker is classified unavailable. Use only when local fallback is actually desired. |
+
+Configure with:
+
+```text
+LOCAL_CODER_EXECUTION_MODE=local|remote|auto
+```
+
+## MCP tools
+
+The server preserves the same twelve tool names across local and remote execution:
 
 - `local_coder_health`
 - `classify_local_code_task`
@@ -50,22 +131,24 @@ The server exposes twelve MCP tools:
 - `get_local_run`
 - `local_coder_telemetry`
 
-### Four routing classes
+Claude does not need a different prompting workflow when execution moves to Windows.
 
-`classify_local_code_task` now returns one of:
+## Routing
 
-- `deterministic` — existing tooling is better than any LLM;
-- `local` — bounded implementation with known approach;
-- `local-supervised` — sensitive domain, but Claude already resolved the sensitive behavior and only bounded implementation remains;
-- `claude` — reasoning, architecture, discovery, or risk is still unresolved.
+`classify_local_code_task` returns:
 
-The key v0.6 rule is:
+- `deterministic` — normal repository tooling is better than an LLM;
+- `local` — bounded implementation with known solution/validation;
+- `local-supervised` — a sensitive domain is touched, but Claude has already resolved the sensitive behavior and only bounded implementation remains;
+- `claude` — discovery, architecture, ambiguity, or blocking risk is still unresolved.
 
-> classify the **work that remains**, not merely the domain touched.
+The routing name `local` means “execution plane owned by local-coder”, not necessarily “physically execute on the Mac”. In `remote` mode, `local` and `local-supervised` work executes on Windows.
 
-Authentication, authorization, credentials, permissions, sessions, tokens, and secrets no longer automatically force all implementation into Claude.
+### Sensitive execution
 
-Claude must first resolve the relevant sensitive behavior/contract. After that, a bounded implementation can be routed with:
+Authentication, authorization, credentials, permissions, sessions, tokens, and secrets do not force all mechanical implementation into Claude.
+
+After Claude explicitly resolves the sensitive behavior, bounded work can use:
 
 ```json
 {
@@ -76,156 +159,157 @@ Claude must first resolve the relevant sensitive behavior/contract. After that, 
 }
 ```
 
-A `local-supervised` result means:
+A `local-supervised` execution always forces full-diff Claude review. The execution model is explicitly constrained from redesigning auth/security contracts.
+
+Cryptography design, unresolved architecture/discovery, unknown-root-cause debugging, destructive migrations, production infrastructure/IAM, concurrency/races, and similar work remain Claude blockers.
+
+## Remote workspace safety
+
+A remote task sends source state rather than granting Windows direct access to the live Mac filesystem:
 
 ```text
-Claude decides sensitive behavior
-        ↓
-local model implements only that bounded decision
-        ↓
-validation/retry stays local
-        ↓
-full diff is mandatory
-        ↓
-Claude reviews before approval
+origin repository URL
++ HEAD/base commit SHA
++ safe tracked dirty patch
++ safe untracked files
++ SHA-256 preconditions for editable files
 ```
 
-`local-supervised` does **not** allow the local model to redesign auth/security behavior.
+Windows:
 
-Cryptography design, unresolved architecture/discovery, unknown-root-cause debugging, destructive migrations, production infrastructure, concurrency, and similar work remain Claude blockers.
+1. creates/updates a local bare repository mirror;
+2. creates a unique disposable worktree at the requested base SHA;
+3. reconstructs the dirty source state;
+4. verifies editable-file hashes;
+5. bootstraps dependencies according to worker policy;
+6. executes the existing bounded task/plan executor;
+7. runs validation on Windows;
+8. returns only changed editable files.
 
-## Token Killer
+Mac apply is compare-and-swap: if any editable file changed while Windows was executing, no returned change is applied. A partially failed apply is rolled back to its pre-apply snapshots.
 
-### Compact execution results
+Existing path boundaries remain in force: traversal, symlink escapes, `.git`, `node_modules`, `.ssh`, and real `.env*` secret files are blocked. `.env.example`, `.env.sample`, and `.env.template` remain allowed.
 
-`execute_local_code_task_compact` and `execute_local_code_plan_compact` persist complete execution results under:
+## Compact results / Token Killer
+
+`execute_local_code_task_compact` and `execute_local_code_plan_compact` are the preferred executors.
+
+Complete results are stored under the control-plane run store:
 
 ```text
 ~/.local-coder-mcp/runs/<runId>/run.json
 ~/.local-coder-mcp/runs/<runId>/diff.patch
 ```
 
-Claude initially receives a compact result containing status, validation summary, routing/review metadata, changed-file counts, local token/latency data, and `runId`.
+Claude initially receives status, validation/routing/review metadata, changed-file summary, model/token/latency metadata, and `runId`.
 
-Use `get_local_run` with `summary`, `diff`, `validation`, or `full` only when needed. Results are paginated.
+Use `get_local_run` with `summary`, `diff`, `validation`, or `full` only when needed. `local-supervised` explicitly requires the full diff before Claude approval.
 
-For `local-supervised`, the compact result explicitly requires Claude to fetch and review the full stored diff before approval.
+In the first v0.8 cut, the compact run store and `prepare_local_context` index remain on the Mac/control plane. Model inference, edits, retries, and validation move to Windows in strict remote mode.
 
-### Context capsules
+## Context capsules
 
-`prepare_local_context` maintains a persistent local repository index under:
+`prepare_local_context` maintains a persistent repository index under:
 
 ```text
 ~/.local-coder-mcp/indexes/
 ```
 
-It ranks likely relevant files and returns bounded `path:startLine-endLine` evidence so Claude does not need to broadly read the repository before every task.
-
-### Review capsules
-
-Compact execution returns deterministic review metadata including:
-
-- additions/deletions;
-- changed-file count;
-- risk level;
-- review targets;
-- validation state;
-- dependency/package signals;
-- export/suppression signals;
-- security/environment/migration/infra signals;
-- `fullDiffRecommended`.
-
-Normal low-risk validated work can stay compact. Supervised-sensitive work always forces full-diff review.
+It returns bounded file:line evidence instead of forcing Claude to broadly read a repository before every task.
 
 ## Large-feature orchestration
 
-For dashboards, modules, multi-screen features, or other broad implementation:
+For broad features:
 
-1. Claude understands requirements and architecture.
+1. Claude understands requirements/architecture.
 2. Claude resolves sensitive/product decisions.
-3. Claude decomposes into bounded subtasks, normally 1–5 editable files each.
-4. Normal subtasks route `local`.
-5. Sensitive subtasks whose decisions are already resolved route `local-supervised`.
-6. `execute_local_code_plan_compact` validates the dependency DAG and routing before editing.
-7. Tasks execute sequentially through the bounded local executor.
-8. Each task validates and retries locally.
-9. Final integration validation runs after all tasks succeed.
-10. Failure rolls the whole feature back by default.
-11. Any supervised subtask forces full aggregate-diff Claude review.
+3. Claude decomposes into bounded tasks, normally 1–5 editable files each.
+4. `execute_local_code_plan_compact` validates the dependency DAG/routing.
+5. Tasks execute sequentially in the configured execution plane.
+6. Each task validates/retries there.
+7. Final integration validation runs after tasks succeed.
+8. Failed plans roll back by default.
+9. Any supervised-sensitive task forces full aggregate-diff Claude review.
 
-The local model never owns large-feature decomposition or sensitive design decisions.
+The coding model never owns architecture or sensitive-decision authority.
 
-## Safety boundaries
+## Local v0.7 adaptive execution
 
-- absolute workspace required;
-- relative file paths only;
-- path traversal rejected;
-- symlink escapes rejected;
-- `.git`, `node_modules`, `.ssh`, and real `.env*` secrets blocked;
-- `.env.example`, `.env.sample`, and `.env.template` allowed;
-- explicit editable-file allowlists;
-- bounded file/context sizes;
-- validation commands supplied by Claude, never invented by the local model;
-- validation runs with `shell: false`;
-- default executable allowlist: `npm,pnpm,yarn,bun`;
-- failed bounded tasks roll back by default;
-- failed plans roll back the full plan by default;
-- supervised-sensitive execution injects a constraint forbidding redesign of sensitive contracts.
+Local mode retains the resource-safe v0.7 ladder:
 
-## Claude-side token saver
-
-Install/update:
-
-```bash
-npm run install:claude-token-saver
+```text
+qwen2.5-coder:7b
+   -> retry/escalation
+qwen2.5-coder:14b
 ```
 
-It backs up `~/.claude/settings.json`, enables deferred MCP Tool Search, caps MCP output, installs a `PostToolUse` hook that compacts only large successful validation output, and adds this user-level permission:
+Defaults include:
 
-```json
-{
-  "permissions": {
-    "allow": ["mcp__local-coder__*"]
-  }
-}
-```
+- 16K Ollama context;
+- 96 KB executor source-context cap;
+- one machine-wide local inference at a time;
+- unload the other configured model tier before switching;
+- per-model inference telemetry.
 
-The installer preserves existing `permissions.allow`, `permissions.ask`, and `permissions.deny` entries and is idempotent. Claude Code evaluates permission rules in `deny -> ask -> allow` order across settings scopes, so a matching project or managed `ask`/`deny` rule can still override the user-level local-coder allowlist. Use `/permissions` to identify the source if prompts continue.
+See [docs/ADAPTIVE_EXECUTION.md](docs/ADAPTIVE_EXECUTION.md).
 
-It deliberately does **not** lower Claude thinking-token settings.
+## Claude-side configuration
 
-## Global routing policy
-
-Install/update:
+### Global routing policy
 
 ```bash
 npm run install:routing
 ```
 
-This installs:
+Installs:
 
 ```text
 ~/.claude/rules/local-coder.md
 ```
 
-The v0.6 rule explicitly teaches Claude that auth/security domain presence is not itself an implementation blocker: Claude resolves the sensitive decision first, then delegates the mechanical remainder as `local-supervised` with mandatory full-diff review.
+### Tool search / output guardrails / MCP permission
 
-## Telemetry
-
-Aggregate telemetry is stored locally at:
-
-```text
-~/.local-coder-mcp/telemetry.jsonl
+```bash
+npm run install:claude-token-saver
 ```
 
-It records route/status/attempt/task/token/duration/count metadata, not prompts or source code. Classification telemetry distinguishes `local-supervised` from ordinary `local` work.
+It safely merges into `~/.claude/settings.json`:
+
+- deferred MCP Tool Search;
+- bounded MCP output;
+- validation-output compaction hook;
+- user-level permission `mcp__local-coder__*`.
+
+Existing `permissions.allow`, `permissions.ask`, `permissions.deny`, env, and hooks are preserved. Claude Code evaluates permission rules in `deny -> ask -> allow` order, so a project/managed `ask` or `deny` may still win; use `/permissions` to locate it.
 
 ## Requirements
 
-- Node.js 20+
-- Ollama running locally
-- `qwen2.5-coder:14b` installed, or another `LOCAL_CODER_MODEL`
-- Claude Code Desktop / Code tab with local MCP support
+### Mac/local execution
+
+- Node.js 20+;
+- Ollama when using `local` mode;
+- configured local models;
+- Claude Code/Desktop Code tab with local MCP support.
+
+### Windows worker execution
+
+Mac:
+
+- Node.js 20+;
+- Git;
+- Claude Code/Desktop;
+- this repo built locally for the thin stdio bridge.
+
+Windows:
+
+- Node.js 20+;
+- Git for Windows + repository credentials;
+- Ollama + NVIDIA driver;
+- selected coding model;
+- package managers used by target repositories;
+- private LAN reachability from the Mac.
+
+See [WINDOWS_REMOTE_SETUP.md](docs/WINDOWS_REMOTE_SETUP.md).
 
 ## Install / update
 
@@ -234,16 +318,14 @@ Existing clone:
 ```bash
 git switch main
 git pull
-npm install
+npm install --no-package-lock
 npm run check
 npm run build
 npm run install:routing
 npm run install:claude-token-saver
 ```
 
-If the MCP already points at the same `dist/index.js`, `npm run install:claude` is not required again.
-
-For first setup:
+First local setup:
 
 ```bash
 npm run install:claude
@@ -251,9 +333,13 @@ npm run install:routing
 npm run install:claude-token-saver
 ```
 
-Fully quit and reopen Claude Code Desktop after changing user-level Claude configuration.
+Windows worker setup uses the dedicated guide/installers rather than `install:claude`.
+
+Fully restart Claude Code/Desktop after user-level MCP configuration changes.
 
 ## Test without Claude
+
+Local MCP inspector:
 
 ```bash
 npx @modelcontextprotocol/inspector \
@@ -261,70 +347,107 @@ npx @modelcontextprotocol/inspector \
   "$(pwd)/dist/index.js"
 ```
 
-Useful v0.6 classifier test:
+Windows worker health from Mac:
 
-```json
-{
-  "task": "Implement the already-decided credential removal behavior and update its tests.",
-  "solutionKnown": true,
-  "validationKnown": true,
-  "estimatedFiles": 3,
-  "riskTags": ["auth", "credentials"],
-  "sensitiveDecisionResolved": true
-}
+```bash
+curl \
+  -H "Authorization: Bearer $LOCAL_CODER_WINDOWS_WORKER_TOKEN" \
+  http://<WINDOWS_IP>:7337/v1/health
 ```
-
-Expected route:
-
-```text
-local-supervised
-```
-
-The same request without `sensitiveDecisionResolved: true` should remain in Claude.
 
 ## Configuration
 
+### Core/local
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama |
-| `LOCAL_CODER_MODEL` | `qwen2.5-coder:14b` | local executor |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama API used in local/worker process |
+| `LOCAL_CODER_ADAPTIVE_MODELS` | `true` | local 7B -> 14B adaptive execution |
+| `LOCAL_CODER_FAST_MODEL` | `qwen2.5-coder:7b` | local fast model |
+| `LOCAL_CODER_STRONG_MODEL` | `qwen2.5-coder:14b` | local strong retry model |
+| `LOCAL_CODER_MODEL` | used when adaptive is false | single selected model |
+| `LOCAL_CODER_NUM_CTX` | `16384` | Ollama context |
 | `LOCAL_CODER_TIMEOUT_MS` | `180000` | model request timeout |
 | `LOCAL_CODER_VALIDATION_TIMEOUT_MS` | `180000` | validation timeout |
 | `LOCAL_CODER_MAX_FILE_BYTES` | `120000` | per-file limit |
-| `LOCAL_CODER_MAX_CONTEXT_BYTES` | `600000` | local subtask context limit |
+| `LOCAL_CODER_MAX_CONTEXT_BYTES` | `96000` | executor source-context cap |
 | `LOCAL_CODER_ALLOWED_COMMANDS` | `npm,pnpm,yarn,bun` | validation executable allowlist |
-| `LOCAL_CODER_TELEMETRY_ENABLED` | `true` | aggregate telemetry |
-| `LOCAL_CODER_TELEMETRY_PATH` | `~/.local-coder-mcp/telemetry.jsonl` | telemetry path |
+| `LOCAL_CODER_TELEMETRY_ENABLED` | `true` | metadata-only telemetry |
 | `LOCAL_CODER_RUN_STORE_PATH` | `~/.local-coder-mcp/runs` | lazy full run results |
-| `LOCAL_CODER_CONTEXT_INDEX_PATH` | `~/.local-coder-mcp/indexes` | persistent context indexes |
+| `LOCAL_CODER_CONTEXT_INDEX_PATH` | `~/.local-coder-mcp/indexes` | persistent context index |
 
-## Benchmark
+### Remote client
 
-```bash
-LOCAL_CODER_MODEL=qwen2.5-coder:14b npm run benchmark -- benchmarks/my-real-tasks.json
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LOCAL_CODER_EXECUTION_MODE` | `local` | `local`, `remote`, or `auto` |
+| `LOCAL_CODER_REMOTE_WORKER_URL` | — | e.g. `http://192.168.1.50:7337` |
+| `LOCAL_CODER_REMOTE_WORKER_TOKEN` | — | bearer token; required for remote/auto |
+| `LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS` | `1800000` | remote execution timeout |
+| `LOCAL_CODER_REMOTE_MAX_DELTA_BYTES` | `8000000` | tracked+untracked workspace transport cap |
+
+### Windows worker
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LOCAL_CODER_WORKER_HOST` | `127.0.0.1` | worker listen host; setup script uses `0.0.0.0` + firewall |
+| `LOCAL_CODER_WORKER_PORT` | `7337` | worker port |
+| `LOCAL_CODER_WORKER_TOKEN` | — | required bearer token |
+| `LOCAL_CODER_WORKER_STATE_PATH` | `~/.local-coder-mcp/worker` | repo mirrors/worktrees |
+| `LOCAL_CODER_WORKER_MAX_BODY_BYTES` | `12000000` | HTTP body limit |
+| `LOCAL_CODER_WORKER_ALLOWED_GIT_HOSTS` | empty in raw config | optional comma-separated host allowlist; setup defaults to `github.com` |
+| `LOCAL_CODER_WORKER_BOOTSTRAP` | `none` in raw config | `none` or `auto`; Windows setup defaults to `auto` |
+
+## Safety boundaries
+
+- absolute workspace required;
+- relative editable/context file paths only;
+- path traversal/symlink escapes rejected;
+- secret env files and sensitive directories blocked;
+- explicit editable-file allowlist;
+- bounded file/context/remote-body sizes;
+- validation commands supplied by Claude, not invented by the coding model;
+- validation uses `shell: false`;
+- task/plan rollback by default;
+- strict remote mode has no silent Mac inference fallback;
+- Windows worker bearer authentication;
+- worker setup uses Mac-IP-restricted Windows Firewall rule;
+- remote source application uses SHA-256 conflict preconditions;
+- supervised-sensitive changes require full-diff Claude review.
+
+## Telemetry
+
+Control-plane metadata telemetry:
+
+```text
+~/.local-coder-mcp/telemetry.jsonl
 ```
 
-Use disposable worktrees.
+It records route/status/attempt/task/token/duration/count/model metadata, not prompts or source code.
+
+The worker-side Ollama client can record its own local inference metadata under the worker user's configured telemetry path. Remote artifact/index consolidation is a later v0.8 step.
 
 ## Roadmap
 
 - [x] MCP + Ollama bridge
-- [x] bounded local executor
-- [x] validation/retry/rollback
-- [x] deterministic/local/Claude routing
-- [x] `local-supervised` sensitive execution routing
-- [x] mandatory full-diff supervised review
-- [x] workspace discovery/search
+- [x] bounded executor + validation/retry/rollback
+- [x] deterministic/local/local-supervised/Claude routing
 - [x] multi-task transactional orchestrator
-- [x] telemetry + benchmark harness
-- [x] compact/lazy execution results
-- [x] deterministic review capsules
-- [x] persistent context index + file:line context capsules
-- [x] compact global Claude rule
-- [x] Claude-side MCP output/tool-search guardrails
-- [x] local-coder MCP permission allowlist installer
-- [x] successful validation-output compaction hook
-- [ ] benchmark candidate local models on the same real repository suite and choose the measured default
+- [x] compact/lazy results and review capsules
+- [x] persistent context capsules
+- [x] Claude Tool Search/output/permission installers
+- [x] adaptive local 7B -> 14B execution
+- [x] machine-wide local inference lock
+- [x] authenticated Windows worker protocol
+- [x] remote Git mirror + disposable worktree reconstruction
+- [x] dirty tracked/untracked workspace transport
+- [x] hash-safe remote result application on Mac
+- [x] remote task/plan validation/build execution
+- [x] Windows firewall/setup/startup documentation
+- [ ] migrate context index/run artifacts fully to Windows worker
+- [ ] remote cancellation propagation / active-run status
+- [ ] stale worker cache retention policy
+- [ ] optional private-overlay/TLS transport for off-LAN use
 
 ## License
 

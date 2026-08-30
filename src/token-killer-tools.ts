@@ -4,9 +4,7 @@ import * as z from 'zod/v4';
 import { classifyTask, type TaskClassification } from './classifier.js';
 import { prepareContextCapsule, RepoIndexStore } from './context-capsule.js';
 import type { LocalCoderConfig } from './config.js';
-import { executeAgenticCodeTask } from './executor.js';
-import type { OllamaClient } from './ollama.js';
-import { executeLocalCodePlan } from './orchestrator.js';
+import type { ExecutionBackend } from './execution-runtime.js';
 import { buildReviewCapsule } from './review-capsule.js';
 import { RunStore } from './run-store.js';
 import type { TelemetryEvent } from './telemetry.js';
@@ -60,11 +58,11 @@ export function registerTokenKillerTools(
   server: McpServer,
   deps: {
     config: LocalCoderConfig;
-    ollama: Pick<OllamaClient, 'chat'>;
+    execution: ExecutionBackend;
     recordTelemetry: TelemetryRecorder;
   }
 ): void {
-  const { config, ollama, recordTelemetry } = deps;
+  const { config, execution, recordTelemetry } = deps;
   const runs = new RunStore(config.runStorePath);
   const index = new RepoIndexStore(config.contextIndexPath);
 
@@ -101,9 +99,9 @@ export function registerTokenKillerTools(
   server.registerTool(
     'execute_local_code_task_compact',
     {
-      title: 'Execute Local Code Task Compactly',
+      title: 'Execute Code Task Compactly',
       description:
-        'Preferred bounded local executor. It preflights routing itself. Sensitive auth/credential/permission/security implementation may run as local-supervised only after Claude explicitly resolves the sensitive decision; supervised runs force full-diff Claude review.',
+        'Preferred bounded executor. It preflights routing itself and uses the configured local/remote execution backend. Sensitive auth/credential/permission/security implementation may run as local-supervised only after Claude explicitly resolves the sensitive decision; supervised runs force full-diff Claude review.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         task: z.string().min(1),
@@ -152,7 +150,7 @@ export function registerTokenKillerTools(
         }
 
         const { routing: _routing, ...executionInput } = input;
-        const result = await executeAgenticCodeTask(ollama, config, {
+        const result = await execution.executeTask({
           ...executionInput,
           constraints: [
             ...(input.constraints ?? []),
@@ -201,6 +199,7 @@ export function registerTokenKillerTools(
             failed: result.validation.filter((item) => !item.ok).map((item) => `${item.command} ${item.args.join(' ')}`)
           },
           review,
+          executionMode: config.executionMode,
           localInference: { promptTokens, completionTokens, generationDurationMs },
           lazyFetch: supervised
             ? 'Full diff review by Claude is mandatory. Fetch get_local_run(runId, "diff") before approval.'
@@ -220,7 +219,7 @@ export function registerTokenKillerTools(
     {
       title: 'Execute Large Feature Plan Compactly',
       description:
-        'Preferred large-feature orchestrator. Claude owns planning/decomposition. Already-resolved sensitive subtasks can run as local-supervised; any such task forces full aggregate-diff review by Claude.',
+        'Preferred large-feature orchestrator. Claude owns planning/decomposition; the configured local/remote backend performs bounded tasks. Already-resolved sensitive subtasks can run as local-supervised; any such task forces full aggregate-diff review by Claude.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         goal: z.string().min(1),
@@ -258,7 +257,7 @@ export function registerTokenKillerTools(
     },
     async (input) => {
       try {
-        const result = await executeLocalCodePlan(ollama, config, input);
+        const result = await execution.executePlan(input);
         for (const task of result.preflight) {
           await recordTelemetry({ kind: 'classification', route: task.classification.route });
         }
@@ -318,6 +317,7 @@ export function registerTokenKillerTools(
               .map((item) => `${item.command} ${item.args.join(' ')}`)
           },
           review,
+          executionMode: config.executionMode,
           localInference: {
             promptTokens: result.totals.promptTokens,
             completionTokens: result.totals.completionTokens,
@@ -342,7 +342,7 @@ export function registerTokenKillerTools(
     {
       title: 'Fetch Local Run Details Lazily',
       description:
-        'Fetch a stored local execution result only when Claude needs more detail. Prefer summary first; request diff, validation, or full incrementally with offset/maxChars instead of loading a large result into context at once.',
+        'Fetch a stored execution result only when Claude needs more detail. Prefer summary first; request diff, validation, or full incrementally with offset/maxChars instead of loading a large result into context at once.',
       inputSchema: z.object({
         runId: z.string().min(1),
         view: z.enum(['summary', 'diff', 'validation', 'full']).default('summary'),

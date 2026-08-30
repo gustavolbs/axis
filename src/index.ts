@@ -5,15 +5,15 @@ import * as z from 'zod/v4';
 import { classifyTask } from './classifier.js';
 import { loadConfig } from './config.js';
 import { discoverWorkspace, searchWorkspace } from './discovery.js';
-import { executeAgenticCodeTask } from './executor.js';
+import { createExecutionRuntime } from './execution-runtime.js';
 import { OllamaClient } from './ollama.js';
-import { executeLocalCodePlan } from './orchestrator.js';
 import { buildTaskPrompt, LOCAL_CODER_SYSTEM_PROMPT } from './prompt.js';
 import { TelemetryStore, type TelemetryEvent } from './telemetry.js';
 import { registerTokenKillerTools } from './token-killer-tools.js';
 
 const config = loadConfig();
 const ollama = new OllamaClient(config);
+const runtime = createExecutionRuntime(config, ollama);
 const telemetry = new TelemetryStore(config.telemetryPath, config.telemetryEnabled);
 
 function errorResult(error: unknown) {
@@ -55,10 +55,10 @@ const routingSchema = z.object({
 
 function createServer(): McpServer {
   const server = new McpServer(
-    { name: 'local-coder-mcp', version: '0.7.0' },
+    { name: 'local-coder-mcp', version: '0.8.0' },
     {
       instructions:
-        'Local coding execution and token-saving context tools. Prefer compact context/results. Adaptive execution uses the fast local model first and escalates a failed attempt to the strong local model; local inference is serialized to reduce workstation memory pressure. Claude owns architecture, ambiguity, sensitive decisions and final review; already-resolved auth/credential/permission/security implementation may use local-supervised with mandatory full-diff Claude review.'
+        'Coding execution and token-saving context tools. Execution can be local or delegated to an authenticated Windows worker. Prefer compact context/results. Claude owns architecture, ambiguity, sensitive decisions and final review; already-resolved auth/credential/permission/security implementation may use local-supervised with mandatory full-diff Claude review. In remote mode never silently move heavy work back to the Mac.'
     }
   );
 
@@ -66,12 +66,18 @@ function createServer(): McpServer {
     'local_coder_health',
     {
       title: 'Local Coder Health',
-      description: 'Check Ollama connectivity plus fast/strong adaptive model availability and resource settings.',
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true }
+      description:
+        'Check configured execution mode and either local Ollama health or authenticated remote-worker health.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        idempotentHint: true
+      }
     },
     async () => {
       try {
-        const health = await ollama.health();
+        const health = await runtime.health();
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(health, null, 2) }],
           structuredContent: health
@@ -87,7 +93,7 @@ function createServer(): McpServer {
     {
       title: 'Classify Coding Task Route',
       description:
-        'Classify as deterministic, local, local-supervised, or Claude. local-supervised means Claude already resolved a sensitive auth/credential/permission/security decision and only bounded implementation remains; full-diff Claude review is mandatory.',
+        'Classify as deterministic, local, local-supervised, or Claude. local/local-supervised describe execution ownership and may run on the configured remote worker. local-supervised requires Claude to have already resolved the sensitive behavior and mandates full-diff review.',
       inputSchema: z.object({
         task: z.string().min(1),
         solutionKnown: z.boolean().optional(),
@@ -101,7 +107,12 @@ function createServer(): McpServer {
           .optional()
           .describe('True only after Claude has resolved the sensitive behavior/contract.')
       }),
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true }
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        idempotentHint: true
+      }
     },
     async (input) => {
       try {
@@ -121,14 +132,20 @@ function createServer(): McpServer {
     'discover_local_workspace',
     {
       title: 'Discover Local Workspace',
-      description: 'List a bounded safe workspace view and root package scripts without following symlinks.',
+      description:
+        'List a bounded safe view of the Mac/control-plane workspace and root package scripts without following symlinks.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         maxDepth: z.number().int().min(1).max(12).default(4),
         maxEntries: z.number().int().min(1).max(5000).default(400),
         extensions: z.array(z.string().min(1)).max(50).optional()
       }),
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true }
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        idempotentHint: true
+      }
     },
     async (input) => {
       try {
@@ -147,7 +164,7 @@ function createServer(): McpServer {
     'search_local_workspace',
     {
       title: 'Search Local Workspace',
-      description: 'Literal bounded text/code search inside a safe workspace.',
+      description: 'Literal bounded text/code search inside the control-plane workspace.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         query: z.string().min(1).max(500),
@@ -156,7 +173,12 @@ function createServer(): McpServer {
         maxFiles: z.number().int().min(1).max(2000).default(500),
         maxDepth: z.number().int().min(1).max(12).default(8)
       }),
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true }
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        idempotentHint: true
+      }
     },
     async (input) => {
       try {
@@ -174,8 +196,9 @@ function createServer(): McpServer {
   server.registerTool(
     'delegate_code_task',
     {
-      title: 'Delegate Read-only Code Task to Local Model',
-      description: 'Ask the fast local model for bounded code/analysis text without modifying repository files.',
+      title: 'Delegate Read-only Code Task',
+      description:
+        'Ask the configured execution model for bounded code/analysis text without modifying repository files. In remote mode the generation runs on the Windows worker.',
       inputSchema: z.object({
         task: z.string().min(1),
         context: z.string().optional(),
@@ -183,14 +206,20 @@ function createServer(): McpServer {
         language: z.string().optional(),
         output: z.enum(['implementation', 'patch', 'analysis']).default('implementation')
       }),
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: false }
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        idempotentHint: false
+      }
     },
     async (input) => {
       try {
         const prompt = buildTaskPrompt(input);
-        const result = await ollama.chat(LOCAL_CODER_SYSTEM_PROMPT, prompt);
+        const result = await runtime.chat.chat(LOCAL_CODER_SYSTEM_PROMPT, prompt);
         const metadata = {
-          executor: 'ollama-local',
+          executor: runtime.mode === 'remote' ? 'remote-worker' : 'ollama',
+          executionMode: runtime.mode,
           model: result.model,
           doneReason: result.doneReason,
           totalDurationNs: result.totalDurationNs,
@@ -222,9 +251,9 @@ function createServer(): McpServer {
   server.registerTool(
     'execute_local_code_task',
     {
-      title: 'Execute Code Task Locally',
+      title: 'Execute Code Task',
       description:
-        'Compatibility full-result executor. Prefer execute_local_code_task_compact, which includes routing preflight, adaptive fast-to-strong retry, and supervised-sensitive review enforcement.',
+        'Compatibility full-result executor using the configured local/remote backend. Prefer execute_local_code_task_compact for routing preflight and supervised-sensitive review enforcement.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         task: z.string().min(1),
@@ -237,18 +266,32 @@ function createServer(): McpServer {
         maxAttempts: z.number().int().min(1).max(3).default(2),
         rollbackOnFailure: z.boolean().default(true)
       }),
-      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false }
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+        idempotentHint: false
+      }
     },
     async (input) => {
       try {
-        const result = await executeAgenticCodeTask(ollama, config, input);
-        const promptTokens = result.generations.reduce((sum, generation) => sum + (generation.promptTokens ?? 0), 0);
-        const completionTokens = result.generations.reduce((sum, generation) => sum + (generation.completionTokens ?? 0), 0);
+        const result = await runtime.execution.executeTask(input);
+        const promptTokens = result.generations.reduce(
+          (sum, generation) => sum + (generation.promptTokens ?? 0),
+          0
+        );
+        const completionTokens = result.generations.reduce(
+          (sum, generation) => sum + (generation.completionTokens ?? 0),
+          0
+        );
         const generationDurationMs = result.generations.reduce(
           (sum, generation) => sum + durationNsToMs(generation.totalDurationNs),
           0
         );
-        const validationDurationMs = result.validation.reduce((sum, validation) => sum + validation.durationMs, 0);
+        const validationDurationMs = result.validation.reduce(
+          (sum, validation) => sum + validation.durationMs,
+          0
+        );
         await recordTelemetry({
           kind: 'execution',
           status: result.status,
@@ -274,9 +317,9 @@ function createServer(): McpServer {
   server.registerTool(
     'execute_local_code_plan',
     {
-      title: 'Execute Large Feature Plan Locally',
+      title: 'Execute Large Feature Plan',
       description:
-        'Compatibility full-result orchestrator. Supports local-supervised subtasks and adaptive fast-to-strong retry; prefer the compact orchestrator for enforced review behavior.',
+        'Compatibility full-result orchestrator using the configured local/remote backend. Prefer the compact orchestrator for enforced review behavior.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         goal: z.string().min(1),
@@ -305,12 +348,19 @@ function createServer(): McpServer {
         finalValidation: z.array(validationSchema).max(12).optional(),
         rollbackPlanOnFailure: z.boolean().default(true)
       }),
-      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false }
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+        idempotentHint: false
+      }
     },
     async (input) => {
       try {
-        const result = await executeLocalCodePlan(ollama, config, input);
-        const lastModel = result.taskResults.flatMap((task) => task.execution.generations).at(-1)?.model;
+        const result = await runtime.execution.executePlan(input);
+        const lastModel = result.taskResults
+          .flatMap((task) => task.execution.generations)
+          .at(-1)?.model;
         await recordTelemetry({
           kind: 'orchestration',
           status: result.status,
@@ -341,17 +391,27 @@ function createServer(): McpServer {
     }
   );
 
-  registerTokenKillerTools(server, { config, ollama, recordTelemetry });
+  registerTokenKillerTools(server, {
+    config,
+    execution: runtime.execution,
+    recordTelemetry
+  });
 
   server.registerTool(
     'local_coder_telemetry',
     {
       title: 'Local Coder Telemetry',
-      description: 'Aggregate privacy-preserving routing/execution/orchestration telemetry including exact per-model Ollama inference usage.',
+      description:
+        'Aggregate privacy-preserving routing/execution/orchestration telemetry. In v0.8 remote mode the Mac summary records returned execution metadata; worker-local inference telemetry remains on the worker.',
       inputSchema: z.object({
         days: z.number().int().min(1).max(3650).default(30)
       }),
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true }
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        idempotentHint: true
+      }
     },
     async (input) => {
       try {
@@ -371,5 +431,5 @@ function createServer(): McpServer {
 
 void serveStdio(createServer);
 console.error(
-  `local-coder-mcp v0.7.0 ready (fast: ${config.model}, strong: ${config.strongModel ?? config.model}, num_ctx: ${config.ollamaNumCtx ?? 16384})`
+  `local-coder-mcp v0.8.0 ready (mode: ${runtime.mode}, model: ${config.model}, worker: ${config.remoteWorkerUrl ?? 'none'})`
 );
