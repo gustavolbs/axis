@@ -13,7 +13,8 @@
     "start": "node dist/index.js",
     "test": "tsx --test test/**/*.test.ts",
     "check": "npm run build && npm test",
-    "install:claude": "node scripts/install-claude-user.mjs"
+    "install:claude": "node scripts/install-claude-user.mjs",
+    "install:routing": "node scripts/install-claude-routing-rule.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
