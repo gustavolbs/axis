@@ -28,6 +28,12 @@ export interface RemoteWorkspaceSnapshot {
   expectedFiles: RemoteExpectedFile[];
   /** Opaque hash derived on the Mac from the concrete checkout/worktree path. */
   isolationKey?: string;
+  /**
+   * Opaque hash derived from the Mac Git common-dir. Worktrees from one clone share
+   * repo intelligence, while separate clones/trust contexts remain isolated even
+   * when they use the same origin URL.
+   */
+  memoryScopeKey?: string;
 }
 
 export interface RemoteFileChange {
