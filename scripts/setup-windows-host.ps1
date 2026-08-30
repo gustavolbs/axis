@@ -21,6 +21,8 @@ param(
   [ValidateRange(1, 8)]
   [int]$MaxConcurrentJobs = 1,
 
+  [switch]$DisableRepoIntelligence,
+
   [switch]$StartWorker
 )
 
@@ -122,7 +124,7 @@ if (-not $WorkerToken) {
 }
 
 # In full worker mode Ollama stays loopback-only. Only the authenticated worker is
-# exposed to the LAN, and Windows Firewall further restricts that port to the Mac.
+# exposed to the LAN/Meshnet, and Windows Firewall further restricts that port to the Mac.
 Set-UserEnvironmentVariable "OLLAMA_HOST" "127.0.0.1:$OllamaPort"
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_HOST" "0.0.0.0"
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_PORT" "$WorkerPort"
@@ -141,6 +143,7 @@ Set-UserEnvironmentVariable "LOCAL_CODER_NUM_CTX" "16384"
 Set-UserEnvironmentVariable "LOCAL_CODER_MAX_CONTEXT_BYTES" "96000"
 Set-UserEnvironmentVariable "LOCAL_CODER_TIMEOUT_MS" "600000"
 Set-UserEnvironmentVariable "LOCAL_CODER_VALIDATION_TIMEOUT_MS" "600000"
+Set-UserEnvironmentVariable "LOCAL_CODER_REPO_INTELLIGENCE_ENABLED" $(if ($DisableRepoIntelligence) { "false" } else { "true" })
 
 Replace-FirewallRule -DisplayName $WorkerFirewallRule -Port $WorkerPort -RemoteAddress $MacIp
 
@@ -164,10 +167,14 @@ try {
 
 Write-Host ""
 Write-Host "Windows execution worker configured." -ForegroundColor Green
-Write-Host "Worker URL: http://<WINDOWS_IP>:$WorkerPort"
+Write-Host "Worker URL: http://<WINDOWS_IP_OR_MESHNET_NAME>:$WorkerPort"
 Write-Host "Allowed Git hosts: $AllowedGitHosts"
 Write-Host "Bootstrap mode: $Bootstrap"
 Write-Host "Heavy job concurrency: $MaxConcurrentJobs"
+Write-Host "Persistent repo intelligence: $(if ($DisableRepoIntelligence) { 'disabled' } else { 'enabled' })"
+if (-not $DisableRepoIntelligence) {
+  Write-Host "Repo intelligence is stored outside target repositories under the worker state directory." -ForegroundColor Cyan
+}
 if ($MaxConcurrentJobs -eq 1) {
   Write-Host "Multiple Claude sessions may submit jobs, but heavy jobs execute sequentially to protect GPU/RAM." -ForegroundColor Cyan
 } else {
@@ -198,6 +205,6 @@ if ($StartWorker) {
 
 Write-Host ""
 Write-Host "Then on the Mac run:" -ForegroundColor Cyan
-Write-Host "  npm run install:claude:worker -- --host <WINDOWS_IP> --token '<TOKEN_ABOVE>'"
+Write-Host "  npm run install:claude:worker -- --host <WINDOWS_IP_OR_MESHNET_NAME> --token '<TOKEN_ABOVE>'"
 Write-Host ""
 Write-Host "Do not port-forward $WorkerPort or $OllamaPort on your router."
