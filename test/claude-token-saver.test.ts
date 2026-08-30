@@ -76,14 +76,20 @@ test('installer preserves existing settings and installs user-level token guards
       'utf8'
     );
 
+    const isolatedEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home
+    };
+
     const firstRun = spawnSync(process.execPath, [installerPath], {
-      env: { ...process.env, HOME: home },
+      env: isolatedEnv,
       encoding: 'utf8'
     });
     assert.equal(firstRun.status, 0, firstRun.stderr);
 
     const secondRun = spawnSync(process.execPath, [installerPath], {
-      env: { ...process.env, HOME: home },
+      env: isolatedEnv,
       encoding: 'utf8'
     });
     assert.equal(secondRun.status, 0, secondRun.stderr);
