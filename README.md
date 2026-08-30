@@ -1,6 +1,6 @@
 # local-coder-mcp
 
-Global MCP bridge for keeping Claude focused on reasoning, architecture, and review while delegating bounded implementation and context preprocessing to local Ollama models.
+Global MCP bridge for keeping Claude focused on reasoning, architecture, sensitive decisions, and review while delegating bounded implementation and context preprocessing to local Ollama models.
 
 ## Architecture
 
@@ -14,34 +14,28 @@ User task
    |                                                     v
    +-------------------------------------------------- Claude decides
                                                          |
-                          +------------------------------+------------------+
-                          |                                                 |
-                     bounded task                                      large feature
-                          |                                                 |
-                          v                                                 v
-        execute_local_code_task_compact                 Claude plans/decomposes once
-                          |                                                 |
-                          |                              execute_local_code_plan_compact
-                          |                                                 |
-                          +-------------------+-----------------------------+
-                                              |
-                                           Ollama
-                                              |
-                                  edit -> validate -> retry
-                                              |
-                                      full result saved locally
-                                              |
-                                      compact review capsule
-                                              |
-                                              v
-                                      Claude final review
-                                              |
-                              get_local_run only when needed
+                  +-------------------+------------------+------------------+
+                  |                   |                                     |
+               normal local      local-supervised                         Claude
+                  |                   |                                     |
+                  |          sensitive decision already                     |
+                  |          resolved by Claude                             |
+                  |                   |                                     |
+                  +---------+---------+                                     |
+                            |                                               |
+                 compact task / Claude-planned feature                     |
+                            |                                               |
+                 Ollama edit -> validate -> retry                          |
+                            |                                               |
+                    compact review capsule                                 |
+                            |                                               |
+                full diff mandatory if supervised                          |
+                            +---------------------> Claude final review <----+
 ```
 
-## v0.5 capabilities
+## v0.6 capabilities
 
-The server exposes twelve tools:
+The server exposes twelve MCP tools:
 
 - `local_coder_health`
 - `classify_local_code_task`
@@ -56,100 +50,110 @@ The server exposes twelve tools:
 - `get_local_run`
 - `local_coder_telemetry`
 
-The full-result executors remain for compatibility. Claude should prefer the compact executors because they persist detailed results locally and return only the information needed for normal review.
+### Four routing classes
+
+`classify_local_code_task` now returns one of:
+
+- `deterministic` — existing tooling is better than any LLM;
+- `local` — bounded implementation with known approach;
+- `local-supervised` — sensitive domain, but Claude already resolved the sensitive behavior and only bounded implementation remains;
+- `claude` — reasoning, architecture, discovery, or risk is still unresolved.
+
+The key v0.6 rule is:
+
+> classify the **work that remains**, not merely the domain touched.
+
+Authentication, authorization, credentials, permissions, sessions, tokens, and secrets no longer automatically force all implementation into Claude.
+
+Claude must first resolve the relevant sensitive behavior/contract. After that, a bounded implementation can be routed with:
+
+```json
+{
+  "solutionKnown": true,
+  "validationKnown": true,
+  "sensitiveDecisionResolved": true,
+  "riskTags": ["auth", "credentials"]
+}
+```
+
+A `local-supervised` result means:
+
+```text
+Claude decides sensitive behavior
+        ↓
+local model implements only that bounded decision
+        ↓
+validation/retry stays local
+        ↓
+full diff is mandatory
+        ↓
+Claude reviews before approval
+```
+
+`local-supervised` does **not** allow the local model to redesign auth/security behavior.
+
+Cryptography design, unresolved architecture/discovery, unknown-root-cause debugging, destructive migrations, production infrastructure, concurrency, and similar work remain Claude blockers.
 
 ## Token Killer
 
-### 1. Compact execution results
+### Compact execution results
 
-`execute_local_code_task_compact` and `execute_local_code_plan_compact` execute the same bounded local workflows as their full-result counterparts, but store the complete result under:
+`execute_local_code_task_compact` and `execute_local_code_plan_compact` persist complete execution results under:
 
 ```text
 ~/.local-coder-mcp/runs/<runId>/run.json
 ~/.local-coder-mcp/runs/<runId>/diff.patch
 ```
 
-Claude initially receives only:
+Claude initially receives a compact result containing status, validation summary, routing/review metadata, changed-file counts, local token/latency data, and `runId`.
 
-- status / escalation phase;
-- attempts / completed tasks;
-- changed-file count or small sample;
-- validation summary;
-- local token/latency metadata;
-- deterministic review capsule;
-- `runId`.
+Use `get_local_run` with `summary`, `diff`, `validation`, or `full` only when needed. Results are paginated.
 
-Use `get_local_run` with `summary`, `diff`, `validation`, or `full` only when more detail is required. Large views are paginated with `offset` and `maxChars`.
+For `local-supervised`, the compact result explicitly requires Claude to fetch and review the full stored diff before approval.
 
-### 2. Context capsules
+### Context capsules
 
-`prepare_local_context` builds and refreshes a persistent local repository index under:
+`prepare_local_context` maintains a persistent local repository index under:
 
 ```text
 ~/.local-coder-mcp/indexes/
 ```
 
-The index caches path, mtime, size, code terms, imports, and exported symbols. Unchanged entries are reused on later tasks.
+It ranks likely relevant files and returns bounded `path:startLine-endLine` evidence so Claude does not need to broadly read the repository before every task.
 
-Given a task, the tool ranks likely relevant files and returns bounded evidence with exact `path`, `startLine`, and `endLine`. Claude uses this as a starting point instead of broadly reading the repository. Architectural or high-risk assumptions should still be verified from the cited source.
+### Review capsules
 
-### 3. Review capsules
-
-Compact execution returns a deterministic review capsule containing:
+Compact execution returns deterministic review metadata including:
 
 - additions/deletions;
 - changed-file count;
-- risk level (`low`, `medium`, `high`);
+- risk level;
 - review targets;
-- validation status;
-- flags for dependency/package changes, exports, suppressions, auth/security signals, environment files, migrations/infra, or large diffs;
+- validation state;
+- dependency/package signals;
+- export/suppression signals;
+- security/environment/migration/infra signals;
 - `fullDiffRecommended`.
 
-Low-risk validated work can usually be reviewed from compact evidence. High-risk work explicitly tells Claude to fetch the full diff.
-
-### 4. Smaller Claude startup context
-
-The installed global rule at `~/.claude/rules/local-coder.md` is intentionally short. Detailed procedures live in this README and in MCP tool descriptions rather than being injected into every Claude session.
-
-The MCP itself advertises concise server instructions so Claude Code MCP Tool Search can discover the server without loading all schemas up front.
-
-## Claude-side token saver
-
-v0.5 includes an optional user-level Claude Code optimizer:
-
-```bash
-npm run install:claude-token-saver
-```
-
-It backs up `~/.claude/settings.json`, then configures:
-
-```json
-{
-  "env": {
-    "ENABLE_TOOL_SEARCH": "true",
-    "MAX_MCP_OUTPUT_TOKENS": "8000"
-  }
-}
-```
-
-It also installs a `PostToolUse` hook that compacts only **successful, noisy** npm/pnpm/yarn/bun test/lint/typecheck/check/build output before Claude sees it. Small outputs and failed commands are left untouched.
-
-The installer deliberately does **not** set `MAX_THINKING_TOKENS`: global reasoning quality is not reduced to save tokens.
+Normal low-risk validated work can stay compact. Supervised-sensitive work always forces full-diff review.
 
 ## Large-feature orchestration
 
-For features such as dashboards or modules spanning many files:
+For dashboards, modules, multi-screen features, or other broad implementation:
 
-1. Claude understands requirements, architecture, contracts, design-system patterns, and validation.
-2. Claude decomposes the feature into bounded subtasks, normally 1-5 editable files each.
-3. `execute_local_code_plan_compact` preflights classification and dependency DAG before edits.
-4. Local tasks run sequentially through the bounded executor.
-5. Each task validates and retries locally.
-6. Final integration validation runs after all tasks succeed.
-7. Failure rolls the whole feature back by default.
-8. Claude receives one compact review result and fetches detailed diff only when justified.
+1. Claude understands requirements and architecture.
+2. Claude resolves sensitive/product decisions.
+3. Claude decomposes into bounded subtasks, normally 1–5 editable files each.
+4. Normal subtasks route `local`.
+5. Sensitive subtasks whose decisions are already resolved route `local-supervised`.
+6. `execute_local_code_plan_compact` validates the dependency DAG and routing before editing.
+7. Tasks execute sequentially through the bounded local executor.
+8. Each task validates and retries locally.
+9. Final integration validation runs after all tasks succeed.
+10. Failure rolls the whole feature back by default.
+11. Any supervised subtask forces full aggregate-diff Claude review.
 
-The local model never owns architecture, product ambiguity, security-sensitive decisions, or large-feature decomposition.
+The local model never owns large-feature decomposition or sensitive design decisions.
 
 ## Safety boundaries
 
@@ -164,9 +168,37 @@ The local model never owns architecture, product ambiguity, security-sensitive d
 - validation commands supplied by Claude, never invented by the local model;
 - validation runs with `shell: false`;
 - default executable allowlist: `npm,pnpm,yarn,bun`;
-- package-manager operations restricted to validation-oriented subcommands;
 - failed bounded tasks roll back by default;
-- failed plans roll back the full plan by default.
+- failed plans roll back the full plan by default;
+- supervised-sensitive execution injects a constraint forbidding redesign of sensitive contracts.
+
+## Claude-side token saver
+
+Install/update:
+
+```bash
+npm run install:claude-token-saver
+```
+
+It backs up `~/.claude/settings.json`, enables deferred MCP Tool Search, caps MCP output, and installs a `PostToolUse` hook that compacts only large successful validation output.
+
+It deliberately does **not** lower Claude thinking-token settings.
+
+## Global routing policy
+
+Install/update:
+
+```bash
+npm run install:routing
+```
+
+This installs:
+
+```text
+~/.claude/rules/local-coder.md
+```
+
+The v0.6 rule explicitly teaches Claude that auth/security domain presence is not itself an implementation blocker: Claude resolves the sensitive decision first, then delegates the mechanical remainder as `local-supervised` with mandatory full-diff review.
 
 ## Telemetry
 
@@ -176,9 +208,7 @@ Aggregate telemetry is stored locally at:
 ~/.local-coder-mcp/telemetry.jsonl
 ```
 
-It records route/status/attempt/task/token/duration/count metadata, not prompts or source code. Local Ollama API inference cost is reported as `$0`; electricity/hardware and Claude subscription usage are not estimated.
-
-Detailed lazy run storage is separate from telemetry and intentionally contains local execution results/diffs so Claude can retrieve them later by `runId`. It remains on the local machine.
+It records route/status/attempt/task/token/duration/count metadata, not prompts or source code. Classification telemetry distinguishes `local-supervised` from ordinary `local` work.
 
 ## Requirements
 
@@ -189,14 +219,6 @@ Detailed lazy run storage is separate from telemetry and intentionally contains 
 
 ## Install / update
 
-```bash
-git clone https://github.com/gustavolbs/local-coder-mcp.git
-cd local-coder-mcp
-npm install
-npm run check
-npm run build
-```
-
 Existing clone:
 
 ```bash
@@ -205,35 +227,20 @@ git pull
 npm install
 npm run check
 npm run build
-```
-
-### User-scoped MCP
-
-```bash
-npm run install:claude
-```
-
-The installer updates `~/.claude.json`. Existing installations pointing at the same `dist/index.js` do not need to be reinstalled after every build.
-
-### Global routing policy
-
-```bash
 npm run install:routing
 ```
 
-Installs:
+If the MCP already points at the same `dist/index.js`, `npm run install:claude` is not required again.
 
-```text
-~/.claude/rules/local-coder.md
-```
-
-### Claude token saver
+For first setup:
 
 ```bash
+npm run install:claude
+npm run install:routing
 npm run install:claude-token-saver
 ```
 
-Then fully quit and reopen Claude Code Desktop.
+Fully quit and reopen Claude Code Desktop after changing user-level Claude configuration.
 
 ## Test without Claude
 
@@ -243,7 +250,26 @@ npx @modelcontextprotocol/inspector \
   "$(pwd)/dist/index.js"
 ```
 
-Start with `local_coder_health`, then test `prepare_local_context` and one compact executor.
+Useful v0.6 classifier test:
+
+```json
+{
+  "task": "Implement the already-decided credential removal behavior and update its tests.",
+  "solutionKnown": true,
+  "validationKnown": true,
+  "estimatedFiles": 3,
+  "riskTags": ["auth", "credentials"],
+  "sensitiveDecisionResolved": true
+}
+```
+
+Expected route:
+
+```text
+local-supervised
+```
+
+The same request without `sensitiveDecisionResolved: true` should remain in Claude.
 
 ## Configuration
 
@@ -263,20 +289,20 @@ Start with `local_coder_health`, then test `prepare_local_context` and one compa
 
 ## Benchmark
 
-Use the existing benchmark harness with the same real task manifest across models:
-
 ```bash
 LOCAL_CODER_MODEL=qwen2.5-coder:14b npm run benchmark -- benchmarks/my-real-tasks.json
 ```
 
-Do this in disposable worktrees.
+Use disposable worktrees.
 
 ## Roadmap
 
 - [x] MCP + Ollama bridge
 - [x] bounded local executor
 - [x] validation/retry/rollback
-- [x] global routing + deterministic classifier
+- [x] deterministic/local/Claude routing
+- [x] `local-supervised` sensitive execution routing
+- [x] mandatory full-diff supervised review
 - [x] workspace discovery/search
 - [x] multi-task transactional orchestrator
 - [x] telemetry + benchmark harness
