@@ -42,7 +42,7 @@ export interface LocalCoderConfig {
    * queues them; higher values permit separate worktrees to overlap while Ollama
    * inference remains serialized by the machine-wide inference lock.
    */
-  workerMaxConcurrentJobs: number;
+  workerMaxConcurrentJobs?: number;
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
