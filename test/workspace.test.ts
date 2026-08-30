@@ -62,6 +62,26 @@ test('read and write reject symlinks that resolve outside the workspace', async 
   });
 });
 
+test('allows a workspace path whose own path resolves through a symlink', async () => {
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-alias-'));
+  const realWorkspace = path.join(parent, 'real-workspace');
+  const workspaceAlias = path.join(parent, 'workspace-alias');
+
+  try {
+    await fs.mkdir(path.join(realWorkspace, 'src'), { recursive: true });
+    await fs.writeFile(path.join(realWorkspace, 'src/a.ts'), 'before\n');
+    await fs.symlink(realWorkspace, workspaceAlias);
+
+    const snapshot = await readWorkspaceFile(workspaceAlias, 'src/a.ts', 10_000);
+    assert.equal(snapshot.content, 'before\n');
+
+    await writeWorkspaceFile(workspaceAlias, 'src/a.ts', 'after\n');
+    assert.equal(await fs.readFile(path.join(realWorkspace, 'src/a.ts'), 'utf8'), 'after\n');
+  } finally {
+    await fs.rm(parent, { recursive: true, force: true });
+  }
+});
+
 test('write and restore preserve the invocation snapshot', async () => {
   await withWorkspace(async (workspace) => {
     await fs.mkdir(path.join(workspace, 'src'), { recursive: true });
