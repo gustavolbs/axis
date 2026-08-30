@@ -321,16 +321,21 @@ async function refreshFreshness(
   gitChangedPaths: Set<string>
 ): Promise<void> {
   for (const fact of facts) {
-    let stale = fact.sourcePaths.some((source) => gitChangedPaths.has(source));
-    if (!stale && fact.sourcePaths.length > 0) {
-      for (const source of fact.sourcePaths.slice(0, 8)) {
-        const current = await fileFingerprint(workspace, source);
-        if (current !== (fact.sourceFingerprints[source] ?? null)) {
-          stale = true;
-          break;
-        }
+    let stale = false;
+
+    for (const source of fact.sourcePaths.slice(0, 8)) {
+      const expected = fact.sourceFingerprints[source] ?? null;
+      const current = await fileFingerprint(workspace, source);
+
+      // A Git-path change is a revalidation signal, not automatic invalidation. This
+      // matters when local-coder learned from a dirty file and the user later commits
+      // exactly that content: the SHA changes but the learned source remains identical.
+      if (current !== expected || (gitChangedPaths.has(source) && expected === null)) {
+        stale = true;
+        break;
       }
     }
+
     fact.stale = stale;
     if (!stale) fact.lastValidatedSha = currentSha;
   }
