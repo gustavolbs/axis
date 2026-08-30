@@ -9,6 +9,7 @@ const localCoderDir = path.join(home, '.local-coder-mcp');
 const hooksDir = path.join(localCoderDir, 'hooks');
 const sourceHook = path.resolve(import.meta.dirname, 'compact-claude-bash-output.mjs');
 const targetHook = path.join(hooksDir, 'compact-claude-bash-output.mjs');
+const localCoderPermission = 'mcp__local-coder__*';
 
 fs.mkdirSync(claudeDir, { recursive: true });
 fs.mkdirSync(hooksDir, { recursive: true });
@@ -38,11 +39,26 @@ settings.env = {
   MAX_MCP_OUTPUT_TOKENS: '8000'
 };
 
+const existingPermissions =
+  settings.permissions && typeof settings.permissions === 'object' && !Array.isArray(settings.permissions)
+    ? settings.permissions
+    : {};
+const existingAllow = Array.isArray(existingPermissions.allow) ? existingPermissions.allow : [];
+
+settings.permissions = {
+  ...existingPermissions,
+  allow: [...new Set([...existingAllow, localCoderPermission])]
+};
+
 const postToolUse = Array.isArray(settings.hooks?.PostToolUse) ? settings.hooks.PostToolUse : [];
 const hookCommand = `${process.execPath} ${targetHook}`;
 const withoutExistingLocalCompactor = postToolUse.filter((entry) => {
   if (entry?.matcher !== 'Bash' || !Array.isArray(entry?.hooks)) return true;
-  return !entry.hooks.some((hook) => hook?.command === hookCommand || String(hook?.command ?? '').includes('compact-claude-bash-output.mjs'));
+  return !entry.hooks.some(
+    (hook) =>
+      hook?.command === hookCommand ||
+      String(hook?.command ?? '').includes('compact-claude-bash-output.mjs')
+  );
 });
 
 settings.hooks = {
@@ -67,5 +83,9 @@ fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
 console.log(`Installed Claude token-saver settings: ${settingsPath}`);
 console.log(`Installed successful validation-output compactor: ${targetHook}`);
 console.log('Configured ENABLE_TOOL_SEARCH=true and MAX_MCP_OUTPUT_TOKENS=8000.');
+console.log(`Allowlisted all tools from the configured local-coder MCP: ${localCoderPermission}`);
+console.log(
+  'Existing ask/deny rules are preserved. Claude Code evaluates deny, then ask, then allow, so a matching project/managed ask or deny rule can still override this allow rule.'
+);
 console.log('No MAX_THINKING_TOKENS override was set, so Claude reasoning quality is not globally reduced.');
 console.log('Fully quit and reopen Claude Code Desktop for environment changes to take effect.');

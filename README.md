@@ -180,7 +180,17 @@ Install/update:
 npm run install:claude-token-saver
 ```
 
-It backs up `~/.claude/settings.json`, enables deferred MCP Tool Search, caps MCP output, and installs a `PostToolUse` hook that compacts only large successful validation output.
+It backs up `~/.claude/settings.json`, enables deferred MCP Tool Search, caps MCP output, installs a `PostToolUse` hook that compacts only large successful validation output, and adds this user-level permission:
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__local-coder__*"]
+  }
+}
+```
+
+The installer preserves existing `permissions.allow`, `permissions.ask`, and `permissions.deny` entries and is idempotent. Claude Code evaluates permission rules in `deny -> ask -> allow` order across settings scopes, so a matching project or managed `ask`/`deny` rule can still override the user-level local-coder allowlist. Use `/permissions` to identify the source if prompts continue.
 
 It deliberately does **not** lower Claude thinking-token settings.
 
@@ -228,6 +238,7 @@ npm install
 npm run check
 npm run build
 npm run install:routing
+npm run install:claude-token-saver
 ```
 
 If the MCP already points at the same `dist/index.js`, `npm run install:claude` is not required again.
@@ -311,6 +322,7 @@ Use disposable worktrees.
 - [x] persistent context index + file:line context capsules
 - [x] compact global Claude rule
 - [x] Claude-side MCP output/tool-search guardrails
+- [x] local-coder MCP permission allowlist installer
 - [x] successful validation-output compaction hook
 - [ ] benchmark candidate local models on the same real repository suite and choose the measured default
 
