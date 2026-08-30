@@ -4,6 +4,11 @@ import {
   type AgenticCodeTask,
   type AgenticExecutionResult
 } from './executor.js';
+import {
+  executeLocalEngineer,
+  type LocalEngineerInput,
+  type LocalEngineerResult
+} from './local-engineer.js';
 import type { OllamaClient, OllamaGeneration } from './ollama.js';
 import {
   executeLocalCodePlan,
@@ -23,6 +28,7 @@ export interface ChatClient {
 export interface ExecutionBackend {
   executeTask(input: AgenticCodeTask): Promise<AgenticExecutionResult>;
   executePlan(input: LocalExecutionPlan): Promise<LocalExecutionPlanResult>;
+  executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult>;
 }
 
 export interface ExecutionRuntime {
@@ -34,7 +40,7 @@ export interface ExecutionRuntime {
 
 class LocalExecutionBackend implements ExecutionBackend {
   constructor(
-    private readonly ollama: Pick<OllamaClient, 'chat'>,
+    private readonly ollama: OllamaClient,
     private readonly config: LocalCoderConfig
   ) {}
 
@@ -44,6 +50,10 @@ class LocalExecutionBackend implements ExecutionBackend {
 
   async executePlan(input: LocalExecutionPlan): Promise<LocalExecutionPlanResult> {
     return await executeLocalCodePlan(this.ollama, this.config, input);
+  }
+
+  async executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult> {
+    return (await executeLocalEngineer(this.ollama, this.config, input)).result;
   }
 }
 
@@ -88,6 +98,15 @@ class AutoExecutionBackend implements ExecutionBackend {
     } catch (error) {
       if (!(error instanceof RemoteWorkerError) || !error.unavailable) throw error;
       return await this.local.executePlan(input);
+    }
+  }
+
+  async executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult> {
+    try {
+      return await this.remote.executeEngineer(input);
+    } catch (error) {
+      if (!(error instanceof RemoteWorkerError) || !error.unavailable) throw error;
+      return await this.local.executeEngineer(input);
     }
   }
 }
