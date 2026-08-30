@@ -71,6 +71,10 @@ function normalizeExtensions(values: string[] | undefined): Set<string> | undefi
   return new Set(values.map((value) => (value.startsWith('.') ? value : `.${value}`)).map((value) => value.toLowerCase()));
 }
 
+function toProtocolPath(value: string): string {
+  return value.split(path.sep).join('/');
+}
+
 async function detectPackageMetadata(workspace: string): Promise<Pick<WorkspaceDiscoveryResult, 'packageManager' | 'packageScripts'>> {
   const lockfiles: Array<[string, string]> = [
     ['pnpm-lock.yaml', 'pnpm'],
@@ -133,7 +137,10 @@ export async function discoverWorkspace(
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory() && DEFAULT_IGNORED_DIRECTORIES.has(entry.name)) continue;
 
-      const relativePath = relativeDirectory ? path.join(relativeDirectory, entry.name) : entry.name;
+      const nativeRelativePath = relativeDirectory
+        ? path.join(relativeDirectory, entry.name)
+        : entry.name;
+      const relativePath = toProtocolPath(nativeRelativePath);
 
       try {
         resolveWorkspacePath(workspace, relativePath);
