@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
+import { classifyTask, type TaskClassification } from './classifier.js';
 import { prepareContextCapsule, RepoIndexStore } from './context-capsule.js';
 import type { LocalCoderConfig } from './config.js';
 import { executeAgenticCodeTask } from './executor.js';
@@ -13,6 +14,20 @@ import type { TelemetryEvent } from './telemetry.js';
 const validationSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()).max(40).optional()
+});
+
+const routingSchema = z.object({
+  solutionKnown: z.boolean().default(true),
+  requiresDiscovery: z.boolean().default(false),
+  requiresArchitecture: z.boolean().default(false),
+  validationKnown: z.boolean().optional(),
+  riskTags: z.array(z.string().min(1)).max(20).optional(),
+  sensitiveDecisionResolved: z
+    .boolean()
+    .optional()
+    .describe(
+      'Set true only after Claude has explicitly resolved auth/credential/permission/security behavior and only bounded implementation remains.'
+    )
 });
 
 type TelemetryRecorder = (event: Omit<TelemetryEvent, 'timestamp'>) => Promise<void>;
@@ -31,6 +46,14 @@ function toolResult(value: Record<string, unknown>) {
 function errorResult(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return { content: [{ type: 'text' as const, text: message }], isError: true };
+}
+
+function sensitiveConstraint(classification: TaskClassification): string[] {
+  return classification.route === 'local-supervised'
+    ? [
+        'Claude already resolved the sensitive behavior. Implement only the explicitly specified bounded change. Do not redesign authentication, authorization, credential, permission, secret, session, or security contracts.'
+      ]
+    : [];
 }
 
 export function registerTokenKillerTools(
@@ -80,7 +103,7 @@ export function registerTokenKillerTools(
     {
       title: 'Execute Local Code Task Compactly',
       description:
-        'Preferred bounded local executor for Claude token efficiency. Executes and validates the task, stores the full result locally, and returns only a compact review capsule plus runId. Fetch full diff/validation lazily with get_local_run only when needed.',
+        'Preferred bounded local executor. It preflights routing itself. Sensitive auth/credential/permission/security implementation may run as local-supervised only after Claude explicitly resolves the sensitive decision; supervised runs force full-diff Claude review.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         task: z.string().min(1),
@@ -91,7 +114,8 @@ export function registerTokenKillerTools(
         language: z.string().optional(),
         validation: z.array(validationSchema).max(8).optional(),
         maxAttempts: z.number().int().min(1).max(3).default(2),
-        rollbackOnFailure: z.boolean().default(true)
+        rollbackOnFailure: z.boolean().default(true),
+        routing: routingSchema.optional()
       }),
       annotations: {
         readOnlyHint: false,
@@ -102,12 +126,47 @@ export function registerTokenKillerTools(
     },
     async (input) => {
       try {
-        const result = await executeAgenticCodeTask(ollama, config, input);
+        const classification = classifyTask({
+          task: input.task,
+          solutionKnown: input.routing?.solutionKnown ?? true,
+          requiresDiscovery: input.routing?.requiresDiscovery ?? false,
+          requiresArchitecture: input.routing?.requiresArchitecture ?? false,
+          estimatedFiles: input.editableFiles.length,
+          validationKnown: input.routing?.validationKnown ?? (input.validation?.length ?? 0) > 0,
+          riskTags: input.routing?.riskTags,
+          sensitiveDecisionResolved: input.routing?.sensitiveDecisionResolved
+        });
+        await recordTelemetry({ kind: 'classification', route: classification.route });
+
+        if (classification.route === 'claude' || classification.route === 'deterministic') {
+          await recordTelemetry({ kind: 'execution', status: 'escalated', model: config.model });
+          return toolResult({
+            status: 'escalated',
+            phase: 'preflight',
+            classification,
+            blocker:
+              classification.route === 'deterministic'
+                ? 'This is deterministic-tool work; use repository tooling instead of a local LLM.'
+                : `This work must stay in Claude until its blocking reasoning is resolved: ${classification.reasons.join(' ')}`
+          });
+        }
+
+        const { routing: _routing, ...executionInput } = input;
+        const result = await executeAgenticCodeTask(ollama, config, {
+          ...executionInput,
+          constraints: [
+            ...(input.constraints ?? []),
+            ...sensitiveConstraint(classification)
+          ]
+        });
         const validationPassed = result.validation.every((item) => item.ok);
+        const supervised = classification.route === 'local-supervised';
         const review = buildReviewCapsule({
           diff: result.diff,
           changedFiles: result.changedFiles,
-          validationPassed
+          validationPassed,
+          forceFullDiff: supervised,
+          additionalFlags: supervised ? ['local-supervised-sensitive-change'] : []
         });
         const promptTokens = result.generations.reduce((sum, item) => sum + (item.promptTokens ?? 0), 0);
         const completionTokens = result.generations.reduce((sum, item) => sum + (item.completionTokens ?? 0), 0);
@@ -131,6 +190,7 @@ export function registerTokenKillerTools(
 
         const summary = {
           status: result.status,
+          classification,
           attempts: result.attempts,
           changedFiles: result.changedFiles,
           rolledBack: result.rolledBack,
@@ -142,7 +202,9 @@ export function registerTokenKillerTools(
           },
           review,
           localInference: { promptTokens, completionTokens, generationDurationMs },
-          lazyFetch: 'Use get_local_run(runId, view) only if the compact review is insufficient.'
+          lazyFetch: supervised
+            ? 'Full diff review by Claude is mandatory. Fetch get_local_run(runId, "diff") before approval.'
+            : 'Use get_local_run(runId, view) only if the compact review is insufficient.'
         };
         const runId = await runs.save('task', summary, result);
         return toolResult({ runId, ...summary });
@@ -158,7 +220,7 @@ export function registerTokenKillerTools(
     {
       title: 'Execute Large Feature Plan Compactly',
       description:
-        'Preferred large-feature orchestrator for Claude token efficiency. Executes a Claude-designed dependency plan, stores full task results/diff locally, and returns only plan status, validation, review capsule, totals, and runId. Use get_local_run lazily for details.',
+        'Preferred large-feature orchestrator. Claude owns planning/decomposition. Already-resolved sensitive subtasks can run as local-supervised; any such task forces full aggregate-diff review by Claude.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         goal: z.string().min(1),
@@ -179,15 +241,7 @@ export function registerTokenKillerTools(
               language: z.string().optional(),
               validation: z.array(validationSchema).max(8).optional(),
               maxAttempts: z.number().int().min(1).max(3).default(2),
-              routing: z
-                .object({
-                  solutionKnown: z.boolean().default(true),
-                  requiresDiscovery: z.boolean().default(false),
-                  requiresArchitecture: z.boolean().default(false),
-                  validationKnown: z.boolean().optional(),
-                  riskTags: z.array(z.string().min(1)).max(20).optional()
-                })
-                .optional()
+              routing: routingSchema.optional()
             })
           )
           .min(1)
@@ -205,6 +259,14 @@ export function registerTokenKillerTools(
     async (input) => {
       try {
         const result = await executeLocalCodePlan(ollama, config, input);
+        for (const task of result.preflight) {
+          await recordTelemetry({ kind: 'classification', route: task.classification.route });
+        }
+
+        const supervisedTaskIds = result.preflight
+          .filter((task) => task.classification.route === 'local-supervised')
+          .map((task) => task.id);
+        const hasSupervisedTasks = supervisedTaskIds.length > 0;
         const finalValidationPassed = result.finalValidation.every((item) => item.ok);
         const taskValidationPassed = result.taskResults.every((task) =>
           task.execution.validation.every((item) => item.ok)
@@ -213,7 +275,9 @@ export function registerTokenKillerTools(
         const review = buildReviewCapsule({
           diff: result.diff,
           changedFiles: result.changedFiles,
-          validationPassed
+          validationPassed,
+          forceFullDiff: hasSupervisedTasks && result.changedFiles.length > 0,
+          additionalFlags: hasSupervisedTasks ? ['contains-local-supervised-sensitive-task'] : []
         });
         const lastModel = result.taskResults.flatMap((task) => task.execution.generations).at(-1)?.model;
 
@@ -236,6 +300,10 @@ export function registerTokenKillerTools(
           phase: result.phase,
           failedTaskId: result.failedTaskId,
           tasks: { planned: result.totals.tasks, completed: result.totals.completedTasks },
+          routing: {
+            supervisedTaskIds,
+            fullDiffReviewRequired: hasSupervisedTasks && result.changedFiles.length > 0
+          },
           changedFiles: {
             count: result.changedFiles.length,
             sample: result.changedFiles.slice(0, 12)
@@ -256,7 +324,9 @@ export function registerTokenKillerTools(
             generationDurationMs: result.totals.generationDurationMs,
             validationDurationMs: result.totals.validationDurationMs
           },
-          lazyFetch: 'Use get_local_run(runId, view) only for suspicious/high-risk details or failed checks.'
+          lazyFetch: hasSupervisedTasks && result.changedFiles.length > 0
+            ? 'Full aggregate diff review by Claude is mandatory. Fetch get_local_run(runId, "diff") before approval.'
+            : 'Use get_local_run(runId, view) only for suspicious/high-risk details or failed checks.'
         };
         const runId = await runs.save('plan', summary, result);
         return toolResult({ runId, ...summary });
