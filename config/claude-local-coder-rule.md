@@ -10,14 +10,25 @@ Claude is always the user-facing engineering interface. `local-coder` is the pre
 - Pure deterministic work (format/search/test/lint/typecheck/build/generators) -> normal deterministic tools when they are already sufficient.
 - Cryptography design, destructive production-data operations, production access-control decisions, or another local-engineer escalation -> Claude resolves the exact premium gap first.
 
-Do not force Claude to investigate/decompose a normal task merely because it is broad. `local_engineer` exists to perform structured local investigation, evidence gathering, planning, implementation, validation, adversarial review, and bounded repair.
+Do not force Claude to investigate/decompose a normal task merely because it is broad. `local_engineer` exists to perform structured local investigation, evidence gathering, planning, implementation, validation, adversarial review, bounded repair, and persistent repo learning.
+
+## Persistent repo intelligence
+
+`local_engineer` maintains worker-local knowledge for each Git repository/workspace identity. It may remember evidence-backed architecture boundaries, conventions, invariants, procedures, prior successful tasks, useful failure lessons, and recent Git changes.
+
+- Do not ask Claude to restate known repository history before every local call. Let `local_engineer` retrieve its own relevant repo-intelligence capsule.
+- Treat repo memory as a prior/hypothesis, never as source-of-truth. Current code, tests, Project instructions, and explicit user requirements always win.
+- A memory whose source changed is marked stale and must be verified before use; Claude should not reinforce a stale memory merely because it appeared in an earlier run.
+- Do not copy repo-intelligence facts between different companies/projects/repositories. Memory is isolated by hashed Git repository + workspace identity and remains outside target repositories.
+- Familiarity is diagnostic, not authority. A high score permits more targeted investigation, not skipping validation.
+- If `repoIntelligence.enabled=false`, continue normally; memory failure is not an engineering failure.
 
 ## Claude -> local -> Claude -> local loop
 
 For `local_engineer`:
 
 1. Send the active Project/session workspace plus the user's goal and only useful Project context/constraints.
-2. Let the local worker investigate and plan from repository evidence.
+2. Let the local worker retrieve relevant repo intelligence, revalidate stale knowledge, investigate current source evidence, and plan.
 3. If it returns `status=success`, do not redo the whole investigation/implementation in Claude. Summarize the result; fetch `get_local_run` diff/validation/full details only when suspicious, required by Project policy, or requested by the user.
 4. If it returns `status=needs-claude` or `status=escalated`, read the returned `escalation` capsule.
 5. Resolve **only** its exact `questions` and `researchRequests`. Use Claude reasoning/web/repository-specific tools when needed.
@@ -34,12 +45,13 @@ Authentication, authorization, credentials, permissions, sessions, tokens, and s
 - If a material sensitive decision is unresolved, it must return `sensitive-decision` without applying changes.
 - Claude resolves that behavior/contract and calls `local_engineer` again with `claudeGuidance`.
 - Already-scoped mechanical sensitive changes may still use `local-supervised` with `sensitiveDecisionResolved=true` and mandatory full-diff Claude review under the existing bounded-executor policy.
+- Repo intelligence must never persist secrets, credentials, tokens, user data, or Claude-only sensitive decisions as durable facts.
 
 Cryptography design and the explicitly hard premium categories remain Claude decisions.
 
 ## Evidence and quality
 
-- Local investigation must use bounded repository evidence, searches, existing scripts, and actual validation rather than model memory alone.
+- Local investigation must use bounded repository evidence, searches, existing scripts, actual validation, and relevant fresh repo intelligence rather than model memory alone.
 - Never claim validation passed unless the MCP reports it.
 - Local review is adversarial but correlated with the coder; deterministic tests/typecheck/lint/build remain the primary independent evidence.
 - Failed local review or insufficient confidence must escalate instead of silently approving.
@@ -54,6 +66,7 @@ The same global `local-coder` MCP may be called from multiple Claude sessions an
 - A mutable task operates only on the concrete workspace/worktree supplied by that session.
 - The Windows worker accepts jobs from independent MCP processes. It queues heavy jobs by default to protect GPU/RAM and never overlaps jobs for the same concrete checkout isolation key.
 - Separate validated worktrees may be allowed to overlap only when worker concurrency is explicitly raised; Ollama inference remains serialized.
+- Repo-intelligence writes use a per-repo lock so concurrent worktrees cannot silently overwrite each other's learned state.
 - Do not invent a cross-company scheduler or shared task context inside local-coder. Work Broker / Engineering OS remain authoritative for company/project/task identity.
 
 ## Remote mode
@@ -64,4 +77,4 @@ Project-specific instructions override this global default when they conflict.
 
 Preferred pattern:
 
-`Claude UI -> local_engineer -> local evidence/reason/plan/code/validate/review -> success OR compact escalation -> Claude resolves exact gap -> local_engineer resumes`
+`Claude UI -> local_engineer -> retrieve repo intelligence -> verify current evidence -> reason/plan/code/validate/review -> learn -> success OR compact escalation -> Claude resolves exact gap -> local_engineer resumes`
