@@ -11,8 +11,7 @@ function readArg(name) {
 const host = readArg('--host') ?? process.env.LOCAL_CODER_WINDOWS_HOST;
 const port = readArg('--port') ?? process.env.LOCAL_CODER_WINDOWS_WORKER_PORT ?? '7337';
 const token = readArg('--token') ?? process.env.LOCAL_CODER_WINDOWS_WORKER_TOKEN;
-const model =
-  readArg('--model') ?? process.env.LOCAL_CODER_WINDOWS_MODEL ?? 'qwen3.6:35b-a3b-coding';
+const model = readArg('--model') ?? process.env.LOCAL_CODER_WINDOWS_MODEL ?? 'qwen3.8:27b';
 const projectRoot = path.resolve(import.meta.dirname, '..');
 const serverPath = path.join(projectRoot, 'dist', 'index.js');
 const claudeConfigPath =
@@ -72,6 +71,8 @@ config.mcpServers['local-coder'] = {
     LOCAL_CODER_MODEL: model,
     LOCAL_CODER_FAST_MODEL: model,
     LOCAL_CODER_STRONG_MODEL: model,
+    // 16K is deliberately conservative for the RTX 3060 worker. Repo intelligence
+    // and focused evidence should beat blindly expanding the advertised model context.
     LOCAL_CODER_NUM_CTX: '16384',
     LOCAL_CODER_MAX_CONTEXT_BYTES: '96000',
     LOCAL_CODER_TIMEOUT_MS: '600000'
