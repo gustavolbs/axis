@@ -46,17 +46,23 @@ jobs:
           node --check scripts/install-claude-windows-remote.mjs
           node --check scripts/install-claude-remote-worker.mjs
 
-      - name: Check PowerShell host setup syntax
+      - name: Check PowerShell installer syntax
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path .\scripts\setup-windows-host.ps1),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            exit 1
+          $scripts = @(
+            '.\scripts\setup-windows-host.ps1',
+            '.\scripts\install-windows-worker-task.ps1'
+          )
+          foreach ($script in $scripts) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$script: $($_.Message)" }
+              exit 1
+            }
           }
