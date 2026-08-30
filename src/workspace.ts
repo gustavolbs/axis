@@ -22,12 +22,16 @@ function assertWithinWorkspace(workspace: string, resolvedPath: string, label: s
 }
 
 async function assertRealPathWithinWorkspace(workspace: string, targetPath: string): Promise<void> {
+  // macOS commonly exposes paths such as /var through a symlink to /private/var.
+  // Compare canonical paths so legitimate files inside those workspaces are not
+  // mistaken for escapes while still detecting symlinks that leave the workspace.
+  const realWorkspace = await fs.realpath(workspace);
   let candidate = targetPath;
 
   while (true) {
     try {
       const real = await fs.realpath(candidate);
-      assertWithinWorkspace(workspace, real, 'symlink resolution');
+      assertWithinWorkspace(realWorkspace, real, 'symlink resolution');
       return;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
