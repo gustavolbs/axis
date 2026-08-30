@@ -49,12 +49,17 @@ async function withWorkspace(run: (workspace: string) => Promise<void>) {
 test('executes Claude-decomposed tasks in dependency order and returns one plan diff', async () => {
   await withWorkspace(async (workspace) => {
     await fs.writeFile(
+      path.join(workspace, 'verify.cjs'),
+      [
+        "const fs = require('fs');",
+        "const a = fs.readFileSync('src/a.ts', 'utf8');",
+        "const b = fs.readFileSync('src/b.ts', 'utf8');",
+        "process.exit(a.includes('a = 2') && b.includes('b = 2') ? 0 : 1);"
+      ].join('\n')
+    );
+    await fs.writeFile(
       path.join(workspace, 'package.json'),
-      JSON.stringify({
-        scripts: {
-          test: 'node -e "const fs=require(\\\'fs\\\'); const a=fs.readFileSync(\\\'src/a.ts\\\',\\\'utf8\\\'); const b=fs.readFileSync(\\\'src/b.ts\\\',\\\'utf8\\\'); process.exit(a.includes(\\\'a = 2\\\') && b.includes(\\\'b = 2\\\') ? 0 : 1)"'
-        }
-      })
+      JSON.stringify({ scripts: { test: 'node verify.cjs' } })
     );
 
     let calls = 0;
