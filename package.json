@@ -1,0 +1,27 @@
+{
+  "name": "local-coder-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Global MCP bridge from Claude to a local Ollama coding model.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "tsx --test test/**/*.test.ts",
+    "check": "npm run build && npm test",
+    "install:claude": "node scripts/install-claude-user.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}
