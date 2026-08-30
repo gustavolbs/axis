@@ -11,7 +11,7 @@ import {
   type LocalEngineerResult
 } from './local-engineer.js';
 import type { OllamaClient, OllamaGeneration } from './ollama.js';
-import { resolveWorkspacePath } from './workspace.js';
+import { resolveWorkspace, resolveWorkspacePath } from './workspace.js';
 
 const MEMORY_VERSION = 1 as const;
 const MAX_FACTS = 160;
@@ -201,10 +201,13 @@ async function gitIdentity(workspace: string, suppliedMemoryScopeKey?: string): 
   memoryScopeKey: string;
   identityKey: string;
 }> {
-  const repoRoot = await fs.realpath(await git(workspace, ['rev-parse', '--show-toplevel']));
+  const resolvedWorkspace = await resolveWorkspace(workspace);
+  const repoRoot = await fs.realpath(
+    await git(resolvedWorkspace, ['rev-parse', '--show-toplevel'])
+  );
   const repositoryUrl = await git(repoRoot, ['remote', 'get-url', 'origin']);
   const currentSha = await git(repoRoot, ['rev-parse', 'HEAD']);
-  const relative = path.relative(repoRoot, workspace);
+  const relative = path.relative(repoRoot, resolvedWorkspace);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
     throw new Error('Repo intelligence workspace is outside its Git root.');
   }
@@ -421,13 +424,14 @@ export async function prepareRepoIntelligence(
   config: IntelligenceConfig,
   memoryScopeKey?: string
 ): Promise<RepoIntelligenceSession> {
-  const identity = await gitIdentity(workspace, memoryScopeKey);
+  const resolvedWorkspace = await resolveWorkspace(workspace);
+  const identity = await gitIdentity(resolvedWorkspace, memoryScopeKey);
   const memoryFile = path.join(intelligenceRoot(config), identity.identityKey, 'memory.json');
   return await withMemoryLock(memoryFile, async () => {
     const document = await loadDocument(memoryFile, identity);
     const changed = await changedPathsBetween(identity.repoRoot, document.lastSeenSha, identity.currentSha);
     const changedSet = new Set(changed);
-    await refreshFreshness(workspace, identity.currentSha, document.facts, changedSet);
+    await refreshFreshness(resolvedWorkspace, identity.currentSha, document.facts, changedSet);
     if (changed.length > 0) {
       document.episodes.push({
         id: randomUUID(),
@@ -447,7 +451,7 @@ export async function prepareRepoIntelligence(
     return {
       identityKey: identity.identityKey,
       memoryScopeKey: identity.memoryScopeKey,
-      workspace,
+      workspace: resolvedWorkspace,
       repoRoot: identity.repoRoot,
       repositoryHash: identity.repositoryHash,
       workspaceRelativePath: identity.workspaceRelativePath,
