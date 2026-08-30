@@ -52,6 +52,8 @@ export interface AgenticExecutionResult {
   }>;
 }
 
+type LocalChatClient = Pick<OllamaClient, 'chat'>;
+
 const proposalSchema = z.object({
   summary: z.string(),
   files: z.array(
@@ -261,7 +263,7 @@ function buildDiff(
 }
 
 export async function executeAgenticCodeTask(
-  ollama: OllamaClient,
+  ollama: LocalChatClient,
   config: LocalCoderConfig,
   input: AgenticCodeTask
 ): Promise<AgenticExecutionResult> {
