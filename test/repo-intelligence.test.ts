@@ -35,6 +35,7 @@ async function createRepo(root: string, name: string, remote: string): Promise<s
   await run('git', ['init'], repo);
   await run('git', ['config', 'user.email', 'test@example.com'], repo);
   await run('git', ['config', 'user.name', 'Test User'], repo);
+  await run('git', ['config', 'core.autocrlf', 'false'], repo);
   await run('git', ['remote', 'add', 'origin', remote], repo);
   await fs.writeFile(
     path.join(repo, 'src', 'service.ts'),
@@ -43,7 +44,7 @@ async function createRepo(root: string, name: string, remote: string): Promise<s
   );
   await run('git', ['add', '.'], repo);
   await run('git', ['commit', '-m', 'initial'], repo);
-  return repo;
+  return await fs.realpath(repo);
 }
 
 function successfulResult(workspace: string): LocalEngineerResult {
