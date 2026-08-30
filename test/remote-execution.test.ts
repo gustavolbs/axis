@@ -104,6 +104,8 @@ test('remote workspace captures dirty tracked and safe untracked state without s
     assert.equal(snapshot.repositoryUrl, 'https://github.com/example/remote-test.git');
     assert.match(snapshot.baseSha, /^[0-9a-f]{40}$/);
     assert.equal(snapshot.workspaceRelativePath, '');
+    assert.match(snapshot.isolationKey ?? '', /^[0-9a-f]{24}$/);
+    assert.match(snapshot.memoryScopeKey ?? '', /^[0-9a-f]{24}$/);
 
     const patch = Buffer.from(snapshot.dirtyPatchBase64, 'base64').toString('utf8');
     assert.match(patch, /src\/value\.ts/);
@@ -163,7 +165,7 @@ test('remote result apply is compare-and-swap and refuses stale worker output', 
   }
 });
 
-test('Claude remote-worker installer preserves unrelated MCPs and writes strict remote mode', async () => {
+test('Claude remote-worker installer preserves unrelated MCPs and defaults to Qwen3.8', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-remote-installer-'));
   try {
     const configPath = path.join(root, '.claude.json');
@@ -179,9 +181,7 @@ test('Claude remote-worker installer preserves unrelated MCPs and writes strict 
         '--host',
         '192.168.1.50',
         '--token',
-        'worker-secret',
-        '--model',
-        'qwen3.6:35b-a3b-coding'
+        'worker-secret'
       ],
       {
         cwd: process.cwd(),
@@ -200,7 +200,8 @@ test('Claude remote-worker installer preserves unrelated MCPs and writes strict 
     assert.equal(env.LOCAL_CODER_EXECUTION_MODE, 'remote');
     assert.equal(env.LOCAL_CODER_REMOTE_WORKER_URL, 'http://192.168.1.50:7337');
     assert.equal(env.LOCAL_CODER_REMOTE_WORKER_TOKEN, 'worker-secret');
-    assert.equal(env.LOCAL_CODER_MODEL, 'qwen3.6:35b-a3b-coding');
+    assert.equal(env.LOCAL_CODER_MODEL, 'qwen3.8:27b');
+    assert.equal(env.LOCAL_CODER_NUM_CTX, '16384');
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
