@@ -4,6 +4,7 @@ import * as z from 'zod/v4';
 import type { LocalCoderConfig } from './config.js';
 import type { ExecutionBackend } from './execution-runtime.js';
 import type { LocalEngineerResult } from './local-engineer.js';
+import type { RepoIntelligenceRunSummary } from './repo-intelligence.js';
 import { RunStore } from './run-store.js';
 import { TelemetryStore } from './telemetry.js';
 
@@ -42,11 +43,24 @@ function reasoningStats(result: LocalEngineerResult) {
 function compactResult(result: LocalEngineerResult): Record<string, unknown> {
   const localReasoning = reasoningStats(result);
   const validationPassed = result.validation.every((item) => item.ok);
+  const repoIntelligence = (
+    result as LocalEngineerResult & { repoIntelligence?: RepoIntelligenceRunSummary }
+  ).repoIntelligence;
 
   return {
     status: result.status,
     phase: result.phase,
     summary: result.summary,
+    repoIntelligence: repoIntelligence
+      ? {
+          enabled: repoIntelligence.enabled,
+          familiarity: repoIntelligence.familiarity,
+          retrievedFacts: repoIntelligence.retrievedFacts,
+          learnedFacts: repoIntelligence.learnedFacts,
+          gitChangesDetected: repoIntelligence.gitChangesDetected,
+          reason: repoIntelligence.reason
+        }
+      : undefined,
     plan: result.plan
       ? {
           confidence: result.plan.confidence,
@@ -80,7 +94,7 @@ function compactResult(result: LocalEngineerResult): Record<string, unknown> {
     escalation: result.escalation,
     nextAction:
       result.status === 'success'
-        ? 'Local investigation, planning, implementation, deterministic validation, and adversarial review completed. Do not redo the broad implementation in Claude. Fetch run details lazily only if the result is suspicious or the user asks for them.'
+        ? 'Local investigation, planning, implementation, deterministic validation, adversarial review, and repo-intelligence learning completed. Do not redo the broad implementation in Claude. Fetch run details lazily only if the result is suspicious or the user asks for them.'
         : 'Resolve only the exact escalation questions/research with Claude, then call local_engineer again with the same goal plus claudeGuidance containing the resolved decision/evidence. Do not restart the whole implementation in Claude unless the escalation explicitly requires premium-only execution.'
   };
 }
@@ -103,7 +117,7 @@ export function registerLocalEngineerTools(
     {
       title: 'Local Software Engineer',
       description:
-        'Preferred entry point for open-ended repository engineering. The configured local/remote worker performs bounded evidence gathering, high-effort local reasoning/planning, coding, validation, adversarial review, and limited repair. If premium reasoning or external research is needed it returns a compact escalation capsule; Claude should resolve only that gap and call this tool again with claudeGuidance.',
+        'Preferred entry point for open-ended repository engineering. The configured local/remote worker uses persistent per-repository intelligence plus bounded evidence gathering, high-effort local reasoning/planning, coding, validation, adversarial review, and limited repair. If premium reasoning or external research is needed it returns a compact escalation capsule; Claude should resolve only that gap and call this tool again with claudeGuidance.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         goal: z.string().min(1).max(20_000),
