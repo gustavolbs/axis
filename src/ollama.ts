@@ -7,6 +7,10 @@ interface OllamaTagsResponse {
   models?: Array<{ name?: string; model?: string }>;
 }
 
+interface OllamaPsResponse {
+  models?: Array<{ name?: string; model?: string }>;
+}
+
 interface OllamaChatResponse {
   model?: string;
   message?: {
@@ -32,6 +36,7 @@ export interface OllamaHealth {
   adaptiveModelsEnabled: boolean;
   numCtx: number;
   maxParallelInferences: 1;
+  globalInferenceLock: true;
   availableModels: string[];
 }
 
@@ -52,7 +57,6 @@ export interface OllamaChatOptions {
 
 export class OllamaClient {
   private inferenceTail: Promise<void> = Promise.resolve();
-  private activeModel?: string;
 
   constructor(private readonly config: LocalCoderConfig) {}
 
@@ -77,6 +81,7 @@ export class OllamaClient {
       adaptiveModelsEnabled: this.config.adaptiveModelsEnabled ?? false,
       numCtx: this.config.ollamaNumCtx ?? 16_384,
       maxParallelInferences: 1,
+      globalInferenceLock: true,
       availableModels
     };
   }
@@ -87,60 +92,60 @@ export class OllamaClient {
     format?: 'json' | Record<string, unknown>,
     runtime: OllamaChatOptions = {}
   ): Promise<OllamaGeneration> {
-    return await this.enqueue(async () => {
-      const model = runtime.model ?? this.config.model;
-      const strongModel = this.config.strongModel ?? this.config.model;
-      const keepAlive =
-        runtime.keepAlive ??
-        (model === strongModel
-          ? this.config.strongModelKeepAlive ?? '30s'
-          : this.config.fastModelKeepAlive ?? '90s');
+    return await this.enqueue(async () =>
+      await this.withGlobalInferenceLock(async () => {
+        const model = runtime.model ?? this.config.model;
+        const strongModel = this.config.strongModel ?? this.config.model;
+        const keepAlive =
+          runtime.keepAlive ??
+          (model === strongModel
+            ? this.config.strongModelKeepAlive ?? '30s'
+            : this.config.fastModelKeepAlive ?? '90s');
 
-      // Never let the fast and strong models coexist because loading both is exactly
-      // the memory-pressure scenario adaptive execution is meant to avoid.
-      if (this.activeModel && this.activeModel !== model) {
-        await this.unloadUnlocked(this.activeModel);
-      }
+        // The lock is shared by every local-coder MCP process. Once held, inspect Ollama's
+        // actual loaded-model state so a second Claude Code session cannot leave the other
+        // tier resident while this process starts a new inference.
+        await this.unloadOtherConfiguredTier(model);
 
-      const response = await this.request('/api/chat', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          stream: false,
-          keep_alive: keepAlive,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          ...(format ? { format } : {}),
-          options: {
-            temperature: format ? 0 : 0.2,
-            num_ctx: runtime.numCtx ?? this.config.ollamaNumCtx ?? 16_384
-          }
-        })
-      });
+        const response = await this.request('/api/chat', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            stream: false,
+            keep_alive: keepAlive,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ],
+            ...(format ? { format } : {}),
+            options: {
+              temperature: format ? 0 : 0.2,
+              num_ctx: runtime.numCtx ?? this.config.ollamaNumCtx ?? 16_384
+            }
+          })
+        });
 
-      const payload = (await response.json()) as OllamaChatResponse;
-      const content = payload.message?.content?.trim();
+        const payload = (await response.json()) as OllamaChatResponse;
+        const content = payload.message?.content?.trim();
 
-      if (!content) {
-        throw new Error('Ollama returned an empty assistant message.');
-      }
+        if (!content) {
+          throw new Error('Ollama returned an empty assistant message.');
+        }
 
-      const generation: OllamaGeneration = {
-        content,
-        model: payload.model ?? model,
-        doneReason: payload.done_reason,
-        totalDurationNs: payload.total_duration,
-        promptTokens: payload.prompt_eval_count,
-        completionTokens: payload.eval_count
-      };
+        const generation: OllamaGeneration = {
+          content,
+          model: payload.model ?? model,
+          doneReason: payload.done_reason,
+          totalDurationNs: payload.total_duration,
+          promptTokens: payload.prompt_eval_count,
+          completionTokens: payload.eval_count
+        };
 
-      this.activeModel = keepAlive === 0 || keepAlive === '0' ? undefined : model;
-      await this.recordInference(generation);
-      return generation;
-    });
+        await this.recordInference(generation);
+        return generation;
+      })
+    );
   }
 
   private async enqueue<T>(run: () => Promise<T>): Promise<T> {
@@ -152,13 +157,75 @@ export class OllamaClient {
     return await current;
   }
 
+  private async withGlobalInferenceLock<T>(run: () => Promise<T>): Promise<T> {
+    const lockPath = path.join(path.dirname(this.config.telemetryPath), 'inference.lock');
+    const staleAfterMs = Math.max(this.config.requestTimeoutMs + 60_000, 300_000);
+    const deadline = Date.now() + staleAfterMs * 2;
+    await fs.mkdir(path.dirname(lockPath), { recursive: true });
+
+    while (true) {
+      try {
+        const handle = await fs.open(lockPath, 'wx');
+        try {
+          await handle.writeFile(
+            JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }),
+            'utf8'
+          );
+          return await run();
+        } finally {
+          await handle.close().catch(() => undefined);
+          await fs.rm(lockPath, { force: true }).catch(() => undefined);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+
+        try {
+          const stat = await fs.stat(lockPath);
+          if (Date.now() - stat.mtimeMs > staleAfterMs) {
+            await fs.rm(lockPath, { force: true });
+            continue;
+          }
+        } catch (statError) {
+          if ((statError as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw statError;
+        }
+
+        if (Date.now() >= deadline) {
+          throw new Error(
+            `Timed out waiting for the machine-wide local-coder inference lock at ${lockPath}.`
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+  }
+
+  private async unloadOtherConfiguredTier(requestedModel: string): Promise<void> {
+    const fastModel = this.config.model;
+    const strongModel = this.config.strongModel ?? fastModel;
+    const otherModel = requestedModel === fastModel ? strongModel : fastModel;
+    if (otherModel === requestedModel) return;
+
+    const loaded = await this.loadedModelsUnlocked();
+    if (loaded.includes(otherModel)) {
+      await this.unloadUnlocked(otherModel);
+    }
+  }
+
+  private async loadedModelsUnlocked(): Promise<string[]> {
+    const response = await this.request('/api/ps', { method: 'GET' });
+    const payload = (await response.json()) as OllamaPsResponse;
+    return (payload.models ?? [])
+      .map((entry) => entry.model ?? entry.name)
+      .filter((value): value is string => Boolean(value));
+  }
+
   private async unloadUnlocked(model: string): Promise<void> {
     await this.request('/api/generate', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model, prompt: '', stream: false, keep_alive: 0 })
     });
-    if (this.activeModel === model) this.activeModel = undefined;
   }
 
   private async recordInference(generation: OllamaGeneration): Promise<void> {
