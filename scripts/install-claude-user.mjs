@@ -40,7 +40,13 @@ config.mcpServers['local-coder'] = {
   args: [serverPath],
   env: {
     OLLAMA_BASE_URL: 'http://127.0.0.1:11434',
-    LOCAL_CODER_MODEL: 'qwen2.5-coder:14b',
+    LOCAL_CODER_ADAPTIVE_MODELS: 'true',
+    LOCAL_CODER_FAST_MODEL: 'qwen2.5-coder:7b',
+    LOCAL_CODER_STRONG_MODEL: 'qwen2.5-coder:14b',
+    LOCAL_CODER_NUM_CTX: '16384',
+    LOCAL_CODER_MAX_CONTEXT_BYTES: '96000',
+    LOCAL_CODER_FAST_KEEP_ALIVE: '90s',
+    LOCAL_CODER_STRONG_KEEP_ALIVE: '30s',
     LOCAL_CODER_TIMEOUT_MS: '180000'
   }
 };
@@ -50,4 +56,6 @@ fs.writeFileSync(claudeConfigPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8
 console.log(`Installed user-scoped MCP server "local-coder" in ${claudeConfigPath}.`);
 console.log(`Node: ${process.execPath}`);
 console.log(`Server: ${serverPath}`);
+console.log('Adaptive models: qwen2.5-coder:7b -> qwen2.5-coder:14b on retry.');
+console.log('Local inference is serialized by the MCP; fast/strong models are never kept loaded together.');
 console.log('Fully quit and reopen Claude Code Desktop before testing it.');
