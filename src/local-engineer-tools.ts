@@ -5,6 +5,7 @@ import type { LocalCoderConfig } from './config.js';
 import type { ExecutionBackend } from './execution-runtime.js';
 import type { LocalEngineerResult } from './local-engineer.js';
 import { RunStore } from './run-store.js';
+import { TelemetryStore } from './telemetry.js';
 
 function toolResult(value: Record<string, unknown>) {
   return {
@@ -22,17 +23,24 @@ function durationNsToMs(value: number | undefined): number {
   return value ? value / 1_000_000 : 0;
 }
 
-function compactResult(result: LocalEngineerResult): Record<string, unknown> {
+function reasoningStats(result: LocalEngineerResult) {
   const modelCalls = result.modelCalls ?? [];
-  const promptTokens = modelCalls.reduce((sum, call) => sum + (call.promptTokens ?? 0), 0);
-  const completionTokens = modelCalls.reduce(
-    (sum, call) => sum + (call.completionTokens ?? 0),
-    0
-  );
-  const reasoningDurationMs = modelCalls.reduce(
-    (sum, call) => sum + durationNsToMs(call.totalDurationNs),
-    0
-  );
+  return {
+    calls: modelCalls.length,
+    promptTokens: modelCalls.reduce((sum, call) => sum + (call.promptTokens ?? 0), 0),
+    completionTokens: modelCalls.reduce(
+      (sum, call) => sum + (call.completionTokens ?? 0),
+      0
+    ),
+    durationMs: modelCalls.reduce(
+      (sum, call) => sum + durationNsToMs(call.totalDurationNs),
+      0
+    )
+  };
+}
+
+function compactResult(result: LocalEngineerResult): Record<string, unknown> {
+  const localReasoning = reasoningStats(result);
   const validationPassed = result.validation.every((item) => item.ok);
 
   return {
@@ -68,12 +76,7 @@ function compactResult(result: LocalEngineerResult): Record<string, unknown> {
         }
       : undefined,
     repairRounds: result.repairRounds,
-    localReasoning: {
-      calls: modelCalls.length,
-      promptTokens,
-      completionTokens,
-      durationMs: reasoningDurationMs
-    },
+    localReasoning,
     escalation: result.escalation,
     nextAction:
       result.status === 'success'
@@ -90,6 +93,10 @@ export function registerLocalEngineerTools(
   }
 ): void {
   const runs = new RunStore(deps.config.runStorePath);
+  const telemetry = new TelemetryStore(
+    deps.config.telemetryPath,
+    deps.config.telemetryEnabled
+  );
 
   server.registerTool(
     'local_engineer',
@@ -122,6 +129,37 @@ export function registerLocalEngineerTools(
     async (input) => {
       try {
         const result = await deps.execution.executeEngineer(input);
+        const localReasoning = reasoningStats(result);
+        const execution = result.execution;
+        const promptTokens =
+          localReasoning.promptTokens + (execution?.totals.promptTokens ?? 0);
+        const completionTokens =
+          localReasoning.completionTokens + (execution?.totals.completionTokens ?? 0);
+        const generationDurationMs =
+          localReasoning.durationMs + (execution?.totals.generationDurationMs ?? 0);
+        const validationDurationMs = result.validation.reduce(
+          (sum, item) => sum + item.durationMs,
+          0
+        );
+        const model =
+          result.modelCalls.at(-1)?.model ??
+          execution?.taskResults.flatMap((task) => task.execution.generations).at(-1)?.model ??
+          deps.config.model;
+
+        await telemetry.record({
+          kind: 'engineering',
+          status: result.status,
+          model,
+          repairRounds: result.repairRounds,
+          promptTokens,
+          completionTokens,
+          generationDurationMs,
+          validationDurationMs,
+          changedFiles: result.changedFiles.length,
+          tasks: result.plan?.tasks.length ?? 0,
+          completedTasks: execution?.totals.completedTasks ?? 0
+        });
+
         const summary = compactResult(result);
         const runId = await runs.save('engineer', summary, result);
         return toolResult({
@@ -131,6 +169,15 @@ export function registerLocalEngineerTools(
             'Use get_local_run(runId, "diff"|"validation"|"full") only when detailed evidence is actually needed.'
         });
       } catch (error) {
+        try {
+          await telemetry.record({
+            kind: 'engineering',
+            status: 'error',
+            model: deps.config.model
+          });
+        } catch {
+          // Telemetry must never hide the original tool error.
+        }
         return errorResult(error);
       }
     }
