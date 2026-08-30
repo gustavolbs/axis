@@ -4,10 +4,9 @@ import {
   type AgenticCodeTask,
   type AgenticExecutionResult
 } from './executor.js';
-import {
-  executeLocalEngineer,
-  type LocalEngineerInput,
-  type LocalEngineerResult
+import type {
+  LocalEngineerInput,
+  LocalEngineerResult
 } from './local-engineer.js';
 import type { OllamaClient, OllamaGeneration } from './ollama.js';
 import {
@@ -15,6 +14,7 @@ import {
   type LocalExecutionPlan,
   type LocalExecutionPlanResult
 } from './orchestrator.js';
+import { executeLocalEngineerWithRepoIntelligence } from './repo-intelligence.js';
 import { RemoteWorkerClient, RemoteWorkerError } from './remote-worker-client.js';
 
 export interface ChatClient {
@@ -53,7 +53,7 @@ class LocalExecutionBackend implements ExecutionBackend {
   }
 
   async executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult> {
-    return (await executeLocalEngineer(this.ollama, this.config, input)).result;
+    return (await executeLocalEngineerWithRepoIntelligence(this.ollama, this.config, input)).result;
   }
 }
 
