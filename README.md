@@ -3,31 +3,36 @@
 A global MCP bridge that lets Claude keep expensive reasoning/review work while delegating bounded implementation to a coding model running locally in Ollama.
 
 ```text
-Claude Code Desktop / Code tab
+request
+  |
+  +--> deterministic tool? --> lint/test/format/search directly
+  |
+  +--> classify_local_code_task
           |
-          | plan + bounded TaskSpec
-          v
-   local-coder-mcp
+          +--> claude ------> discovery / architecture / risky reasoning
           |
-          | local files + Ollama
-          v
- qwen2.5-coder:14b
-          |
-          | edit -> validate -> retry
-          v
-     exact task diff
-          |
-          v
-       Claude review
+          +--> local -------> execute_local_code_task
+                                  |
+                                  +--> bounded files
+                                  +--> Ollama local model
+                                  +--> edit -> validate -> retry
+                                  +--> diff / success / escalation
+                                          |
+                                          v
+                                     Claude review
 ```
 
-## v0.2 capabilities
+## v0.3 capabilities
 
-The server exposes three MCP tools:
+The server exposes seven MCP tools:
 
-- `local_coder_health` — verifies Ollama connectivity and checks that the configured model exists.
-- `delegate_code_task` — read-only delegation for cheap code/patch/analysis drafting.
-- `execute_local_code_task` — bounded local implementation with explicit workspace/file permissions, validation, retry, rollback, and an invocation-scoped diff for Claude review.
+- `local_coder_health` — verify Ollama connectivity and configured model availability.
+- `classify_local_code_task` — deterministic routing classifier: `deterministic`, `local`, or `claude`.
+- `discover_local_workspace` — bounded workspace tree/package-script discovery without following symlinks.
+- `search_local_workspace` — literal text/code search across bounded safe workspace files.
+- `delegate_code_task` — read-only local-model delegation for cheap drafting.
+- `execute_local_code_task` — bounded local implementation with explicit edit permissions, validation, retry, rollback, and exact diff.
+- `local_coder_telemetry` — aggregate routing, success/escalation, retry, token, and duration telemetry.
 
 `execute_local_code_task` is intentionally not a general shell agent. Claude must decide the implementation boundary first and explicitly provide the files that may be edited.
 
@@ -37,8 +42,6 @@ The server exposes three MCP tools:
 - Ollama running locally
 - `qwen2.5-coder:14b` installed, or another model configured through `LOCAL_CODER_MODEL`
 - Claude Code Desktop / Claude Code with local MCP support
-
-Verify Ollama first:
 
 ```bash
 ollama list
@@ -55,7 +58,7 @@ npm run check
 npm run build
 ```
 
-For an existing clone:
+Existing clone:
 
 ```bash
 git pull
@@ -66,11 +69,7 @@ npm run build
 
 ## Install globally in Claude Code Desktop
 
-You do **not** need the Claude CLI for this repository's installer.
-
-Claude Code Desktop and the Claude Code CLI share user-scoped MCP configuration in `~/.claude.json`. The installer adds `local-coder` at user scope so it is available across local projects in the **Code** tab.
-
-It creates a timestamped backup before modifying an existing `~/.claude.json`.
+The installer adds `local-coder` at user scope in `~/.claude.json` and creates a timestamped backup before modifying an existing configuration.
 
 ```bash
 npm run install:claude
@@ -78,26 +77,33 @@ npm run install:claude
 
 Then fully quit and reopen Claude Code Desktop.
 
-The generated entry is equivalent to:
+> This is for Claude Code / the Code tab. A manual user-scoped stdio MCP does not need to appear in the graphical Plugins/Connectors UI.
 
-```json
-{
-  "mcpServers": {
-    "local-coder": {
-      "type": "stdio",
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/local-coder-mcp/dist/index.js"],
-      "env": {
-        "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
-        "LOCAL_CODER_MODEL": "qwen2.5-coder:14b",
-        "LOCAL_CODER_TIMEOUT_MS": "180000"
-      }
-    }
-  }
-}
+## Install the global routing policy
+
+The routing policy is stored separately from project instructions and installs to:
+
+```text
+~/.claude/rules/local-coder.md
 ```
 
-> This is for Claude Code / the Code tab. The regular Claude chat surface and graphical Connectors/Plugins UI are separate concepts; a manual user-scoped stdio MCP does not need to appear there.
+Install/update it with:
+
+```bash
+npm run install:routing
+```
+
+The policy tells Claude to:
+
+1. prefer deterministic tools when no LLM is needed;
+2. call `classify_local_code_task` when routing is not obvious;
+3. keep discovery, architecture, security-sensitive, cross-cutting, and unknown-root-cause work in Claude;
+4. use discovery/search only to identify minimal relevant context;
+5. delegate bounded known implementations to `execute_local_code_task`;
+6. review the returned diff and validation evidence;
+7. take over when local execution escalates.
+
+Project-level rules remain able to override the global policy.
 
 ## Test without Claude
 
@@ -119,11 +125,36 @@ Run `local_coder_health`. Expected output includes:
 }
 ```
 
+## Automatic task classifier
+
+Example classifier input:
+
+```json
+{
+  "task": "Add Vitest coverage for the existing mapper and fix the known TypeScript error.",
+  "solutionKnown": true,
+  "requiresDiscovery": false,
+  "requiresArchitecture": false,
+  "estimatedFiles": 2,
+  "validationKnown": true
+}
+```
+
+Expected route: `local`.
+
+The classifier deliberately routes architecture, discovery, broad changes, authentication/authorization, cryptography/secrets, destructive migrations, production infrastructure, concurrency, incidents/unknown debugging, and subtle performance investigations back to Claude. Pure command execution such as "run the test suite" routes to `deterministic` instead of either LLM.
+
+The classifier is a guardrail, not a security boundary. Project-specific instructions still win.
+
+## Workspace discovery/search
+
+Use `discover_local_workspace` to identify the repository shape and existing package scripts without giving the local model the whole repo. It skips generated/dependency directories such as `.git`, `node_modules`, `.next`, `dist`, `build`, `coverage`, and `.turbo`, and does not follow symlink entries.
+
+Use `search_local_workspace` for bounded literal case-insensitive text search. It returns file/line/preview matches and honors the same workspace safety rules.
+
+These tools are read-only and are intended to help Claude construct a minimal `editableFiles + contextFiles` TaskSpec.
+
 ## Agentic execution example
-
-`execute_local_code_task` accepts an absolute workspace, explicit editable files, optional read-only context files, and validation commands.
-
-Conceptual input:
 
 ```json
 {
@@ -150,20 +181,7 @@ Conceptual input:
 }
 ```
 
-The local executor:
-
-1. snapshots every editable file at invocation time;
-2. reads only `editableFiles + contextFiles`;
-3. sends those contents and the bounded task to the local Ollama model;
-4. accepts complete-file edits only for `editableFiles`;
-5. runs validation commands sequentially;
-6. feeds validation failure back to the local model for another attempt;
-7. returns an exact diff relative to the invocation snapshot;
-8. returns `status: "success"` when validation passes;
-9. returns `status: "escalated"` after the local retry budget is exhausted;
-10. restores the invocation snapshot on failure by default.
-
-Claude can then review the returned diff instead of generating the implementation itself.
+The local executor snapshots every editable file, reads only explicitly supplied files, requests structured complete-file edits from Ollama, writes only allowlisted files, validates sequentially, retries with validation feedback, and returns an invocation-scoped diff. Failed tasks return `status: "escalated"` and roll back by default.
 
 ## Safety boundaries
 
@@ -180,24 +198,57 @@ Claude can then review the returned diff instead of generating the implementatio
 
 ### Command execution
 
-The local model does **not** choose shell commands.
+The local model does **not** choose shell commands. Validation commands are supplied by the caller and executed with `shell: false`.
 
-Validation commands are supplied by the caller and executed with `shell: false`. Default executable allowlist:
+Default executable allowlist:
 
 ```text
 npm, pnpm, yarn, bun
 ```
 
-Package-manager invocations are additionally restricted to validation-oriented subcommands:
+Package-manager invocations are additionally restricted to validation-oriented subcommands. Operations such as package installation, arbitrary `sh -c`, and executable paths are rejected.
+
+## Telemetry
+
+Telemetry is enabled by default and stores JSONL locally at:
 
 ```text
-npm   -> test, run
-pnpm  -> test, run, exec
-yarn  -> test, run
-bun   -> test, run
+~/.local-coder-mcp/telemetry.jsonl
 ```
 
-This intentionally rejects operations such as `npm install`, `pnpm add`, arbitrary `sh -c`, and executable paths.
+It intentionally does **not** persist prompts or source-code contents. Events contain aggregate metadata such as route, status, attempts, token counts, generation duration, validation duration, and changed-file count.
+
+Call `local_coder_telemetry` to get a summary for a lookback window. It reports:
+
+- classifier route counts;
+- local execution success/escalation/error rate;
+- retry rate and average attempts;
+- changed-file count;
+- local prompt/completion/total tokens;
+- generation and validation time;
+- local API inference cost (`$0`).
+
+The cost field does not pretend to estimate hardware depreciation, electricity, or Claude planning/review usage.
+
+Disable or relocate telemetry with configuration variables below.
+
+## Benchmark harness
+
+A benchmark runner is included so local models can be compared on **real bounded repository tasks**, not synthetic snippets.
+
+1. Create a disposable worktree/repository state for benchmark tasks.
+2. Copy `benchmarks/manifest.example.json` and replace the example with real tasks, explicit editable/context files, and validation commands.
+3. Run one model:
+
+```bash
+LOCAL_CODER_MODEL=qwen2.5-coder:14b npm run benchmark -- benchmarks/my-real-tasks.json
+```
+
+4. Run another model with the same manifest.
+
+The runner restores each task's editable files after execution and writes ignored JSON reports under `benchmarks/results/` containing success rate, attempts, tokens, latency, validation outcome, and classifier result.
+
+Do not benchmark against a worktree with important uncommitted changes. Validation tools may create their own generated artifacts outside `editableFiles`, so disposable worktrees are recommended.
 
 ## Configuration
 
@@ -210,33 +261,8 @@ This intentionally rejects operations such as `npm install`, `pnpm add`, arbitra
 | `LOCAL_CODER_MAX_FILE_BYTES` | `120000` | Maximum size of one supplied/generated file |
 | `LOCAL_CODER_MAX_CONTEXT_BYTES` | `600000` | Maximum combined repository file context |
 | `LOCAL_CODER_ALLOWED_COMMANDS` | `npm,pnpm,yarn,bun` | Validation executable allowlist |
-
-## Result contract
-
-Successful execution returns data shaped roughly like:
-
-```json
-{
-  "status": "success",
-  "attempts": 1,
-  "changedFiles": ["src/profile/UserProfile.tsx"],
-  "diff": "...",
-  "validation": [
-    { "command": "npm", "args": ["test"], "ok": true }
-  ],
-  "rolledBack": false,
-  "summary": "Implemented loading state using the existing Spinner.",
-  "generations": [
-    {
-      "model": "qwen2.5-coder:14b",
-      "promptTokens": 1234,
-      "completionTokens": 420
-    }
-  ]
-}
-```
-
-Failure after the retry budget returns `status: "escalated"`. With the default `rollbackOnFailure: true`, the attempted diff is still returned for diagnosis but the editable files are restored before control goes back to Claude.
+| `LOCAL_CODER_TELEMETRY_ENABLED` | `true` | Enable aggregate local telemetry |
+| `LOCAL_CODER_TELEMETRY_PATH` | `~/.local-coder-mcp/telemetry.jsonl` | Telemetry JSONL path |
 
 ## Roadmap
 
@@ -251,12 +277,12 @@ Failure after the retry budget returns `status: "escalated"`. With the default `
 - [x] local retry loop
 - [x] invocation-scoped diff
 - [x] rollback + semantic escalation contract
-- [x] basic generation telemetry
-- [ ] Claude global delegation/routing policy
-- [ ] automatic task classifier
-- [ ] richer success-rate and token/cost telemetry
-- [ ] optional workspace discovery/search tools for the local executor
-- [ ] benchmark local models on real repository tasks
+- [x] Claude global delegation/routing policy
+- [x] automatic deterministic task classifier
+- [x] richer success-rate, retry, token, latency, and local API-cost telemetry
+- [x] bounded workspace discovery/search tools
+- [x] repeatable real-repository benchmark harness
+- [ ] benchmark candidate local models on the same real repository task suite and choose/update the default model from measured results
 
 ## License
 

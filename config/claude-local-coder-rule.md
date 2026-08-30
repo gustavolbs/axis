@@ -4,12 +4,16 @@ Use the `local-coder` MCP to reduce expensive model work without reducing code q
 
 ## Default workflow
 
-1. Use Claude for problem framing, repository inspection, ambiguity resolution, architecture, and choosing the implementation approach.
-2. Before writing straightforward code yourself, check whether the task is safe to delegate to `execute_local_code_task`.
-3. Delegate when the implementation is bounded and the approach is already clear.
-4. Give the local executor an absolute workspace path, an explicit editable-file allowlist, only the relevant context files, hard constraints, and the narrowest useful validation commands.
-5. When the executor returns `success`, review its diff and validation output. Accept it if correct; make only necessary corrections.
-6. When it returns `escalated`, validation is inconclusive, or the diff is suspicious, take over with Claude.
+1. Use deterministic repository tools directly for formatting, grep/search, generators, test execution, lint, typecheck, and build when no code reasoning is required.
+2. For a coding task whose route is not obvious, call `classify_local_code_task` before implementing it. Supply whether the solution is known, whether discovery/architecture is still required, estimated edit scope, known validation, and relevant risk tags.
+3. If the classifier returns `claude`, keep reasoning/implementation in Claude until the risky or ambiguous part is resolved.
+4. If it returns `deterministic`, use the appropriate non-LLM repository tool rather than Claude or the local model.
+5. If it returns `local`, delegate the bounded implementation to `execute_local_code_task`.
+6. Before delegation, use `discover_local_workspace` or `search_local_workspace` only when needed to identify the minimum relevant files/scripts. Do not dump the repository into the local model.
+7. Give the local executor an absolute workspace path, an explicit editable-file allowlist, only the relevant context files, hard constraints, and the narrowest useful validation commands.
+8. When the executor returns `success`, review its diff and validation output. Accept it if correct; make only necessary corrections.
+9. When it returns `escalated`, validation is inconclusive, or the diff is suspicious, take over with Claude.
+10. Use `local_coder_telemetry` when evaluating routing effectiveness or deciding whether thresholds should change.
 
 ## Prefer local execution for
 
@@ -28,6 +32,7 @@ Do not delegate when the task primarily requires architecture or discovery, has 
 ## Delegation boundaries
 
 - Prefer `execute_local_code_task` for real repository edits. Use `delegate_code_task` only for read-only snippets or bounded code generation that should not touch files.
+- Treat `classify_local_code_task` as a routing guardrail, not as a substitute for project-specific safety instructions.
 - Do not ask the local model to discover architecture or decide product behavior.
 - Do not provide the entire repository as context. Send only files needed to perform the known implementation.
 - Keep `editableFiles` explicit and minimal. Do not broaden the allowlist merely to avoid thinking about scope.
@@ -39,3 +44,5 @@ Do not delegate when the task primarily requires architecture or discovery, has 
 ## Cost discipline
 
 For a task that satisfies the delegation criteria, prefer one well-specified local execution call over implementing the same code through many Claude edit/tool turns. Do not delegate trivial deterministic work that a formatter, codemod, grep, compiler, test runner, or other non-LLM tool can perform more reliably.
+
+Telemetry intentionally records only aggregate routing/execution metadata (status, attempts, tokens, durations, counts). It does not persist task prompts or source-code contents.

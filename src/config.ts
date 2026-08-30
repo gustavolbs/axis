@@ -1,3 +1,6 @@
+import os from 'node:os';
+import path from 'node:path';
+
 export interface LocalCoderConfig {
   ollamaBaseUrl: string;
   model: string;
@@ -6,6 +9,8 @@ export interface LocalCoderConfig {
   maxFileBytes: number;
   maxContextBytes: number;
   allowedValidationCommands: Set<string>;
+  telemetryEnabled: boolean;
+  telemetryPath: string;
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -25,6 +30,11 @@ function parseCommandSet(value: string | undefined): Set<string> {
   );
 }
 
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  return !['0', 'false', 'no', 'off'].includes(value.trim().toLowerCase());
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConfig {
   return {
     ollamaBaseUrl: (env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434').replace(/\/$/, ''),
@@ -33,6 +43,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
     validationTimeoutMs: parsePositiveInt(env.LOCAL_CODER_VALIDATION_TIMEOUT_MS, 180_000),
     maxFileBytes: parsePositiveInt(env.LOCAL_CODER_MAX_FILE_BYTES, 120_000),
     maxContextBytes: parsePositiveInt(env.LOCAL_CODER_MAX_CONTEXT_BYTES, 600_000),
-    allowedValidationCommands: parseCommandSet(env.LOCAL_CODER_ALLOWED_COMMANDS)
+    allowedValidationCommands: parseCommandSet(env.LOCAL_CODER_ALLOWED_COMMANDS),
+    telemetryEnabled: parseBoolean(env.LOCAL_CODER_TELEMETRY_ENABLED, true),
+    telemetryPath:
+      env.LOCAL_CODER_TELEMETRY_PATH ?? path.join(os.homedir(), '.local-coder-mcp', 'telemetry.jsonl')
   };
 }
