@@ -6,6 +6,7 @@ import { classifyTask } from './classifier.js';
 import { loadConfig } from './config.js';
 import { discoverWorkspace, searchWorkspace } from './discovery.js';
 import { createExecutionRuntime } from './execution-runtime.js';
+import { registerLocalEngineerTools } from './local-engineer-tools.js';
 import { OllamaClient } from './ollama.js';
 import { buildTaskPrompt, LOCAL_CODER_SYSTEM_PROMPT } from './prompt.js';
 import { TelemetryStore, type TelemetryEvent } from './telemetry.js';
@@ -55,10 +56,10 @@ const routingSchema = z.object({
 
 function createServer(): McpServer {
   const server = new McpServer(
-    { name: 'local-coder-mcp', version: '0.8.0' },
+    { name: 'local-coder-mcp', version: '0.10.0' },
     {
       instructions:
-        'Coding execution and token-saving context tools. Execution can be local or delegated to an authenticated Windows worker. Prefer compact context/results. Claude owns architecture, ambiguity, sensitive decisions and final review; already-resolved auth/credential/permission/security implementation may use local-supervised with mandatory full-diff Claude review. In remote mode never silently move heavy work back to the Mac.'
+        'Claude is the user interface, but local-coder should own as much normal engineering work as possible. For an open-ended repository goal prefer local_engineer: it retrieves persistent evidence-backed repo intelligence, verifies current source, performs high-effort local investigation/planning, coding, deterministic validation, adversarial review, bounded repair, and learns reusable source-backed facts after successful work. Current source/tests always override remembered repo facts. If local_engineer returns needs-claude/escalated, Claude should resolve only the exact escalation questions or external research requests, then call local_engineer again with claudeGuidance. Keep existing bounded compact executors for already-known changes. In strict remote mode never silently move heavy work back to the Mac.'
     }
   );
 
@@ -67,7 +68,7 @@ function createServer(): McpServer {
     {
       title: 'Local Coder Health',
       description:
-        'Check configured execution mode and either local Ollama health or authenticated remote-worker health.',
+        'Check configured execution mode and either local Ollama health or authenticated remote-worker health, including the worker queue when available.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -93,7 +94,7 @@ function createServer(): McpServer {
     {
       title: 'Classify Coding Task Route',
       description:
-        'Classify as deterministic, local, local-supervised, or Claude. local/local-supervised describe execution ownership and may run on the configured remote worker. local-supervised requires Claude to have already resolved the sensitive behavior and mandates full-diff review.',
+        'Classify an already-scoped implementation as deterministic, local, local-supervised, or Claude. For broad/open-ended repository goals prefer local_engineer instead of forcing Claude to decompose first.',
       inputSchema: z.object({
         task: z.string().min(1),
         solutionKnown: z.boolean().optional(),
@@ -319,7 +320,7 @@ function createServer(): McpServer {
     {
       title: 'Execute Large Feature Plan',
       description:
-        'Compatibility full-result orchestrator using the configured local/remote backend. Prefer the compact orchestrator for enforced review behavior.',
+        'Compatibility full-result orchestrator using the configured local/remote backend. Prefer the compact orchestrator when Claude already owns a detailed plan; prefer local_engineer for an open-ended goal.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         goal: z.string().min(1),
@@ -397,12 +398,17 @@ function createServer(): McpServer {
     recordTelemetry
   });
 
+  registerLocalEngineerTools(server, {
+    config,
+    execution: runtime.execution
+  });
+
   server.registerTool(
     'local_coder_telemetry',
     {
       title: 'Local Coder Telemetry',
       description:
-        'Aggregate privacy-preserving routing/execution/orchestration telemetry. In v0.8 remote mode the Mac summary records returned execution metadata; worker-local inference telemetry remains on the worker.',
+        'Aggregate privacy-preserving routing/execution/orchestration telemetry. In remote mode the Mac summary records returned execution metadata; worker-local inference telemetry remains on the worker.',
       inputSchema: z.object({
         days: z.number().int().min(1).max(3650).default(30)
       }),
@@ -431,5 +437,5 @@ function createServer(): McpServer {
 
 void serveStdio(createServer);
 console.error(
-  `local-coder-mcp v0.8.0 ready (mode: ${runtime.mode}, model: ${config.model}, worker: ${config.remoteWorkerUrl ?? 'none'})`
+  `local-coder-mcp v0.10.0 ready (mode: ${runtime.mode}, model: ${config.model}, worker: ${config.remoteWorkerUrl ?? 'none'})`
 );

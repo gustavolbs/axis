@@ -11,8 +11,7 @@ function readArg(name) {
 const host = readArg('--host') ?? process.env.LOCAL_CODER_WINDOWS_HOST;
 const port = readArg('--port') ?? process.env.LOCAL_CODER_WINDOWS_WORKER_PORT ?? '7337';
 const token = readArg('--token') ?? process.env.LOCAL_CODER_WINDOWS_WORKER_TOKEN;
-const model =
-  readArg('--model') ?? process.env.LOCAL_CODER_WINDOWS_MODEL ?? 'qwen3.6:35b-a3b-coding';
+const model = readArg('--model') ?? process.env.LOCAL_CODER_WINDOWS_MODEL ?? 'qwen3.8:27b';
 const projectRoot = path.resolve(import.meta.dirname, '..');
 const serverPath = path.join(projectRoot, 'dist', 'index.js');
 const claudeConfigPath =
@@ -63,12 +62,17 @@ config.mcpServers['local-coder'] = {
     LOCAL_CODER_EXECUTION_MODE: 'remote',
     LOCAL_CODER_REMOTE_WORKER_URL: `http://${host}:${port}`,
     LOCAL_CODER_REMOTE_WORKER_TOKEN: token,
-    LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS: '1800000',
+    // Open-ended local_engineer jobs can legitimately wait behind another Claude
+    // session in the Windows queue, so the control-plane timeout is deliberately
+    // much larger than an individual Ollama generation timeout.
+    LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS: '7200000',
     LOCAL_CODER_REMOTE_MAX_DELTA_BYTES: '8000000',
     LOCAL_CODER_ADAPTIVE_MODELS: 'false',
     LOCAL_CODER_MODEL: model,
     LOCAL_CODER_FAST_MODEL: model,
     LOCAL_CODER_STRONG_MODEL: model,
+    // 16K is deliberately conservative for the RTX 3060 worker. Repo intelligence
+    // and focused evidence should beat blindly expanding the advertised model context.
     LOCAL_CODER_NUM_CTX: '16384',
     LOCAL_CODER_MAX_CONTEXT_BYTES: '96000',
     LOCAL_CODER_TIMEOUT_MS: '600000'
@@ -81,5 +85,6 @@ fs.writeFileSync(claudeConfigPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8
 console.log(`Configured local-coder in strict remote-worker mode at http://${host}:${port}.`);
 console.log(`Expected worker model: ${model}`);
 console.log('The bearer token was written only to the user Claude config and is not printed here.');
+console.log('Independent Claude sessions may submit work concurrently; the Windows worker queues heavy jobs by default.');
 console.log('Remote mode does not silently fall back to local Mac inference if the worker is unavailable.');
 console.log('Fully quit and reopen Claude Code Desktop before testing local_coder_health.');

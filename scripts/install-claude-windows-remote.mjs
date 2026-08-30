@@ -10,7 +10,7 @@ function readArg(name) {
 
 const host = readArg('--host') ?? process.env.LOCAL_CODER_WINDOWS_HOST;
 const port = readArg('--port') ?? process.env.LOCAL_CODER_WINDOWS_OLLAMA_PORT ?? '11434';
-const model = readArg('--model') ?? process.env.LOCAL_CODER_WINDOWS_MODEL ?? 'qwen3.6:35b-a3b-coding';
+const model = readArg('--model') ?? process.env.LOCAL_CODER_WINDOWS_MODEL ?? 'qwen3.8:27b';
 const claudeConfigPath =
   process.env.LOCAL_CODER_CLAUDE_CONFIG_PATH ?? path.join(os.homedir(), '.claude.json');
 const projectRoot = path.resolve(import.meta.dirname, '..');
@@ -77,5 +77,5 @@ fs.writeFileSync(claudeConfigPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8
 console.log(`Configured user-scoped MCP "local-coder" to use Ollama at http://${host}:${port}.`);
 console.log(`Model: ${model}`);
 console.log(`MCP process remains on this machine: ${serverPath}`);
-console.log('Inference runs on the Windows Ollama host; repository edits/validation remain local in this phase.');
+console.log('Inference runs on the Windows Ollama host; repository edits/validation remain local in this legacy phase.');
 console.log('Fully quit and reopen Claude Code Desktop before testing local_coder_health.');

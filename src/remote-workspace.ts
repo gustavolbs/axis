@@ -29,6 +29,10 @@ function sha256(content: string | null): string | null {
   return createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
+function opaqueIsolationKey(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 24);
+}
+
 function toProtocolPath(value: string): string {
   return value.split(path.sep).join('/');
 }
@@ -96,6 +100,12 @@ async function runGit(cwd: string, args: string[], input?: Buffer): Promise<Buff
 async function findRepoRoot(workspace: string): Promise<string> {
   const output = await runGit(workspace, ['rev-parse', '--show-toplevel']);
   return await fs.realpath(output.toString('utf8').trim());
+}
+
+async function findGitCommonDir(repoRoot: string): Promise<string> {
+  const raw = (await runGit(repoRoot, ['rev-parse', '--git-common-dir'])).toString('utf8').trim();
+  const absolute = path.isAbsolute(raw) ? raw : path.resolve(repoRoot, raw);
+  return await fs.realpath(absolute);
 }
 
 function isAllowedTransportPath(repoRoot: string, relativePath: string): boolean {
@@ -177,6 +187,7 @@ export async function prepareRemoteWorkspace(
 ): Promise<RemoteWorkspaceSnapshot> {
   const workspace = await resolveWorkspace(workspaceInput);
   const repoRoot = await findRepoRoot(workspace);
+  const gitCommonDir = await findGitCommonDir(repoRoot);
   const workspaceRelative = path.relative(repoRoot, workspace);
   if (workspaceRelative.startsWith('..') || path.isAbsolute(workspaceRelative)) {
     throw new Error('workspace is not contained by its Git repository root.');
@@ -203,7 +214,13 @@ export async function prepareRemoteWorkspace(
     workspaceRelativePath: toProtocolPath(workspaceRelative),
     dirtyPatchBase64: patch.toString('base64'),
     untrackedFiles: untracked.files,
-    expectedFiles: await expectedFiles(workspace, editableFiles, config)
+    expectedFiles: await expectedFiles(workspace, editableFiles, config),
+    // Concrete worktrees get different scheduling keys so mutable checkouts never overlap.
+    isolationKey: opaqueIsolationKey(`${repoRoot}\n${workspace}`),
+    // Linked worktrees share their Git common-dir, so they intentionally share learned
+    // repo intelligence. A separate clone receives a different opaque key even when its
+    // origin URL is identical, preventing cross-trust-context memory reuse.
+    memoryScopeKey: opaqueIsolationKey(gitCommonDir)
   };
 }
 

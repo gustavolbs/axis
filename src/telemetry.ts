@@ -6,6 +6,7 @@ export type TelemetryKind =
   | 'delegation'
   | 'execution'
   | 'orchestration'
+  | 'engineering'
   | 'inference';
 
 export interface TelemetryEvent {
@@ -13,8 +14,9 @@ export interface TelemetryEvent {
   kind: TelemetryKind;
   model?: string;
   route?: 'deterministic' | 'local' | 'local-supervised' | 'claude';
-  status?: 'success' | 'escalated' | 'error';
+  status?: 'success' | 'needs-claude' | 'escalated' | 'error';
   attempts?: number;
+  repairRounds?: number;
   promptTokens?: number;
   completionTokens?: number;
   generationDurationMs?: number;
@@ -68,6 +70,19 @@ export interface TelemetrySummary {
     taskCompletionRate: number;
     averageTasksPerPlan: number;
     averageCompletedTasksPerPlan: number;
+  };
+  engineering: {
+    total: number;
+    success: number;
+    needsClaude: number;
+    escalated: number;
+    errors: number;
+    localSuccessRate: number;
+    claudeEscalationRate: number;
+    repairRounds: number;
+    averageRepairRounds: number;
+    plannedTasks: number;
+    changedFiles: number;
   };
   localInference: {
     calls: number;
@@ -131,15 +146,17 @@ export class TelemetryStore {
     const delegations = filtered.filter((event) => event.kind === 'delegation');
     const executions = filtered.filter((event) => event.kind === 'execution');
     const orchestrations = filtered.filter((event) => event.kind === 'orchestration');
+    const engineering = filtered.filter((event) => event.kind === 'engineering');
     const exactInferences = filtered.filter((event) => event.kind === 'inference');
 
-    // v0.7 records every Ollama generation directly. For older telemetry files without
-    // inference events, retain the previous aggregate behavior for backwards compatibility.
+    // Exact Ollama generation events win whenever present. On a remote Mac/control
+    // plane there are no worker-local inference events, so aggregate engineering
+    // metadata provides a useful approximation without transferring prompts/source.
     const inferenceSource =
       exactInferences.length > 0
         ? exactInferences
         : filtered.filter((event) =>
-            ['delegation', 'execution', 'orchestration'].includes(event.kind)
+            ['delegation', 'execution', 'orchestration', 'engineering'].includes(event.kind)
           );
 
     const success = executions.filter((event) => event.status === 'success').length;
@@ -155,6 +172,23 @@ export class TelemetryStore {
     const plannedTasks = orchestrations.reduce((sum, event) => sum + safeNumber(event.tasks), 0);
     const completedTasks = orchestrations.reduce(
       (sum, event) => sum + safeNumber(event.completedTasks),
+      0
+    );
+
+    const engineeringSuccess = engineering.filter((event) => event.status === 'success').length;
+    const engineeringNeedsClaude = engineering.filter(
+      (event) => event.status === 'needs-claude'
+    ).length;
+    const engineeringEscalated = engineering.filter(
+      (event) => event.status === 'escalated'
+    ).length;
+    const engineeringErrors = engineering.filter((event) => event.status === 'error').length;
+    const engineeringRepairRounds = engineering.reduce(
+      (sum, event) => sum + safeNumber(event.repairRounds),
+      0
+    );
+    const engineeringPlannedTasks = engineering.reduce(
+      (sum, event) => sum + safeNumber(event.tasks),
       0
     );
 
@@ -206,6 +240,27 @@ export class TelemetryStore {
         averageCompletedTasksPerPlan:
           orchestrations.length === 0 ? 0 : completedTasks / orchestrations.length
       },
+      engineering: {
+        total: engineering.length,
+        success: engineeringSuccess,
+        needsClaude: engineeringNeedsClaude,
+        escalated: engineeringEscalated,
+        errors: engineeringErrors,
+        localSuccessRate:
+          engineering.length === 0 ? 0 : engineeringSuccess / engineering.length,
+        claudeEscalationRate:
+          engineering.length === 0
+            ? 0
+            : (engineeringNeedsClaude + engineeringEscalated) / engineering.length,
+        repairRounds: engineeringRepairRounds,
+        averageRepairRounds:
+          engineering.length === 0 ? 0 : engineeringRepairRounds / engineering.length,
+        plannedTasks: engineeringPlannedTasks,
+        changedFiles: engineering.reduce(
+          (sum, event) => sum + safeNumber(event.changedFiles),
+          0
+        )
+      },
       localInference: {
         calls: inferenceSource.length,
         promptTokens,
@@ -222,7 +277,7 @@ export class TelemetryStore {
         byModel: summarizeModels(inferenceSource),
         apiCostUsd: 0,
         costScopeNote:
-          'API inference cost is $0 for local Ollama. v0.7 tracks exact per-generation usage by model; hardware, electricity, and Claude subscription usage are not estimated.'
+          'API inference cost is $0 for local Ollama. Exact worker/local inference events are used when available; remote control-plane engineering events are aggregate metadata only. Hardware, electricity, and Claude subscription usage are not estimated.'
       }
     };
   }

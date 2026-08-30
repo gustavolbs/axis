@@ -1,79 +1,75 @@
-# Windows remote execution setup
+# Windows remote execution setup — v0.10
 
-This is the recommended v0.8 deployment for a Mac control plane plus a Windows execution workstation.
-
-The goal is to keep Claude Code responsive on macOS while Windows owns the heavy work:
+This is the recommended deployment for `local-coder-mcp` when Claude runs on a Mac and the heavy local engineering agent runs on a Windows workstation.
 
 ```text
 Mac
-Claude Code
+Claude Desktop / Claude Code
    |
-   | stdio (local, user-scoped MCP)
+   | stdio MCP
    v
 local-coder thin bridge
    |
-   | authenticated HTTP over private LAN
+   | authenticated HTTP over LAN or NordVPN Meshnet
    v
 Windows :7337
 local-coder worker
    |
    +--> Git mirror + disposable worktree
-   +--> Qwen/Ollama
-   +--> edits + retries
+   +--> persistent repo intelligence
+   +--> Qwen3.8 reasoning/planning/coding/review
    +--> lint/tests/typecheck/build
    |
    v
-bounded changed files + result
+bounded changed files
    |
    v
-Mac verifies source hashes -> applies changes -> Claude reviews
+Mac verifies hashes -> applies changes
 ```
 
-Claude never connects directly to Windows. Claude talks to the normal `local-coder` stdio MCP on the Mac; that bridge talks to the Windows worker.
+Claude never talks directly to Ollama. Claude talks to the user-scoped `local-coder` MCP on the Mac; that bridge talks to the authenticated Windows worker.
 
-## What moves off the Mac in v0.8
+For travel and a stable address independent of the physical LAN, use **[NORDVPN_MESHNET.md](./NORDVPN_MESHNET.md)**. No router port-forwarding is required.
 
-In strict `remote` mode:
+## Default worker policy
 
-- Qwen model weights/KV cache/inference run on Windows;
-- the worker clones/fetches repository mirrors on Windows;
-- each run uses a disposable Windows Git worktree;
-- edits/retries run in that Windows worktree;
-- task/final validation, including lint/tests/typecheck/build requested by Claude, runs on Windows;
-- the Mac receives only bounded changed-file contents and execution metadata;
-- returned files are applied only if their Mac SHA-256 hashes still match the state that started the run.
+The v0.10 Windows setup defaults to:
 
-For this first v0.8 cut, `prepare_local_context`, the compact run store, and the control-plane telemetry file still live on the Mac. They are much lighter than model inference and builds and can move to the worker in a later phase.
+```text
+model                         qwen3.8:27b
+context                       16384
+OLLAMA_NUM_PARALLEL           1
+OLLAMA_MAX_LOADED_MODELS      1
+heavy worker jobs             1
+persistent repo intelligence  enabled
+```
 
-## Security model
+`qwen3.8:27b` supports a much larger advertised context, but **16K is intentional** for the RTX 3060 12 GB / 64 GB RAM worker. The system should prefer targeted repo-intelligence/evidence capsules over loading a huge context and consuming memory needed by Node, TypeScript, tests and builds.
 
-Full Worker mode exposes **only the authenticated worker port `7337`** to the LAN. Ollama remains bound to Windows loopback (`127.0.0.1:11434`).
+The local-engineer reasoning policy is:
 
-Use these controls together:
+```text
+investigation / planning / review  -> maximum reasoning intent
+Qwen3.8 maximum intent             -> native default xhigh mode
+repo-intelligence learning         -> low reasoning
+mechanical coding                  -> low/off where appropriate
+```
 
-1. Windows LAN profile is `Private`;
-2. Windows Firewall allows worker TCP `7337` only from the Mac LAN IP;
-3. every worker endpoint requires a high-entropy bearer token;
-4. the router has no port forward for `7337` or `11434`;
-5. both computers are on a trusted private LAN (or, later, a private overlay such as Tailscale).
-
-The worker currently uses HTTP on the trusted LAN, so the bearer token is not suitable for exposure to public/untrusted networks. Do not expose this service to the internet.
-
-A DHCP reservation/static LAN address for both computers is strongly recommended so the firewall rule and Mac configuration do not become stale.
+The Ollama client performs the Qwen3.8-specific `high -> think:true` normalization internally; Claude does not need model-specific prompts.
 
 ---
 
-# Part A — Windows execution machine
+# A. Prepare the Windows execution machine
 
 ## 1. Install prerequisites
 
-Install on Windows:
+Install:
 
 - current NVIDIA driver;
 - Ollama for Windows;
 - Git for Windows;
-- Node.js 20+ (Node 24 recommended for parity with CI);
-- the package managers required by repositories you intend to validate (`npm` is included with Node; install `pnpm`, `yarn`, or `bun` when those repos require them).
+- Node.js 20+;
+- any package managers required by target repos (`pnpm`, `yarn`, `bun`; `npm` ships with Node).
 
 Verify in PowerShell:
 
@@ -87,13 +83,9 @@ Invoke-RestMethod http://127.0.0.1:11434/api/tags
 
 ## 2. Authenticate Git on Windows
 
-The worker reconstructs repositories locally; it does **not** receive GitHub credentials from the Mac.
+The worker creates Windows-local repository mirrors. It does **not** receive GitHub credentials, SSH keys or credential-manager state from the Mac.
 
-Windows therefore needs its own normal developer access to every repository the worker may execute against.
-
-If your Mac remote is HTTPS, Git Credential Manager is a good fit. If it is SSH, configure an SSH key/agent on Windows too.
-
-Test the exact remote style you use. Examples:
+Test the exact remote form used by each repo:
 
 ```powershell
 git ls-remote https://github.com/OWNER/PRIVATE_REPO.git HEAD
@@ -105,9 +97,11 @@ or:
 git ls-remote git@github.com:OWNER/PRIVATE_REPO.git HEAD
 ```
 
-For company GitHub Enterprise, test its hostname as well. The worker never copies your Mac credentials or SSH keys.
+For GitHub Enterprise, include its hostname later in `-AllowedGitHosts`.
 
-## 3. Clone/update local-coder-mcp on Windows
+## 3. Clone/update local-coder-mcp
+
+After the PR stack has landed on `main`:
 
 ```powershell
 git clone https://github.com/gustavolbs/local-coder-mcp.git
@@ -116,20 +110,22 @@ git switch main
 git pull
 ```
 
-If already cloned, just update `main`.
+During development/testing of v0.10, use the corresponding branch explicitly instead of `main`.
 
-## 4. Find the Mac LAN IP
+## 4. Choose the Mac address allowed by Windows Firewall
+
+### Recommended: NordVPN Meshnet
+
+Use the **Mac Meshnet IP**. See [NORDVPN_MESHNET.md](./NORDVPN_MESHNET.md).
+
+This keeps the same Mac -> Windows path at home and while traveling.
+
+### LAN-only alternative
 
 On the Mac:
 
 ```bash
 ipconfig getifaddr en0
-```
-
-If needed:
-
-```bash
-ifconfig
 ```
 
 Example:
@@ -138,82 +134,79 @@ Example:
 192.168.1.25
 ```
 
-Use the real Mac IP below.
+## 5. Run Windows setup
 
-## 5. Configure Windows worker + firewall + model
-
-Open **PowerShell as Administrator** in the Windows `local-coder-mcp` repository.
-
-Recommended setup:
+Open **PowerShell as Administrator** in the `local-coder-mcp` directory.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-windows-host.ps1 `
-  -MacIp 192.168.1.25 `
+  -MacIp <MAC_LAN_OR_MESHNET_IP> `
   -Mode Worker `
+  -MaxConcurrentJobs 1 `
   -StartWorker
 ```
 
-The script performs the operational setup:
+The script:
 
-- pulls `qwen3.6:35b-a3b-coding`;
+- pulls `qwen3.8:27b`;
 - keeps Ollama on `127.0.0.1:11434`;
-- configures one loaded model / one parallel Ollama inference;
-- configures the worker on TCP `7337`;
-- generates a cryptographically random worker token unless one was supplied;
-- defaults the Git host allowlist to `github.com`;
+- configures one loaded model and one parallel inference;
+- binds the local-coder worker to TCP `7337`;
+- generates a high-entropy bearer token unless supplied;
+- restricts the Windows Firewall rule to the supplied Mac address;
+- defaults Git hosts to `github.com`;
 - defaults dependency bootstrap to `auto`;
-- creates a Windows Firewall inbound rule for port `7337` restricted to **only the supplied Mac IP** and **Private** profiles;
-- removes the dedicated Ollama-LAN rule created by the legacy/Ollama-only mode if it exists;
-- installs dependencies, runs checks, and builds the worker;
-- optionally starts the worker in a separate PowerShell window.
+- enables persistent repo intelligence;
+- builds and tests local-coder;
+- optionally starts the worker.
 
-The script prints the generated **WORKER TOKEN once**. Copy it to the Mac; do not commit it or paste it into project files.
-
-### Company GitHub Enterprise / extra Git hosts
-
-Example:
+To disable repo intelligence for a temporary diagnostic run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-windows-host.ps1 `
-  -MacIp 192.168.1.25 `
+  -MacIp <MAC_IP> `
+  -Mode Worker `
+  -DisableRepoIntelligence `
+  -StartWorker
+```
+
+For GitHub Enterprise:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-windows-host.ps1 `
+  -MacIp <MAC_IP> `
   -Mode Worker `
   -AllowedGitHosts "github.com,github.company.example" `
   -StartWorker
 ```
 
-### Explicit token
+The script prints the **WORKER TOKEN once**. Copy it to the Mac. Do not commit it or place it in project files.
 
-If you prefer to generate/store your own high-entropy token:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-windows-host.ps1 `
-  -MacIp 192.168.1.25 `
-  -Mode Worker `
-  -WorkerToken "YOUR_LONG_RANDOM_TOKEN" `
-  -StartWorker
-```
-
-## 6. Restart Ollama once after setup
+## 6. Restart Ollama once after first setup
 
 The setup writes user environment variables that Ollama inherits at startup.
 
-After the first Worker setup (especially if Ollama had previously been exposed to LAN):
+After the first configuration:
 
-1. quit Ollama completely from the Windows system tray;
-2. start Ollama again from the Start menu.
-
-Verify it remains local-only:
+1. quit Ollama completely from the Windows tray;
+2. start Ollama again;
+3. verify loopback-only availability.
 
 ```powershell
 Get-NetTCPConnection -LocalPort 11434 -State Listen
 Invoke-RestMethod http://127.0.0.1:11434/api/tags
+ollama list
 ```
 
-The listener should not require direct access from the Mac in Worker mode.
+The selected model should include:
 
-## 7. Verify worker locally on Windows
+```text
+qwen3.8:27b
+```
 
-Use the token printed by setup:
+Ollama itself should **not** need to be reachable from the Mac in Worker mode.
+
+## 7. Verify worker locally
 
 ```powershell
 $TOKEN = "YOUR_WORKER_TOKEN"
@@ -222,28 +215,22 @@ Invoke-RestMethod `
   http://127.0.0.1:7337/v1/health
 ```
 
-Expected fields include:
+Expected shape:
 
 ```text
 protocolVersion = 1
-workerVersion   = 0.8.0
+workerVersion   = 0.10.0
 ok              = True
-model           = qwen3.6:35b-a3b-coding
+model           = qwen3.8:27b
+repoIntelligence.enabled = True
+scheduler.maxConcurrentJobs = 1
 ```
 
-## 8. Optional: start worker automatically at Windows logon
-
-Once `npm run build` and Worker setup have succeeded:
+## 8. Start worker automatically at logon
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-windows-worker-task.ps1
 Start-ScheduledTask -TaskName "Local Coder Remote Worker"
-```
-
-Inspect:
-
-```powershell
-Get-ScheduledTask -TaskName "Local Coder Remote Worker" | Format-List *
 ```
 
 Remove later with:
@@ -252,31 +239,33 @@ Remove later with:
 powershell -ExecutionPolicy Bypass -File .\scripts\install-windows-worker-task.ps1 -Remove
 ```
 
-Do not simultaneously keep a manually launched worker and the scheduled worker on the same port. Stop the manual process before starting the scheduled task.
+Do not run both a manually launched worker and the scheduled worker on port `7337`.
 
-## 9. Keep Windows awake
+## 9. Keep the workstation awake
 
-The display can turn off, but the PC/network interface must remain awake while Claude uses it.
-
-Inspect the current power plan:
+The display may turn off, but the PC/network connection must remain available.
 
 ```powershell
 powercfg /getactivescheme
 ```
 
-If appropriate for this dedicated workstation, an administrator can disable AC standby with:
+For a dedicated always-on AC workstation, if appropriate:
 
 ```powershell
 powercfg /change standby-timeout-ac 0
 ```
 
-Choose a different policy if the machine should still sleep outside working hours.
-
 ---
 
-# Part B — connect the Mac and Claude Code
+# B. Connect the Mac and Claude
 
-## 10. Find the Windows LAN IP
+## 10. Determine the Windows worker address
+
+### Meshnet
+
+Prefer the Windows **Nord name** or Meshnet address documented in [NORDVPN_MESHNET.md](./NORDVPN_MESHNET.md).
+
+### LAN
 
 On Windows:
 
@@ -286,34 +275,24 @@ Get-NetIPAddress -AddressFamily IPv4 |
   Format-Table InterfaceAlias, IPAddress
 ```
 
-Example:
-
-```text
-192.168.1.50
-```
-
-Reserve it in DHCP if possible.
-
-## 11. Test authenticated worker from the Mac
-
-On the Mac:
+## 11. Test the authenticated worker from the Mac
 
 ```bash
 TOKEN='YOUR_WORKER_TOKEN'
 curl \
   -H "Authorization: Bearer $TOKEN" \
-  http://192.168.1.50:7337/v1/health
+  http://<WINDOWS_HOST>:7337/v1/health
 ```
 
-Do not proceed until this returns worker health JSON.
-
-A request without the token should return HTTP `401`:
+Without the token, the endpoint should reject the request:
 
 ```bash
-curl -i http://192.168.1.50:7337/v1/health
+curl -i http://<WINDOWS_HOST>:7337/v1/health
 ```
 
-## 12. Update/build the Mac bridge
+Expected: HTTP `401`.
+
+## 12. Build/update the Mac bridge
 
 ```bash
 cd ~/WORK/local-coder-mcp
@@ -324,62 +303,61 @@ npm run check
 npm run build
 ```
 
-The MCP still runs as a small stdio process on the Mac because that is the interface Claude Code expects. Heavy execution is remote.
-
-## 13. Configure Claude Code for strict Worker mode
+## 13. Configure Claude for strict remote-worker mode
 
 ```bash
 npm run install:claude:worker -- \
-  --host 192.168.1.50 \
+  --host <WINDOWS_HOST> \
   --token "$TOKEN"
 ```
 
-Optional overrides:
-
-```bash
-npm run install:claude:worker -- \
-  --host 192.168.1.50 \
-  --port 7337 \
-  --token "$TOKEN" \
-  --model qwen3.6:35b-a3b-coding
-```
-
-The installer backs up `~/.claude.json`, preserves unrelated MCP servers, and writes the `local-coder` environment including:
+The installer now defaults to:
 
 ```text
 LOCAL_CODER_EXECUTION_MODE=remote
-LOCAL_CODER_REMOTE_WORKER_URL=http://192.168.1.50:7337
-LOCAL_CODER_REMOTE_WORKER_TOKEN=<token>
-LOCAL_CODER_ADAPTIVE_MODELS=false
-LOCAL_CODER_MODEL=qwen3.6:35b-a3b-coding
+LOCAL_CODER_MODEL=qwen3.8:27b
 LOCAL_CODER_NUM_CTX=16384
+LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS=7200000
 ```
 
-`remote` is deliberately strict: if Windows is unavailable, the MCP returns an error rather than quietly loading Qwen on the Mac.
+An explicit override remains possible:
 
-Fully quit Claude Code/Desktop and reopen it.
+```bash
+npm run install:claude:worker -- \
+  --host <WINDOWS_HOST> \
+  --token "$TOKEN" \
+  --model qwen3.8:27b
+```
 
-## 14. Verify the Claude -> Mac MCP -> Windows chain
+Then install/update Claude routing and token guards:
 
-Ask Claude Code:
+```bash
+npm run install:routing
+npm run install:claude-token-saver
+```
+
+Fully quit and reopen Claude Desktop/Code after user-level MCP configuration changes.
+
+## 14. Verify Claude -> Mac MCP -> Windows
+
+Ask Claude:
 
 ```text
-Check local_coder_health and tell me the execution mode, worker hostname, worker model, and whether local fallback is enabled.
+Check local_coder_health and tell me the execution mode, worker model,
+repo-intelligence status, queue state and whether local fallback is enabled.
 ```
 
-Expected shape:
+Expected:
 
 ```text
 executionMode: remote
-workerUrl: http://192.168.1.50:7337
 worker.ok: true
-worker.model: qwen3.6:35b-a3b-coding
+worker.model: qwen3.8:27b
+worker.repoIntelligence.enabled: true
 localFallbackEnabled: false
 ```
 
-Then run a small bounded implementation through `execute_local_code_task_compact`.
-
-While it runs, on Windows:
+On Windows while a job runs:
 
 ```powershell
 nvidia-smi -l 1
@@ -391,74 +369,96 @@ and:
 ollama ps
 ```
 
-The GPU/memory load should appear on Windows, not the Mac.
+Heavy model/build load should appear on Windows, not the Mac.
 
 ---
 
-# How source code moves between machines
+# C. Multiple Claude sessions
 
-The Mac does not mount its live repository on Windows.
-
-For each remote task the bridge sends:
+Multiple Claude sessions may submit work concurrently. The safe default is a queue:
 
 ```text
-origin repository URL
-+ HEAD/base commit SHA
-+ safe tracked dirty patch
-+ safe relevant untracked files
-+ hashes of every editable file
+Claude session A -> running
+Claude session B -> queued
+Claude session C -> queued
 ```
 
-The worker creates/reuses a Windows mirror and a disposable worktree, reconstructs that exact source state, executes there, and returns only changes to the editable files.
+Default:
 
-Before applying anything, the Mac compares current file hashes to the hashes captured at task start. If you or Claude modified one of those files while Windows was working, **nothing is applied** and the run returns a conflict instead of overwriting newer work.
+```text
+LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS=1
+OLLAMA_NUM_PARALLEL=1
+```
 
-Existing workspace policy still blocks `.git`, `node_modules`, `.ssh`, and real `.env*` secret files from the transport. Safe examples such as `.env.example` remain allowed.
+Do not raise concurrency merely because many sessions exist. A single Qwen3.8 inference plus Node/TypeScript/test workloads is the intended resource profile for the initial workstation.
 
-# Dependency bootstrap on Windows
+If later changed to `2`, different worktrees may overlap in non-inference phases; same-checkout jobs and Ollama inference remain serialized.
 
-Default Worker setup uses:
+---
+
+# D. Source-state and repo-intelligence isolation
+
+The Windows worker never mounts the live Mac filesystem.
+
+For each remote run the Mac sends bounded state:
+
+```text
+origin URL
+HEAD/base SHA
+safe dirty patch
+safe relevant untracked files
+editable-file hash preconditions
+opaque checkout isolation key
+opaque Git-clone memory scope key
+```
+
+The worker reconstructs a disposable Windows worktree and returns bounded file changes.
+
+Before applying returned changes, the Mac verifies file hashes. If the local worktree changed while the Windows job was running, the result is rejected instead of overwriting newer work.
+
+Repo intelligence is stored on Windows outside target repositories. Linked worktrees from the same Mac clone share an opaque memory scope; separate clones of the same Git origin receive different scopes. This prevents accidental learned-context reuse across distinct trust/company setups while still allowing normal Engineering OS worktrees to benefit from the same repository knowledge.
+
+See [REPO_INTELLIGENCE.md](./REPO_INTELLIGENCE.md).
+
+---
+
+# E. Dependency bootstrap
+
+Default:
 
 ```text
 LOCAL_CODER_WORKER_BOOTSTRAP=auto
 ```
 
-The worker detects a root lockfile and uses the corresponding reproducible install when possible:
+The worker uses the repository lockfile when possible:
 
 ```text
-pnpm-lock.yaml   -> pnpm install --frozen-lockfile
-yarn.lock        -> yarn install --frozen-lockfile
-bun.lock/bun.lockb -> bun install --frozen-lockfile
-package-lock.json -> npm ci
-package.json only -> npm install
+pnpm-lock.yaml      -> pnpm install --frozen-lockfile
+yarn.lock           -> yarn install --frozen-lockfile
+bun.lock/bun.lockb  -> bun install --frozen-lockfile
+package-lock.json   -> npm ci
+package.json only   -> npm install
 ```
 
-This can make the first run for a repository slower, but it moves dependency/setup I/O and validation off the Mac.
+This intentionally moves bootstrap/validation I/O off the Mac.
 
-Use `-Bootstrap none` in Windows setup only for repositories whose remote validation does not need installed dependencies or when you manage dependency preparation separately.
+---
 
-# Windows Firewall verification
-
-Worker rule address restriction:
+# F. Firewall verification
 
 ```powershell
 Get-NetFirewallRule -DisplayName "Local Coder - Worker from Mac" |
   Get-NetFirewallAddressFilter
-```
-
-Port/profile/action:
-
-```powershell
-Get-NetFirewallRule -DisplayName "Local Coder - Worker from Mac" |
-  Format-Table DisplayName, Enabled, Profile, Direction, Action
 
 Get-NetFirewallRule -DisplayName "Local Coder - Worker from Mac" |
   Get-NetFirewallPortFilter
 ```
 
-The expected inbound port is `7337`, the profile is `Private`, and the remote address is the Mac IP.
+Expected worker port: `7337`.
 
-Inspect broader rules that might accidentally expose either process:
+The remote address must be the allowed Mac LAN/Meshnet IP, not `Any`.
+
+Inspect all relevant rules:
 
 ```powershell
 Get-NetFirewallRule |
@@ -466,130 +466,91 @@ Get-NetFirewallRule |
   Format-Table DisplayName, Enabled, Profile, Direction, Action
 ```
 
-Do not add router/NAT port forwards for `7337` or `11434`.
+**Never add router/NAT port forwarding for `7337` or `11434`.**
 
-# Troubleshooting
+---
 
-## Mac cannot connect to port 7337
+# G. Troubleshooting
 
-On Windows:
+## Worker unavailable
+
+Windows:
 
 ```powershell
 Get-NetTCPConnection -LocalPort 7337 -State Listen
-Get-NetConnectionProfile
 ```
 
-The worker must be running and the active LAN profile should be `Private`.
+Then verify Meshnet/LAN reachability and the firewall's remote-address restriction.
 
-Check the firewall's configured Mac address:
-
-```powershell
-Get-NetFirewallRule -DisplayName "Local Coder - Worker from Mac" |
-  Get-NetFirewallAddressFilter
-```
-
-If DHCP changed the Mac IP, rerun `setup-windows-host.ps1 -MacIp <NEW_IP>` or reserve the address in the router.
+Strict `remote` mode intentionally does not fall back to heavyweight Mac inference.
 
 ## HTTP 401
 
-The token in `~/.claude.json`/your shell does not match the Windows user environment token.
+Repair the worker-token mismatch, then rerun the Mac installer with the correct token.
 
-On Windows, do not print it in routine logs, but you can intentionally inspect it while repairing setup:
+Windows user token, when intentionally debugging:
 
 ```powershell
 [Environment]::GetEnvironmentVariable("LOCAL_CODER_WORKER_TOKEN", "User")
 ```
 
-Then rerun the Mac installer with the correct token.
-
-## Worker cannot clone a private repo
-
-Test Windows Git authentication directly:
+## Private repository cannot be cloned
 
 ```powershell
-git ls-remote <EXACT_ORIGIN_URL_FROM_MAC> HEAD
+git ls-remote <EXACT_ORIGIN_URL> HEAD
 ```
 
-If the repo is on a non-`github.com` Git host, rerun setup with that host in `-AllowedGitHosts`.
+Fix Windows Git credentials and, for non-GitHub.com hosts, `-AllowedGitHosts`.
 
-## Validation says package manager not found
+## Package manager missing
 
-Install the repository's package manager on Windows and ensure it is available on `PATH` for the same Windows user that runs the worker/scheduled task.
+Install the package manager on Windows for the same account that runs the worker/scheduled task.
 
-## Model missing / Ollama unavailable
+## Qwen3.8 missing
 
 ```powershell
 ollama list
-ollama pull qwen3.6:35b-a3b-coding
+ollama pull qwen3.8:27b
 Invoke-RestMethod http://127.0.0.1:11434/api/tags
 ```
 
-If Ollama was restarted before environment configuration changed, quit it completely from the tray and start it again.
+## Too much RAM/VRAM usage
 
-## Windows is using too much memory
-
-Keep the defaults initially:
+Keep:
 
 ```text
 OLLAMA_NUM_PARALLEL=1
 OLLAMA_MAX_LOADED_MODELS=1
 LOCAL_CODER_NUM_CTX=16384
+LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS=1
 ```
 
-Do not increase context just because the machine has 64 GB RAM; focused repository context is still preferable.
+Do not raise context before there is a concrete evidence-quality reason to do so.
 
-## Claude reports worker unavailable
+---
 
-Strict remote mode intentionally refuses local fallback. Fix/start Windows rather than switching back silently.
+# H. Rollback
 
-If you deliberately want old local Mac execution again, use the rollback below.
-
-# Rollback
-
-## Restore local Mac execution
-
-On the Mac:
+Restore local Mac execution:
 
 ```bash
 cd ~/WORK/local-coder-mcp
 npm run install:claude
 ```
 
-Fully quit/reopen Claude Code/Desktop.
-
-## Stop/remove Windows worker startup
+Stop/remove Windows startup:
 
 ```powershell
 Stop-ScheduledTask -TaskName "Local Coder Remote Worker" -ErrorAction SilentlyContinue
 powershell -ExecutionPolicy Bypass -File .\scripts\install-windows-worker-task.ps1 -Remove
 ```
 
-Remove the worker firewall rule if no longer used:
+Remove the worker firewall rule if the worker is no longer used:
 
 ```powershell
 Remove-NetFirewallRule -DisplayName "Local Coder - Worker from Mac"
 ```
 
-Ollama can remain installed on Windows.
+Ollama and repo-intelligence data can remain installed for later reuse, or be removed manually after the worker is stopped.
 
-# Simpler fallback: Windows Ollama only
-
-If you want only immediate thermal relief without remote repository/build execution, the setup script still supports:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-windows-host.ps1 `
-  -MacIp 192.168.1.25 `
-  -Mode OllamaOnly
-```
-
-Then on the Mac:
-
-```bash
-npm run install:claude:windows -- --host 192.168.1.50
-```
-
-This exposes Ollama `11434` to the Mac (firewall-restricted) and leaves repository edits/tests/build on the Mac. It is less isolated and less secure than the authenticated Worker mode, so Worker mode is the recommended v0.8 configuration.
-
-# Architecture details
-
-See [REMOTE_WORKER_ARCHITECTURE.md](./REMOTE_WORKER_ARCHITECTURE.md) for protocol, source-state reconstruction, conflict safety, worker storage, and subsequent migration phases.
+For protocol/source reconstruction details see [REMOTE_WORKER_ARCHITECTURE.md](./REMOTE_WORKER_ARCHITECTURE.md).
