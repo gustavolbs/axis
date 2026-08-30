@@ -16,7 +16,7 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 }
 
 function parseCommandSet(value: string | undefined): Set<string> {
-  const raw = value ?? 'npm,pnpm,yarn,bun,npx,node';
+  const raw = value ?? 'npm,pnpm,yarn,bun';
   return new Set(
     raw
       .split(',')
