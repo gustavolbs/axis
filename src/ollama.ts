@@ -55,8 +55,22 @@ export interface OllamaChatOptions {
   model?: string;
   numCtx?: number;
   keepAlive?: string | number;
-  /** Ollama native thinking control for reasoning-capable models. */
+  /** Model-agnostic thinking intent. The client adapts it to model-specific templates. */
   think?: OllamaThinkingLevel;
+}
+
+/**
+ * Qwen3.8 exposes xhigh as its default maximum reasoning effort, but its current
+ * chat template does not accept the literal `high` string. Ollama's native
+ * `think: true` lets that template select its default xhigh mode. Keep callers
+ * model-agnostic by translating only the maximum-reasoning intent for Qwen3.8.
+ */
+export function normalizeThinkingForModel(
+  model: string,
+  think: OllamaThinkingLevel | undefined
+): OllamaThinkingLevel | undefined {
+  if (/^qwen3\.8(?::|$)/i.test(model) && think === 'high') return true;
+  return think;
 }
 
 export class OllamaClient {
@@ -105,6 +119,7 @@ export class OllamaClient {
           (model === strongModel
             ? this.config.strongModelKeepAlive ?? '30s'
             : this.config.fastModelKeepAlive ?? '90s');
+        const think = normalizeThinkingForModel(model, runtime.think);
 
         // The lock is shared by every local-coder MCP process. Once held, inspect Ollama's
         // actual loaded-model state so a second Claude Code session cannot leave the other
@@ -123,7 +138,7 @@ export class OllamaClient {
               { role: 'user', content: userPrompt }
             ],
             ...(format ? { format } : {}),
-            ...(runtime.think !== undefined ? { think: runtime.think } : {}),
+            ...(think !== undefined ? { think } : {}),
             options: {
               temperature: format ? 0 : 0.2,
               num_ctx: runtime.numCtx ?? this.config.ollamaNumCtx ?? 16_384
