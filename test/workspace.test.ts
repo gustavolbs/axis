@@ -31,9 +31,34 @@ test('resolveWorkspacePath blocks traversal and sensitive paths', async () => {
     assert.throws(() => resolveWorkspacePath(workspace, '.git/config'), /blocked/);
     assert.throws(() => resolveWorkspacePath(workspace, '.env.local'), /blocked/);
     assert.equal(
+      resolveWorkspacePath(workspace, '.env.example'),
+      path.join(workspace, '.env.example')
+    );
+    assert.equal(
       resolveWorkspacePath(workspace, 'src/index.ts'),
       path.join(workspace, 'src/index.ts')
     );
+  });
+});
+
+test('read and write reject symlinks that resolve outside the workspace', async () => {
+  await withWorkspace(async (workspace) => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-outside-'));
+    try {
+      await fs.writeFile(path.join(outside, 'secret.ts'), 'secret\n');
+      await fs.symlink(outside, path.join(workspace, 'linked'));
+
+      await assert.rejects(
+        () => readWorkspaceFile(workspace, 'linked/secret.ts', 10_000),
+        /escapes workspace/
+      );
+      await assert.rejects(
+        () => writeWorkspaceFile(workspace, 'linked/new.ts', 'nope\n'),
+        /escapes workspace/
+      );
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
   });
 });
 
