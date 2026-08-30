@@ -88,6 +88,7 @@ export interface RepoIntelligenceRunSummary {
 
 export interface RepoIntelligenceSession {
   identityKey: string;
+  memoryScopeKey: string;
   workspace: string;
   repoRoot: string;
   repositoryHash: string;
@@ -110,6 +111,7 @@ export interface ProposedRepoLearning {
 
 type IntelligenceConfig = Pick<LocalCoderConfig, 'workerStatePath'>;
 type IntelligenceModel = Pick<OllamaClient, 'chat'>;
+type RepoIntelligenceEngineerInput = LocalEngineerInput & { repoMemoryScopeKey?: string };
 
 interface ProcessResult {
   stdout: Buffer;
@@ -181,12 +183,22 @@ async function git(workspace: string, args: string[]): Promise<string> {
   return result.stdout.toString('utf8').trim();
 }
 
-async function gitIdentity(workspace: string): Promise<{
+async function localMemoryScopeKey(repoRoot: string): Promise<string> {
+  const rawCommonDir = await git(repoRoot, ['rev-parse', '--git-common-dir']);
+  const commonDir = path.isAbsolute(rawCommonDir)
+    ? rawCommonDir
+    : path.resolve(repoRoot, rawCommonDir);
+  const realCommonDir = await fs.realpath(commonDir);
+  return hash(realCommonDir).slice(0, 24);
+}
+
+async function gitIdentity(workspace: string, suppliedMemoryScopeKey?: string): Promise<{
   repoRoot: string;
   repositoryUrl: string;
   repositoryHash: string;
   workspaceRelativePath: string;
   currentSha: string;
+  memoryScopeKey: string;
   identityKey: string;
 }> {
   const repoRoot = await fs.realpath(await git(workspace, ['rev-parse', '--show-toplevel']));
@@ -198,8 +210,20 @@ async function gitIdentity(workspace: string): Promise<{
   }
   const workspaceRelativePath = relative.split(path.sep).join('/');
   const repositoryHash = hash(repositoryUrl);
-  const identityKey = hash(`${repositoryUrl}\0${workspaceRelativePath}`).slice(0, 32);
-  return { repoRoot, repositoryUrl, repositoryHash, workspaceRelativePath, currentSha, identityKey };
+  const memoryScopeKey = suppliedMemoryScopeKey?.trim() || await localMemoryScopeKey(repoRoot);
+  if (!/^[a-f0-9]{16,64}$/i.test(memoryScopeKey)) {
+    throw new Error('Repo intelligence memory scope key is invalid.');
+  }
+  const identityKey = hash(`${memoryScopeKey}\0${repositoryUrl}\0${workspaceRelativePath}`).slice(0, 32);
+  return {
+    repoRoot,
+    repositoryUrl,
+    repositoryHash,
+    workspaceRelativePath,
+    currentSha,
+    memoryScopeKey,
+    identityKey
+  };
 }
 
 async function loadDocument(
@@ -389,9 +413,10 @@ function memoryCapsule(retrieved: RepoMemoryFact[], score: RepoFamiliarity): str
 export async function prepareRepoIntelligence(
   workspace: string,
   goal: string,
-  config: IntelligenceConfig
+  config: IntelligenceConfig,
+  memoryScopeKey?: string
 ): Promise<RepoIntelligenceSession> {
-  const identity = await gitIdentity(workspace);
+  const identity = await gitIdentity(workspace, memoryScopeKey);
   const memoryFile = path.join(intelligenceRoot(config), identity.identityKey, 'memory.json');
   return await withMemoryLock(memoryFile, async () => {
     const document = await loadDocument(memoryFile, identity);
@@ -416,6 +441,7 @@ export async function prepareRepoIntelligence(
     const retrieved = retrieveFacts(document, goal);
     return {
       identityKey: identity.identityKey,
+      memoryScopeKey: identity.memoryScopeKey,
       workspace,
       repoRoot: identity.repoRoot,
       repositoryHash: identity.repositoryHash,
@@ -451,7 +477,7 @@ export async function recordRepoIntelligenceLearning(
     facts?: ProposedRepoLearning[];
   }
 ): Promise<{ learnedFacts: number; familiarity: RepoFamiliarity }> {
-  const identity = await gitIdentity(session.workspace);
+  const identity = await gitIdentity(session.workspace, session.memoryScopeKey);
   return await withMemoryLock(session.memoryFile, async () => {
     const document = await loadDocument(session.memoryFile, identity);
     const now = new Date().toISOString();
@@ -596,23 +622,29 @@ function attachSummary(
 export async function executeLocalEngineerWithRepoIntelligence(
   model: IntelligenceModel,
   config: LocalCoderConfig,
-  input: LocalEngineerInput
+  input: RepoIntelligenceEngineerInput
 ): Promise<LocalEngineerExecution> {
   if (!intelligenceEnabled()) return await executeLocalEngineer(model, config, input);
 
+  const { repoMemoryScopeKey, ...engineerInput } = input;
   let session: RepoIntelligenceSession;
   try {
-    session = await prepareRepoIntelligence(input.workspace, input.goal, config);
+    session = await prepareRepoIntelligence(
+      engineerInput.workspace,
+      engineerInput.goal,
+      config,
+      repoMemoryScopeKey
+    );
   } catch (error) {
-    const execution = await executeLocalEngineer(model, config, input);
+    const execution = await executeLocalEngineer(model, config, engineerInput);
     return attachSummary(execution, {
       enabled: false,
       reason: `Repo intelligence unavailable; engineering continued without memory. ${error instanceof Error ? error.message : String(error)}`
     });
   }
 
-  const context = [input.context?.trim(), session.capsule].filter(Boolean).join('\n\n');
-  const execution = await executeLocalEngineer(model, config, { ...input, context });
+  const context = [engineerInput.context?.trim(), session.capsule].filter(Boolean).join('\n\n');
+  const execution = await executeLocalEngineer(model, config, { ...engineerInput, context });
   let learnedFacts = 0;
   let updatedFamiliarity = session.familiarity;
 
