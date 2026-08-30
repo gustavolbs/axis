@@ -14,9 +14,43 @@ export interface ValidationResult {
   durationMs: number;
 }
 
+const SAFE_PACKAGE_MANAGER_SUBCOMMANDS: Record<string, Set<string>> = {
+  npm: new Set(['test', 'run']),
+  pnpm: new Set(['test', 'run', 'exec']),
+  yarn: new Set(['test', 'run']),
+  bun: new Set(['test', 'run'])
+};
+
 function appendBounded(current: string, chunk: Buffer | string, limit: number): string {
   if (current.length >= limit) return current;
   return `${current}${String(chunk)}`.slice(0, limit);
+}
+
+function assertValidationAllowed(
+  validation: ValidationCommand,
+  allowedCommands: Set<string>
+): void {
+  if (!allowedCommands.has(validation.command)) {
+    throw new Error(
+      `Validation command "${validation.command}" is not allowed. Allowed: ${[...allowedCommands].join(', ')}`
+    );
+  }
+
+  if (validation.command.includes('/') || validation.command.includes('\\')) {
+    throw new Error('Validation command must be an executable name, not a path.');
+  }
+
+  const guardedSubcommands = SAFE_PACKAGE_MANAGER_SUBCOMMANDS[validation.command];
+  if (!guardedSubcommands) return;
+
+  const firstArg = validation.args?.[0];
+  if (!firstArg || !guardedSubcommands.has(firstArg)) {
+    throw new Error(
+      `Unsafe ${validation.command} validation invocation. Allowed first arguments: ${[
+        ...guardedSubcommands
+      ].join(', ')}`
+    );
+  }
 }
 
 export async function runValidationCommand(
@@ -26,11 +60,7 @@ export async function runValidationCommand(
   timeoutMs: number,
   outputLimit = 20_000
 ): Promise<ValidationResult> {
-  if (!allowedCommands.has(validation.command)) {
-    throw new Error(
-      `Validation command "${validation.command}" is not allowed. Allowed: ${[...allowedCommands].join(', ')}`
-    );
-  }
+  assertValidationAllowed(validation, allowedCommands);
 
   const args = validation.args ?? [];
   const startedAt = Date.now();
@@ -45,6 +75,7 @@ export async function runValidationCommand(
 
     let output = '';
     let settled = false;
+    let timer: NodeJS.Timeout;
 
     const finish = (result: ValidationResult) => {
       if (settled) return;
@@ -76,7 +107,7 @@ export async function runValidationCommand(
       });
     });
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       child.kill('SIGTERM');
       finish({
         command: validation.command,
