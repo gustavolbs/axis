@@ -1,0 +1,117 @@
+import { ProviderError } from './types.js';
+
+export type FetchLike = typeof globalThis.fetch;
+
+export interface SseEvent {
+  event?: string;
+  data: string;
+}
+
+export function redactSecrets(value: string, secrets: string[]): string {
+  let redacted = value;
+  for (const secret of secrets) {
+    if (!secret) continue;
+    redacted = redacted.split(secret).join('[REDACTED]');
+  }
+  redacted = redacted
+    .replace(/sk-ant-[A-Za-z0-9_-]+/g, '[REDACTED]')
+    .replace(/sk-[A-Za-z0-9_-]{12,}/g, '[REDACTED]');
+  return redacted;
+}
+
+function retryAfterMs(response: Response): number | undefined {
+  const raw = response.headers.get('retry-after')?.trim();
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const date = Date.parse(raw);
+  if (!Number.isFinite(date)) return undefined;
+  return Math.max(0, date - Date.now());
+}
+
+export async function throwProviderHttpError(
+  providerId: string,
+  response: Response,
+  secrets: string[] = []
+): Promise<never> {
+  const raw = await response.text().catch(() => '');
+  const body = redactSecrets(raw || response.statusText || 'Request failed.', secrets).slice(0, 4000);
+  const status = response.status;
+  throw new ProviderError(providerId, `${providerId} HTTP ${status}: ${body}`, {
+    status,
+    rateLimited: status === 429,
+    retryable: status === 408 || status === 409 || status === 429 || status >= 500,
+    retryAfterMs: retryAfterMs(response)
+  });
+}
+
+export async function fetchWithProviderErrors(
+  providerId: string,
+  fetchImpl: FetchLike,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  secrets: string[] = []
+): Promise<Response> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      ...init,
+      signal: init.signal ?? AbortSignal.timeout(Math.max(1, timeoutMs))
+    });
+  } catch (error) {
+    const message = redactSecrets(error instanceof Error ? error.message : String(error), secrets);
+    throw new ProviderError(providerId, `${providerId} request failed: ${message}`, {
+      retryable: true
+    });
+  }
+  if (!response.ok) await throwProviderHttpError(providerId, response, secrets);
+  return response;
+}
+
+function boundary(buffer: string): { index: number; length: number } | undefined {
+  const lf = buffer.indexOf('\n\n');
+  const crlf = buffer.indexOf('\r\n\r\n');
+  if (lf < 0 && crlf < 0) return undefined;
+  if (lf < 0) return { index: crlf, length: 4 };
+  if (crlf < 0) return { index: lf, length: 2 };
+  return lf < crlf ? { index: lf, length: 2 } : { index: crlf, length: 4 };
+}
+
+function parseSseBlock(block: string): SseEvent | undefined {
+  let event: string | undefined;
+  const data: string[] = [];
+  for (const line of block.split(/\r?\n/)) {
+    if (!line || line.startsWith(':')) continue;
+    if (line.startsWith('event:')) event = line.slice('event:'.length).trim();
+    else if (line.startsWith('data:')) data.push(line.slice('data:'.length).trimStart());
+  }
+  if (data.length === 0) return undefined;
+  return { event, data: data.join('\n') };
+}
+
+export async function* readSse(response: Response): AsyncGenerator<SseEvent> {
+  if (!response.body) throw new Error('Streaming response did not include a body.');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      while (true) {
+        const next = boundary(buffer);
+        if (!next) break;
+        const block = buffer.slice(0, next.index);
+        buffer = buffer.slice(next.index + next.length);
+        const parsed = parseSseBlock(block);
+        if (parsed) yield parsed;
+      }
+      if (done) break;
+    }
+    const trailing = parseSseBlock(buffer.trim());
+    if (trailing) yield trailing;
+  } finally {
+    reader.releaseLock();
+  }
+}
