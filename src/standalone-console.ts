@@ -209,7 +209,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
 
   const cancelMatch = /^\/api\/jobs\/([A-Za-z0-9-]+)\/cancel$/.exec(url.pathname);
   if (request.method === 'POST' && cancelMatch) {
-    json(response, 200, { job: jobs.cancel(cancelMatch[1]) });
+    json(response, 200, { job: await jobs.cancel(cancelMatch[1]) });
     return;
   }
 
@@ -258,11 +258,5 @@ const statusTimer = setInterval(() => {
 statusTimer.unref();
 
 server.listen(config.consolePort ?? 7557, config.consoleHost ?? '127.0.0.1', () => {
-  const address = `http://${config.consoleHost ?? '127.0.0.1'}:${config.consolePort ?? 7557}`;
-  console.error(`Local Coder Console listening at ${address}`);
-  if ((config.consoleHost ?? '127.0.0.1') !== '127.0.0.1' && (config.consoleHost ?? '') !== '::1') {
-    console.error(
-      'WARNING: standalone job/health APIs are not authenticated on network binds. Administrative Project/provider/credential/pricing APIs remain loopback-only.'
-    );
-  }
+  console.log(`Local Coder Console: http://${config.consoleHost ?? '127.0.0.1'}:${config.consolePort ?? 7557}`);
 });
