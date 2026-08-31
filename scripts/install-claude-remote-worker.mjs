@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 
 function readArg(name) {
   const index = process.argv.indexOf(name);
@@ -14,6 +15,8 @@ const token = readArg('--token') ?? process.env.LOCAL_CODER_WINDOWS_WORKER_TOKEN
 const model = readArg('--model') ?? process.env.LOCAL_CODER_WINDOWS_MODEL ?? 'qwen3.8:27b';
 const projectRoot = path.resolve(import.meta.dirname, '..');
 const serverPath = path.join(projectRoot, 'dist', 'index.js');
+const secretStorePath = path.join(projectRoot, 'dist', 'secret-store.js');
+const controlPlaneConfigModulePath = path.join(projectRoot, 'dist', 'control-plane-config.js');
 const claudeConfigPath =
   process.env.LOCAL_CODER_CLAUDE_CONFIG_PATH ?? path.join(os.homedir(), '.claude.json');
 const controlPlaneConfigPath =
@@ -32,8 +35,14 @@ if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
   console.error(`Invalid worker port: ${port}`);
   process.exit(1);
 }
-if (!fs.existsSync(serverPath)) {
-  console.error(`Missing ${serverPath}. Run "npm run build" first.`);
+for (const required of [serverPath, secretStorePath, controlPlaneConfigModulePath]) {
+  if (!fs.existsSync(required)) {
+    console.error(`Missing ${required}. Run "npm run build" first.`);
+    process.exit(1);
+  }
+}
+if (process.platform !== 'darwin') {
+  console.error('This control-plane installer now requires macOS Keychain and must run on the Mac control plane.');
   process.exit(1);
 }
 
@@ -56,28 +65,31 @@ if (fs.existsSync(claudeConfigPath)) {
   console.error(`Backup created: ${backupPath}`);
 }
 
+const [{ MacOSKeychainSecretStore, remoteWorkerSecretId }, { writeControlPlaneConfig }] =
+  await Promise.all([
+    import(pathToFileURL(secretStorePath).href),
+    import(pathToFileURL(controlPlaneConfigModulePath).href)
+  ]);
+
+const keychain = new MacOSKeychainSecretStore();
+if (!keychain.isAvailable()) {
+  console.error('macOS Keychain is unavailable. Refusing to persist the worker bearer token in plaintext.');
+  process.exit(1);
+}
+
 const remoteWorkerUrl = `http://${host}:${port}`;
-const controlPlaneConfig = {
+const credentialRef = remoteWorkerSecretId('default');
+keychain.set(credentialRef, token);
+
+// v2 control-plane files contain only a Keychain reference. readControlPlaneConfig still
+// accepts the legacy v0.14 inline token field so existing installations remain usable.
+writeControlPlaneConfig({
+  version: 2,
   executionMode: 'remote',
   remoteWorkerUrl,
-  remoteWorkerToken: token,
-  model,
-  updatedAt: new Date().toISOString()
-};
-
-// This file is the canonical control-plane credential/config shared by Claude's MCP
-// process and the standalone Local Coder Console. Keep the bearer token out of shell
-// profiles and browser code; environment variables may still override it deliberately.
-fs.mkdirSync(path.dirname(controlPlaneConfigPath), { recursive: true, mode: 0o700 });
-fs.writeFileSync(controlPlaneConfigPath, `${JSON.stringify(controlPlaneConfig, null, 2)}\n`, {
-  encoding: 'utf8',
-  mode: 0o600
+  remoteWorkerCredentialRef: credentialRef,
+  model
 });
-try {
-  fs.chmodSync(controlPlaneConfigPath, 0o600);
-} catch {
-  // Windows/non-POSIX filesystems may not honor chmod. This installer normally runs on Mac.
-}
 
 config.mcpServers ??= {};
 config.mcpServers['local-coder'] = {
@@ -87,7 +99,7 @@ config.mcpServers['local-coder'] = {
   env: {
     LOCAL_CODER_EXECUTION_MODE: 'remote',
     LOCAL_CODER_REMOTE_WORKER_URL: remoteWorkerUrl,
-    LOCAL_CODER_REMOTE_WORKER_TOKEN: token,
+    LOCAL_CODER_REMOTE_WORKER_CREDENTIAL_REF: credentialRef,
     LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS: '7200000',
     LOCAL_CODER_REMOTE_MAX_DELTA_BYTES: '8000000',
     LOCAL_CODER_ADAPTIVE_MODELS: 'false',
@@ -106,12 +118,18 @@ config.mcpServers['local-coder'] = {
 };
 
 fs.mkdirSync(path.dirname(claudeConfigPath), { recursive: true });
-fs.writeFileSync(claudeConfigPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+fs.writeFileSync(claudeConfigPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+try {
+  fs.chmodSync(claudeConfigPath, 0o600);
+} catch {
+  // Non-POSIX filesystems may not honor chmod. This installer is intended for macOS.
+}
 
 console.log(`Configured local-coder in strict remote-worker mode at ${remoteWorkerUrl}.`);
 console.log(`Expected worker model: ${model}`);
 console.log(`Shared control-plane config: ${controlPlaneConfigPath}`);
-console.log('The bearer token was written to the protected shared control-plane config and Claude config; it is not printed here.');
-console.log('Claude and the standalone Console now resolve the same worker URL/token/model by default.');
+console.log(`Worker credential: macOS Keychain reference ${credentialRef}`);
+console.log('The bearer token is not stored in control-plane.json, Claude MCP env, logs, or shell profiles.');
+console.log('Claude and the standalone Console resolve the same Keychain-backed worker credential.');
 console.log('Remote mode does not silently fall back to local Mac inference if the worker is unavailable.');
 console.log('Fully quit and reopen Claude before testing local_coder_health. The standalone Console can be started with npm run console.');
