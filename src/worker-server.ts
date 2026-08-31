@@ -68,7 +68,13 @@ ollama.chat = (async (...args: Parameters<OllamaClient['chat']>) => {
     }).catch(historyFailure);
   }
   try {
-    const generation = await baseChat(...args);
+    const generation = await baseChat(systemPrompt, userPrompt, format, {
+      ...runtime,
+      onStreamProgress: (progress) => {
+        inferenceTracker.update(inferenceId, progress);
+        runtime?.onStreamProgress?.(progress);
+      }
+    });
     inferenceTracker.complete(inferenceId, 'success', {
       promptTokens: generation.promptTokens,
       completionTokens: generation.completionTokens
@@ -473,7 +479,10 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     if (match) {
       const run = await history.readRun(match[1]);
       if (!run) {
-        json(response, 404, { protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION, error: 'History run not found.' });
+        json(response, 404, {
+          protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+          error: 'History run not found.'
+        });
         return;
       }
       json(response, 200, { protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION, run });
