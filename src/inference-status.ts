@@ -4,7 +4,8 @@ import type { EngineeringProgress } from './engineering-progress.js';
 import type { OllamaStreamProgress } from './ollama-stream.js';
 
 export type InferenceStage =
-  | 'analysis'
+  | 'impact-analysis'
+  | 'deliberation'
   | 'investigation'
   | 'planning'
   | 'implementation'
@@ -55,22 +56,23 @@ interface ActiveInference {
 
 export function classifyInferenceStage(systemPrompt: string): InferenceStage {
   const prompt = systemPrompt.toLowerCase();
-  if (prompt.includes('pre-implementation impact analysis')) return 'analysis';
+  if (prompt.includes('pre-implementation impact analysis')) return 'impact-analysis';
+  if (
+    prompt.includes('architect a in a deliberate software-engineering system') ||
+    prompt.includes('adversarial architecture critic') ||
+    prompt.includes('final architecture judge')
+  ) {
+    return 'deliberation';
+  }
   if (prompt.includes('investigation stage of a local software-engineering agent')) {
     return 'investigation';
   }
   if (prompt.includes('reasoning/planning stage of a local software-engineering agent')) {
     return 'planning';
   }
-  if (prompt.includes('read-only repository research reporter')) {
-    return 'report';
-  }
-  if (prompt.includes('adversarial software-engineering reviewer')) {
-    return 'review';
-  }
-  if (prompt.includes('durable repository intelligence')) {
-    return 'repo-learning';
-  }
+  if (prompt.includes('read-only repository research reporter')) return 'report';
+  if (prompt.includes('adversarial software-engineering reviewer')) return 'review';
+  if (prompt.includes('durable repository intelligence')) return 'repo-learning';
   if (prompt.includes('local coding execution model') || prompt.includes('local coding executor')) {
     return 'implementation';
   }
@@ -106,14 +108,23 @@ export function progressAtInferenceStart(
   const editableFiles = bulletPaths(section(userPrompt, 'EDITABLE FILES', 3000));
 
   switch (stage) {
-    case 'analysis':
+    case 'impact-analysis':
       return {
-        phase: 'analysis',
-        action: 'Qwen is analyzing feature impact and architectural fit',
+        phase: 'impact-analysis',
+        action: 'Qwen is analyzing feature impact',
         detail: goal,
         reasoningSummary:
-          'Checking repository conventions, impacted contracts, risks, validation strategy and whether any material user preference is actually unresolved.',
+          'Mapping affected contracts, risks, validation strategy and the appropriate amount of local test-time compute.',
         completedSteps: ['workspace']
+      };
+    case 'deliberation':
+      return {
+        phase: 'deliberation',
+        action: 'Qwen is deliberating over architecture alternatives',
+        detail: goal,
+        reasoningSummary:
+          'Independent architect/critic/judge contexts are comparing approaches before implementation.',
+        completedSteps: ['workspace', 'impact-analysis']
       };
     case 'investigation':
       return {
@@ -131,7 +142,7 @@ export function progressAtInferenceStart(
         detail: goal,
         reasoningSummary:
           'Reasoning over verified repository evidence and converting it into bounded implementation tasks.',
-        completedSteps: ['workspace', 'analysis', 'investigation']
+        completedSteps: ['workspace', 'investigation']
       };
     case 'report':
       return {
@@ -150,7 +161,7 @@ export function progressAtInferenceStart(
         files: editableFiles,
         reasoningSummary:
           'Executing the planner-approved task against the exact editable files and supplied repository context.',
-        completedSteps: ['workspace', 'analysis', 'investigation', 'planning']
+        completedSteps: ['workspace', 'investigation', 'planning']
       };
     case 'review':
       return {
@@ -159,7 +170,7 @@ export function progressAtInferenceStart(
         detail: goal,
         reasoningSummary:
           'Trying to falsify correctness against the goal, plan, diff and deterministic validation evidence.',
-        completedSteps: ['workspace', 'analysis', 'investigation', 'planning', 'implementation', 'validation']
+        completedSteps: ['workspace', 'investigation', 'planning', 'implementation', 'validation']
       };
     case 'repo-learning':
       return {
@@ -168,7 +179,7 @@ export function progressAtInferenceStart(
         detail: goal,
         reasoningSummary:
           'Extracting reusable source-backed conventions and architecture facts from the successful run.',
-        completedSteps: ['workspace', 'analysis', 'investigation', 'planning', 'implementation', 'validation', 'review']
+        completedSteps: ['workspace', 'investigation', 'planning', 'implementation', 'validation', 'review']
       };
     default:
       return {
@@ -217,19 +228,26 @@ export function progressFromInferenceResult(
   const issues = Array.isArray(value.issues) ? value.issues.length : undefined;
 
   switch (stage) {
-    case 'analysis':
+    case 'impact-analysis':
       return {
-        phase: 'analysis',
+        phase: 'impact-analysis',
         action: 'Impact analysis produced',
         reasoningSummary: summary,
-        completedSteps: ['workspace', 'analysis']
+        completedSteps: ['workspace', 'impact-analysis']
+      };
+    case 'deliberation':
+      return {
+        phase: 'deliberation',
+        action: 'A deliberation pass completed',
+        reasoningSummary: summary,
+        completedSteps: ['workspace', 'impact-analysis']
       };
     case 'investigation':
       return {
         phase: 'investigation',
         action: 'Investigation model call completed',
         reasoningSummary: summary,
-        completedSteps: ['workspace', 'analysis', 'investigation']
+        completedSteps: ['workspace', 'investigation']
       };
     case 'planning':
       return {
@@ -237,7 +255,7 @@ export function progressFromInferenceResult(
         action: 'Plan produced',
         detail: tasks.length ? `${tasks.length} tasks: ${tasks.join(', ')}` : undefined,
         reasoningSummary: summary,
-        completedSteps: ['workspace', 'analysis', 'investigation', 'planning']
+        completedSteps: ['workspace', 'investigation', 'planning']
       };
     case 'report':
       return {
@@ -253,7 +271,7 @@ export function progressFromInferenceResult(
         detail: summary,
         reasoningSummary: summary,
         files,
-        completedSteps: ['workspace', 'analysis', 'investigation', 'planning']
+        completedSteps: ['workspace', 'investigation', 'planning']
       };
     case 'review':
       return {
@@ -264,7 +282,7 @@ export function progressFromInferenceResult(
             ? undefined
             : `${issues} review issue${issues === 1 ? '' : 's'} reported.`,
         reasoningSummary: summary,
-        completedSteps: ['workspace', 'analysis', 'investigation', 'planning', 'implementation', 'validation', 'review']
+        completedSteps: ['workspace', 'investigation', 'planning', 'implementation', 'validation', 'review']
       };
     case 'repo-learning':
       return {
@@ -274,7 +292,6 @@ export function progressFromInferenceResult(
           summary ?? 'Durable repository intelligence was extracted from the successful run.',
         completedSteps: [
           'workspace',
-          'analysis',
           'investigation',
           'planning',
           'implementation',
