@@ -185,3 +185,50 @@ test('produces a final local report without entering implementation when reposit
     assert.equal(output.changes.length, 0);
   });
 });
+
+test('resolves missing tail-of-file evidence locally instead of escalating it as external research', async () => {
+  await withWorkspace(async (workspace, stateRoot) => {
+    const filler = Array.from({ length: 420 }, (_, index) => `// filler ${index}`).join('\n');
+    await fs.writeFile(
+      path.join(workspace, 'src', 'microsoft.ts'),
+      `${filler}\nexport async function completeAuthorization() {\n  return fetch('https://graph.microsoft.com/v1.0/me/calendarView');\n}\n`,
+      'utf8'
+    );
+
+    const model = new FakeModel([
+      JSON.stringify({
+        summary: 'The calendar endpoint is implemented later in the provider file.',
+        searchQueries: ['completeAuthorization'],
+        fileHints: ['src/microsoft.ts'],
+        researchRequests: [
+          'Read the rest of src/microsoft.ts around `completeAuthorization` to identify the Graph endpoint.'
+        ]
+      }),
+      JSON.stringify({
+        summary: 'The local provider calls Microsoft Graph calendarView.',
+        confidence: 0.98,
+        findings: [
+          {
+            claim: 'The provider calls /v1.0/me/calendarView.',
+            evidence: ['src/microsoft.ts']
+          }
+        ],
+        userActions: [],
+        constraints: [],
+        unresolvedQuestions: [],
+        researchRequests: []
+      })
+    ]);
+
+    const output = await executePremiumLocalEngineer(model as never, config(stateRoot), {
+      workspace,
+      goal: 'Read-only: identify the Microsoft Graph calendar endpoint. Do not modify code.'
+    });
+
+    assert.equal(output.result.status, 'success');
+    assert.equal(output.result.escalation, undefined);
+    assert.equal(model.calls.length, 2, 'local evidence completion must not add an external handoff');
+    assert.match(model.calls[1]!.user, /graph\.microsoft\.com\/v1\.0\/me\/calendarView/);
+    assert.match(output.result.summary, /calendarView/);
+  });
+});
