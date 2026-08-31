@@ -54,6 +54,8 @@ export interface RoutingCatalogOptions {
   modelSelection?: ModelSelection;
 }
 
+export const BUILT_IN_CLOUD_PROVIDER_IDS = ['anthropic', 'openai'] as const;
+
 const defaultCloudFactories: Record<string, CloudProviderFactory> = {
   anthropic: (apiKey) => new AnthropicInferenceProvider({ apiKey }),
   openai: (apiKey) => new OpenAIInferenceProvider({ apiKey })
