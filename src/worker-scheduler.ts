@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { EngineeringProgress } from './engineering-progress.js';
+import { withProgressReporter } from './progress-context.js';
 
 export type WorkerJobKind = 'chat' | 'task' | 'plan' | 'engineer';
 export type WorkerJobProgress = EngineeringProgress;
@@ -158,8 +159,7 @@ export class WorkerScheduler {
         update: (progress) => this.updateProgress(job.id, progress)
       };
 
-      void job
-        .run(context)
+      void withProgressReporter(context.update, () => job.run(context))
         .then(job.resolve, job.reject)
         .finally(() => {
           this.active.delete(job.id);
