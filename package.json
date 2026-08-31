@@ -31,7 +31,8 @@
     "install:routing": "node scripts/install-claude-routing-rule.mjs",
     "install:claude-token-saver": "node scripts/install-claude-token-saver.mjs",
     "benchmark": "npm run build && node scripts/benchmark-local.mjs",
-    "eval:agent": "npm run build && node scripts/eval-local-agent.mjs"
+    "eval:agent": "npm run build && node scripts/eval-local-agent.mjs",
+    "eval:providers": "npm run build && node scripts/eval-multi-provider.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
