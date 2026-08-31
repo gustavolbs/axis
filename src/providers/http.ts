@@ -1,3 +1,9 @@
+import {
+  OperationCancelledError,
+  callerCancelled,
+  requestAbortSignal,
+  throwIfCancelled
+} from '../cancellation.js';
 import { ProviderError } from './types.js';
 
 export type FetchLike = typeof globalThis.fetch;
@@ -53,18 +59,24 @@ export async function fetchWithProviderErrors(
   timeoutMs: number,
   secrets: string[] = []
 ): Promise<Response> {
+  throwIfCancelled();
+  const abort = requestAbortSignal(timeoutMs, init.signal ?? undefined);
   let response: Response;
   try {
     response = await fetchImpl(url, {
       ...init,
-      signal: init.signal ?? AbortSignal.timeout(Math.max(1, timeoutMs))
+      signal: abort.signal
     });
   } catch (error) {
+    if (callerCancelled(abort.callerSignals)) {
+      throw new OperationCancelledError(`${providerId} request cancelled.`);
+    }
     const message = redactSecrets(error instanceof Error ? error.message : String(error), secrets);
     throw new ProviderError(providerId, `${providerId} request failed: ${message}`, {
       retryable: true
     });
   }
+  throwIfCancelled();
   if (!response.ok) await throwProviderHttpError(providerId, response, secrets);
   return response;
 }
@@ -97,6 +109,7 @@ export async function* readSse(response: Response): AsyncGenerator<SseEvent> {
   let buffer = '';
   try {
     while (true) {
+      throwIfCancelled();
       const { done, value } = await reader.read();
       buffer += decoder.decode(value, { stream: !done });
       while (true) {
@@ -109,6 +122,7 @@ export async function* readSse(response: Response): AsyncGenerator<SseEvent> {
       }
       if (done) break;
     }
+    throwIfCancelled();
     const trailing = parseSseBlock(buffer.trim());
     if (trailing) yield trailing;
   } finally {
