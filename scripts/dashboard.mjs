@@ -25,16 +25,45 @@ const contentTypes = new Map([
 ]);
 
 async function loadConnection() {
+  const explicitWorkerUrl = process.env.LOCAL_CODER_DASHBOARD_WORKER_URL?.trim();
+  const explicitToken =
+    process.env.LOCAL_CODER_DASHBOARD_WORKER_TOKEN?.trim() ||
+    process.env.LOCAL_CODER_WORKER_TOKEN?.trim();
+
+  if (explicitWorkerUrl && explicitToken) {
+    return {
+      workerUrl: explicitWorkerUrl.replace(/\/$/, ''),
+      token: explicitToken,
+      mode: 'execution-host'
+    };
+  }
+
+  // When the dashboard runs on the Windows execution host, prefer the worker's
+  // loopback endpoint. This keeps telemetry traffic local to the machine and lets
+  // the Mac act only as the browser/client over Meshnet.
+  if (process.platform === 'win32' && explicitToken) {
+    const workerPort = Number(process.env.LOCAL_CODER_WORKER_PORT ?? '7337');
+    return {
+      workerUrl: `http://127.0.0.1:${workerPort}`,
+      token: explicitToken,
+      mode: 'execution-host'
+    };
+  }
+
   const config = JSON.parse(await fs.readFile(claudeConfigPath, 'utf8'));
   const env = config?.mcpServers?.['local-coder']?.env ?? {};
   const workerUrl = env.LOCAL_CODER_REMOTE_WORKER_URL;
   const token = env.LOCAL_CODER_REMOTE_WORKER_TOKEN;
   if (!workerUrl || !token) {
     throw new Error(
-      'local-coder is not configured in strict remote-worker mode in ~/.claude.json.'
+      'No dashboard worker connection found. Configure LOCAL_CODER_DASHBOARD_WORKER_URL + token, or strict remote-worker mode in ~/.claude.json.'
     );
   }
-  return { workerUrl: String(workerUrl).replace(/\/$/, ''), token: String(token) };
+  return {
+    workerUrl: String(workerUrl).replace(/\/$/, ''),
+    token: String(token),
+    mode: 'mac-proxy'
+  };
 }
 
 async function recentTelemetry(limit = 30) {
@@ -61,7 +90,7 @@ async function recentTelemetry(limit = 30) {
 }
 
 async function statusPayload() {
-  const { workerUrl, token } = await loadConnection();
+  const { workerUrl, token, mode } = await loadConnection();
   const response = await fetch(`${workerUrl}/v1/status`, {
     headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(5000)
@@ -74,7 +103,8 @@ async function statusPayload() {
       hostname: os.hostname(),
       platform: process.platform,
       dashboardPid: process.pid,
-      workerUrl
+      workerUrl,
+      mode
     },
     recentTelemetry: await recentTelemetry()
   };
@@ -105,14 +135,20 @@ async function sendStatic(request, response) {
     const content = await fs.readFile(absolute);
     response.writeHead(200, {
       'content-type': contentTypes.get(path.extname(absolute)) ?? 'application/octet-stream',
-      'cache-control': path.extname(absolute) === '.html' ? 'no-store' : 'public, max-age=31536000, immutable',
+      'cache-control':
+        path.extname(absolute) === '.html'
+          ? 'no-store'
+          : 'public, max-age=31536000, immutable',
       'content-length': content.byteLength
     });
     response.end(content);
   } catch (error) {
     if (error?.code === 'ENOENT' && !path.extname(relative)) {
       const content = await fs.readFile(path.join(dashboardDist, 'index.html'));
-      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store'
+      });
       response.end(content);
       return;
     }
@@ -145,7 +181,9 @@ const server = http.createServer((request, response) => {
     response.end('Not found');
   })().catch((error) => {
     if (!response.headersSent) {
-      sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+      sendJson(response, 500, {
+        error: error instanceof Error ? error.message : String(error)
+      });
     } else {
       response.destroy();
     }
@@ -156,7 +194,9 @@ server.listen(port, host, () => {
   const url = `http://${host}:${port}`;
   console.log(`Local Coder dashboard: ${url}`);
   console.log(
-    'The dashboard binds to Mac loopback only; the worker bearer token is never sent to the browser.'
+    process.platform === 'win32'
+      ? 'Dashboard is running on the Windows execution host. Restrict inbound access with the Meshnet firewall rule.'
+      : 'Dashboard is running on the Mac control plane; the worker bearer token is never sent to browser JavaScript.'
   );
   if (process.platform === 'darwin' && !process.argv.includes('--no-open')) {
     const child = spawn('open', [url], { detached: true, stdio: 'ignore' });
