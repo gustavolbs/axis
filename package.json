@@ -25,6 +25,7 @@
     "benchmark": "npm run build && node scripts/benchmark-local.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
