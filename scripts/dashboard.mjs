@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 const projectRoot = path.resolve(import.meta.dirname, '..');
-const pagePath = path.join(projectRoot, 'dashboard', 'index.html');
+const dashboardDist = path.join(projectRoot, 'dashboard', 'dist');
 const host = process.env.LOCAL_CODER_DASHBOARD_HOST ?? '127.0.0.1';
 const port = Number(process.env.LOCAL_CODER_DASHBOARD_PORT ?? '7447');
 const claudeConfigPath =
@@ -13,6 +13,16 @@ const claudeConfigPath =
 const telemetryPath =
   process.env.LOCAL_CODER_TELEMETRY_PATH ??
   path.join(os.homedir(), '.local-coder-mcp', 'telemetry.jsonl');
+
+const contentTypes = new Map([
+  ['.html', 'text/html; charset=utf-8'],
+  ['.js', 'text/javascript; charset=utf-8'],
+  ['.css', 'text/css; charset=utf-8'],
+  ['.json', 'application/json; charset=utf-8'],
+  ['.svg', 'image/svg+xml'],
+  ['.png', 'image/png'],
+  ['.ico', 'image/x-icon']
+]);
 
 async function loadConnection() {
   const config = JSON.parse(await fs.readFile(claudeConfigPath, 'utf8'));
@@ -27,13 +37,13 @@ async function loadConnection() {
   return { workerUrl: String(workerUrl).replace(/\/$/, ''), token: String(token) };
 }
 
-async function recentTelemetry(limit = 20) {
+async function recentTelemetry(limit = 30) {
   try {
     const raw = await fs.readFile(telemetryPath, 'utf8');
     return raw
       .split('\n')
       .filter(Boolean)
-      .slice(-500)
+      .slice(-800)
       .flatMap((line) => {
         try {
           return [JSON.parse(line)];
@@ -80,18 +90,43 @@ function sendJson(response, status, value) {
   response.end(body);
 }
 
-const page = await fs.readFile(pagePath, 'utf8');
+async function sendStatic(request, response) {
+  const url = new URL(request.url ?? '/', `http://${host}:${port}`);
+  const requestPath = url.pathname === '/' ? '/index.html' : url.pathname;
+  const relative = decodeURIComponent(requestPath).replace(/^\/+/, '');
+  const absolute = path.resolve(dashboardDist, relative);
+  if (absolute !== dashboardDist && !absolute.startsWith(`${dashboardDist}${path.sep}`)) {
+    response.writeHead(403);
+    response.end('Forbidden');
+    return;
+  }
+
+  try {
+    const content = await fs.readFile(absolute);
+    response.writeHead(200, {
+      'content-type': contentTypes.get(path.extname(absolute)) ?? 'application/octet-stream',
+      'cache-control': path.extname(absolute) === '.html' ? 'no-store' : 'public, max-age=31536000, immutable',
+      'content-length': content.byteLength
+    });
+    response.end(content);
+  } catch (error) {
+    if (error?.code === 'ENOENT' && !path.extname(relative)) {
+      const content = await fs.readFile(path.join(dashboardDist, 'index.html'));
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      response.end(content);
+      return;
+    }
+    if (error?.code === 'ENOENT') {
+      response.writeHead(404);
+      response.end('Not found');
+      return;
+    }
+    throw error;
+  }
+}
 
 const server = http.createServer((request, response) => {
   void (async () => {
-    if (request.method === 'GET' && request.url === '/') {
-      response.writeHead(200, {
-        'content-type': 'text/html; charset=utf-8',
-        'cache-control': 'no-store'
-      });
-      response.end(page);
-      return;
-    }
     if (request.method === 'GET' && request.url === '/api/status') {
       try {
         sendJson(response, 200, await statusPayload());
@@ -102,9 +137,19 @@ const server = http.createServer((request, response) => {
       }
       return;
     }
+    if (request.method === 'GET') {
+      await sendStatic(request, response);
+      return;
+    }
     response.writeHead(404);
     response.end('Not found');
-  })();
+  })().catch((error) => {
+    if (!response.headersSent) {
+      sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+    } else {
+      response.destroy();
+    }
+  });
 });
 
 server.listen(port, host, () => {
