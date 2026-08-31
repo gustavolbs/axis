@@ -1,7 +1,8 @@
 import os from 'node:os';
 import path from 'node:path';
 
-import { readControlPlaneConfig } from './control-plane-config.js';
+import { readControlPlaneConfig, type ControlPlaneConfigFile } from './control-plane-config.js';
+import { MacOSKeychainSecretStore } from './secret-store.js';
 
 export type LocalCoderExecutionMode = 'local' | 'remote' | 'auto';
 export type WorkerBootstrapMode = 'none' | 'auto';
@@ -128,6 +129,28 @@ function trimTrailingSlash(value: string | undefined): string | undefined {
   return trimmed.replace(/\/$/, '');
 }
 
+function resolveRemoteWorkerToken(
+  env: NodeJS.ProcessEnv,
+  shared: ControlPlaneConfigFile | undefined
+): string | undefined {
+  const explicit = env.LOCAL_CODER_REMOTE_WORKER_TOKEN?.trim();
+  if (explicit) return explicit;
+
+  const credentialRef =
+    env.LOCAL_CODER_REMOTE_WORKER_CREDENTIAL_REF?.trim() || shared?.remoteWorkerCredentialRef;
+  if (credentialRef && process.platform === 'darwin') {
+    const keychain = new MacOSKeychainSecretStore();
+    if (keychain.isAvailable()) {
+      const stored = keychain.get(credentialRef)?.trim();
+      if (stored) return stored;
+    }
+  }
+
+  // Backwards compatibility for v0.14 installations. New Local Coder writers never
+  // persist this field, but existing configs remain usable until the installer migrates them.
+  return shared?.remoteWorkerToken || undefined;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConfig {
   const localCoderHome = path.join(os.homedir(), '.local-coder-mcp');
   const shared = readControlPlaneConfig();
@@ -189,7 +212,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
 
     executionMode,
     remoteWorkerUrl: trimTrailingSlash(env.LOCAL_CODER_REMOTE_WORKER_URL ?? shared?.remoteWorkerUrl),
-    remoteWorkerToken: env.LOCAL_CODER_REMOTE_WORKER_TOKEN?.trim() || shared?.remoteWorkerToken || undefined,
+    remoteWorkerToken: resolveRemoteWorkerToken(env, shared),
     remoteWorkerTimeoutMs: parsePositiveInt(env.LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS, 7_200_000),
     remoteMaxDeltaBytes: parsePositiveInt(env.LOCAL_CODER_REMOTE_MAX_DELTA_BYTES, 8_000_000),
 
