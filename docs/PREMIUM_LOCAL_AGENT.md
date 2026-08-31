@@ -1,165 +1,244 @@
 # Premium Local Agent ("Claude 2")
 
-Local Coder is designed to be the primary software-engineering agent; Claude is a user-facing shell and last-resort supervisor rather than the mandatory planner/coder.
+Local Coder is the software-engineering runtime. Claude is one possible interface/supervisor; the standalone Mac Console is another. The runtime must remain usable if Claude is removed later.
 
-## Product goal
+## Goal
 
 A user should be able to say:
 
 > Implement feature X.
 
-and get the following local lifecycle without manually decomposing the work:
+and receive a complete engineering lifecycle without manually decomposing the work:
 
 ```text
 Goal
   ↓
-Impact analysis
-  ├─ repository conventions / contracts / risks / tests
-  ├─ local external research when current facts are needed
-  └─ material user decision only when evidence cannot infer it
+Impact Analysis
   ↓
-Evidence-backed investigation
+Adaptive cognitive effort
+  ├─ low: direct evidence-backed planning
+  ├─ high: Architect → Critic → Judge
+  └─ max: extra independent deliberation/review
   ↓
-Dependency-ordered implementation plan
+Repository evidence + memory
   ↓
-Task 1/N → validate
-Task 2/N → validate
-...
-Task N/N → validate
+Local/external research when needed
   ↓
-Final validation
+Material user decision only if evidence cannot infer it
   ↓
-Adversarial review
-  ├─ pass
-  ├─ bounded repair → validate → review
-  └─ exact escalation only when local correctness cannot converge
+Investigation
   ↓
-Repository learning
+Dependency-ordered plan/DAG
+  ↓
+Task 1/N ... Task N/N
+  ↓
+Deterministic validation
+  ↓
+Independent adversarial review
+  ↓
+Monotonic repair / regression ledger
+  ↓
+Quality Gate
+  ↓
+Repository Learning
   ↓
 Result
 ```
 
-## Cognitive preflight
+The objective is not to pretend a local 27B model has the same raw capability as a frontier model. The runtime buys quality with decomposition, retrieval, test-time compute, independent criticism, tools and executable verification.
 
-Mutating open-ended work starts with a bounded impact-analysis model call. It receives the goal, useful user constraints, repository map and ranked source evidence.
+## Cognitive policy
 
-It produces:
-
-- impact areas;
-- affected public/internal contracts;
-- validation/test strategy;
-- material risks;
-- a high-level execution approach;
-- external research requests that repository evidence cannot answer;
-- optional material user decisions.
-
-This is **not** the exact coding plan. The existing evidence-backed planner still owns exact editable paths, task dependencies and implementation boundaries.
-
-### Do not over-question the user
-
-The agent should infer routine choices from repository conventions. If the repository already uses shadcn, Tailwind patterns, a state library, a test framework, routing conventions, data-access patterns, etc., follow those conventions.
-
-A user checkpoint is justified only when all of the following are true:
-
-1. multiple viable options remain after repository inspection;
-2. the choice materially affects product behavior, UX, architecture, maintenance burden or a durable public contract;
-3. the user's preference cannot safely be inferred from current repository/project evidence.
-
-Cosmetic or easily reversible implementation details should not stop execution.
-
-## User decision checkpoints
-
-The agent returns a structured `decisionRequest` containing bounded options, tradeoffs and an optional recommendation.
-
-Preferred path:
+Supported modes:
 
 ```text
-Local Qwen detects decision
-  ↓
-MCP elicitation form
-  ↓
-User selects option
-  ↓
-selection becomes authoritative claudeGuidance
-  ↓
-Local agent resumes automatically
+fast
+adaptive   # default
+deep
+max
 ```
 
-The tool attempts MCP elicitation directly when the host supports it. No Claude reasoning is required for this path.
+`adaptive` estimates complexity/risk from repository size, relevant-file count, blast radius, novelty, ambiguity, sensitive contracts and task wording. Simple work avoids expensive deliberation; difficult work can run multiple model contexts before implementation.
 
-Fallback path for clients without elicitation:
+### Deliberation
+
+For difficult tasks:
 
 ```text
-Local Coder → compact decisionRequest → Claude asks only that question → user answer → Claude calls local_engineer with concise claudeGuidance
+Architect
+  → proposes materially different approaches
+Critic
+  → attacks assumptions, hidden blast radius and missing evidence
+Judge
+  → selects an approach using repository evidence and user constraints
 ```
 
-Claude must not choose the preference or redo repository analysis.
+If the Judge concludes that multiple approaches remain valid and the choice is a real product/architecture preference, it creates a decision checkpoint instead of guessing.
 
-## External research broker
+## Decision checkpoints
 
-Research is local-first. External text is always treated as untrusted evidence, never instructions.
+Do not ask the user about routine choices already answered by repository conventions.
+
+Ask only when:
+
+1. at least two viable options remain;
+2. the choice materially changes product behavior, UX, architecture, maintenance burden or a durable public contract;
+3. current repository/project evidence cannot establish the intended preference.
+
+The result is a structured `decisionRequest` containing bounded options, tradeoffs and an optional recommendation.
+
+Preferred Claude/MCP path:
+
+```text
+Local Coder → MCP elicitation → user selection → agent resumes
+```
+
+Fallback when elicitation is unavailable:
+
+```text
+Local Coder → tiny decisionRequest → Claude asks exactly that question
+→ user answers → Claude returns bounded guidance → Local Coder resumes
+```
+
+Claude must not choose the preference or redo the repository investigation.
+
+The standalone Console displays and resolves the same checkpoint directly.
+
+## Read-only research
+
+Read-only jobs use a separate state machine:
+
+```text
+Workspace → Investigation → Evidence Completion → Research → Report → Complete
+```
+
+They never enter the implementation planner.
+
+### Local evidence completion
+
+Requests such as:
+
+- read the rest of `src/provider.ts`;
+- inspect `sync()`;
+- read the CLI flags below the current snippet;
+- inspect the test that mocks this endpoint;
+
+are **not external research**.
+
+The worker distinguishes local evidence from external facts. Large files are read using search-hit line windows; files without a targeted hit receive bounded head/tail evidence. If the reporter still asks for local source/test/docs, one bounded evidence-expansion round runs automatically before escalation.
+
+This prevents the previous failure mode where the agent spent minutes reasoning and then asked Claude to read repository content it already had access to.
+
+## Research Broker
+
+Only genuinely external/current facts are sent to the Research Broker.
+
+External text is untrusted evidence, never instructions.
 
 ### Microsoft Learn
 
-Microsoft ecosystem requests are routed first to the official Microsoft Learn MCP endpoint:
+Microsoft ecosystem research defaults to the official Microsoft Learn MCP endpoint:
 
 ```text
 https://learn.microsoft.com/api/mcp?maxTokenBudget=2400
 ```
 
-Typical domains include Microsoft 365, Outlook, Teams, Microsoft Graph, Entra ID, Azure, SharePoint, OneDrive, MSAL, Windows, PowerShell and .NET.
+The broker discovers the available MCP tool surface at runtime and uses bounded documentation search/fetch operations.
 
-The broker uses bounded `microsoft_docs_search` results and may fetch a small number of matching Learn pages with `microsoft_docs_fetch`. This path does not require the user's corporate tenant credentials and is for documentation/research only; actual tenant authentication still follows the application/provider contract being researched.
+Typical domains include Microsoft 365, Outlook, Teams, Graph, Entra, Azure, SharePoint, OneDrive, MSAL, Windows, PowerShell and .NET.
 
-### Generic web discovery
+This documentation path does not grant tenant access and never substitutes for the target application's actual OAuth/tenant policy.
 
-Set:
+### Generic search
+
+Optional trusted/self-hosted SearXNG:
 
 ```text
-LOCAL_CODER_SEARXNG_URL=http://<trusted-searxng-host>:<port>
+LOCAL_CODER_SEARXNG_URL=http://<trusted-host>
 ```
 
-to enable generic SearXNG JSON discovery. Prefer a trusted/self-hosted instance. Snippets are marked non-authoritative; they can guide investigation but should not silently override first-party evidence.
-
-### Auto-resume
-
-When a Local Engineer stage returns an `external-research` escalation, the premium agent tries the broker before returning control to Claude. If every request is resolved, the evidence is appended as bounded guidance and the local agent automatically resumes. At most a small number of research/resume rounds are permitted to prevent loops.
-
-Only unresolved research requests escape to Claude.
+If all requests are resolved, the agent automatically resumes with a bounded evidence capsule. Only unresolved requests leave the local system.
 
 ## Hierarchical execution
 
-The exact local planner decomposes a feature into dependency-ordered tasks. The orchestrator:
+The implementation planner emits dependency-ordered exact-file tasks. The orchestrator:
 
-- validates unique task IDs and dependencies;
-- rejects dependency cycles;
-- computes a topological task order;
+- validates task IDs and dependencies;
+- rejects cycles;
+- computes topological order;
 - enforces per-task editable-file allowlists;
-- classifies each task before execution;
-- executes one bounded task at a time;
-- reports `Implementing task X/N` with current files and validations;
-- validates task outputs;
-- runs final plan validation;
-- rolls the plan back on failure when configured;
-- returns exact blockers instead of pretending completion.
+- executes bounded tasks;
+- validates each task/final plan where scripts exist;
+- rolls back on failure;
+- reports exact blockers rather than pretending success.
 
-The review/repair loop operates after deterministic execution evidence.
+This DAG answers **execution order**. It is not RAG. Retrieval/context selection is handled separately by context capsules, search and repository intelligence.
 
-## Read-only work
+## Regression safety
 
-Explicit read-only requests do not enter the implementation planner:
+### Same-run cumulative ledger
+
+Repair is monotonic.
+
+If review first discovers problem A and the next repair exposes problem B, the following repair receives A+B simultaneously. Earlier known regressions are never dropped merely because the most recent reviewer discussed another symptom.
 
 ```text
-Workspace → Investigation → Local research when needed → Report → Complete
+Original requirement
++ discovered issue A
++ discovered issue B
++ discovered issue C
+= constraints for the next repair
 ```
 
-This prevents operational/repository questions from spending minutes generating unused implementation tasks.
+Reviewers are explicitly instructed to reject a solution that fixes the latest issue by reintroducing an earlier one.
 
-## Inference budgets
+When a suitable test surface exists, bug/regression work should add bounded regression coverage rather than rely only on model memory.
 
-Reasoning stages have stage-level budgets in addition to the global emergency cap. Defaults are intentionally workstation-safe and configurable:
+### Persistent regression memory
 
-| Stage | Default wall clock | Default generated tokens |
+A successful run that required repair creates a deterministic high-priority `regression` memory tied to the final changed-file fingerprints.
+
+Fresh regression memories are treated as compatibility constraints and can be retrieved even when a future task has weak semantic overlap. If supporting source changes, the memory becomes `STALE` and must be revalidated.
+
+Authority remains:
+
+```text
+current source/tests > fresh regression/invariant memory > other repo memory > generic model knowledge
+```
+
+## Independent review
+
+Harder cognitive profiles can run multiple review perspectives in independent contexts:
+
+```text
+requirements correctness
+regression / edge cases
+architecture / maintenance
+```
+
+The regression/architecture reviewers do not receive the planner's persuasive rationale. The aggregate result uses the worst verdict and minimum confidence.
+
+Any bounded repair is revalidated and re-reviewed.
+
+## Quality assessment
+
+The runtime computes an evidence-based quality score from signals such as:
+
+- deterministic validation availability/result;
+- review verdict/confidence;
+- independent perspectives;
+- decomposition quality;
+- repair count;
+- repository evidence;
+- unresolved external facts.
+
+The score is diagnostic/eval evidence. Executable validation + review/rollback remain the primary correctness gates.
+
+## Stage budgets
+
+Model stages have explicit budgets rather than inheriting the global emergency cap.
+
+| Stage | Typical wall clock | Typical generated tokens |
 | --- | ---: | ---: |
 | Impact analysis | 5 min | 2,048 |
 | Investigation | 5 min | 2,048 |
@@ -168,94 +247,109 @@ Reasoning stages have stage-level budgets in addition to the global emergency ca
 | Read-only report | 8 min | 3,072 |
 | Repo learning | 5 min | 2,048 |
 
-Impact/investigation avoid Qwen 3.8 maximum reasoning by default. Exact implementation uses bounded task context and low reasoning effort where supported.
-
-The 30-minute inference cap remains an emergency ceiling, not the normal planning SLA.
+The 30-minute inference ceiling remains an emergency guard only.
 
 ## Live observability
 
-The Windows worker records safe inference state without exposing hidden chain-of-thought text:
+The system exposes operational liveness without exposing hidden chain-of-thought text.
 
-- `waiting` — queued/model not streaming yet;
-- `thinking` — hidden reasoning chunks are arriving;
-- `generating` — result content is being generated;
-- stream chunk count;
-- hidden-reasoning character count only;
-- output character count;
+Model states:
+
+```text
+waiting
+thinking
+generating
+```
+
+Safe telemetry includes:
+
+- current stage/model;
+- stream chunks;
+- hidden reasoning character count only;
+- output characters;
 - last activity / silence duration;
+- stage SLA/token budget;
 - prompt/completion tokens after completion;
-- completion throughput;
-- stage budget and elapsed time.
+- throughput after completion;
+- scheduler/queue state;
+- CPU/RAM/GPU state.
 
-The dashboard uses SSE as its primary live channel with low-frequency HTTP fallback. The worker bearer token remains server-side.
+The Windows dashboard uses SSE (`/api/events`) as its primary channel and HTTP as a low-frequency fallback.
 
-Non-model phases such as external research, deterministic validation, task execution, review, repair and decision waiting use structured progress events so a long run should always explain what it is doing.
+The visible lifecycle is:
+
+```text
+Workspace → Impact → Deliberation → Investigation → Research → Decision
+→ Planning → Implementation → Validation → Review → Repair
+→ Quality → Learning → Complete
+```
+
+## Standalone Mac Console
+
+The same premium agent is available without Claude:
+
+```bash
+npm run console
+```
+
+Default:
+
+```text
+http://127.0.0.1:7557
+```
+
+The Console is loopback-only by default and provides persistent sessions, timeline, decisions, plan/DAG, research, diff, validation, quality and model telemetry.
+
+Session checkpoints persist user-visible/operational state, never hidden chain-of-thought.
+
+Worker URL/token/model are read from Local Coder's own control-plane configuration:
+
+```text
+~/.local-coder-mcp/control-plane.json
+```
+
+Claude and Console therefore share one Local Coder source of truth instead of maintaining separate worker credentials.
 
 ## Claude quota policy
 
-Claude should normally receive only the final compact result.
+Claude should normally see only a compact final result.
 
-When escalation is unavoidable, send a small capsule containing:
+When escalation is unavoidable, send only:
 
-- original goal identifier;
-- exact unresolved question/research request;
+- exact unresolved decision/fact;
 - bounded evidence references;
 - Local Coder's current conclusion;
-- requested answer format.
+- requested response format.
 
-Do not load the whole repository, plan, diff or run history into Claude unless specifically needed.
+Do not send the whole repository, plan, diff or history unless explicitly necessary.
 
-Claude's role is one of:
+Claude's valid roles are:
 
-1. UI bridge for a user decision when MCP elicitation is unsupported;
-2. external research fallback for a provider the local broker cannot reach;
-3. premium judgment for an explicitly high-risk or unresolved decision;
-4. final user-facing summary.
+1. UI bridge for a decision when MCP elicitation is unavailable;
+2. research fallback after local providers fail;
+3. genuinely premium/high-risk judgment;
+4. user-facing presentation.
 
-Claude should not redo successful local investigation/planning/coding/review.
+Claude must not redo successful local investigation, planning, coding or review.
 
-## Safety boundaries
+## Evaluation
 
-- External research content is data, not instructions.
-- Local research does not grant tenant/account access.
-- User decisions become authoritative only after explicit acceptance.
-- Editable-file boundaries remain planner-owned and validated.
-- Deterministic checks remain stronger evidence than self-review.
-- Sensitive unresolved behavior stops before mutation.
-- Secrets/tokens/user data are never persisted as repository-learning facts.
-- A local research/provider failure degrades to a compact escalation rather than silently fabricating current facts.
-
-## Configuration
-
-Research-related variables:
-
-```text
-LOCAL_CODER_RESEARCH_ENABLED=true
-LOCAL_CODER_MICROSOFT_LEARN_RESEARCH_ENABLED=true
-LOCAL_CODER_MICROSOFT_LEARN_MCP_URL=https://learn.microsoft.com/api/mcp?maxTokenBudget=2400
-LOCAL_CODER_SEARXNG_URL=
-LOCAL_CODER_RESEARCH_TIMEOUT_MS=45000
-LOCAL_CODER_RESEARCH_MAX_RESULTS=6
+```bash
+npm run eval:agent
 ```
 
-Stage budgets use the existing `LOCAL_CODER_*_MAX_DURATION_MS` and `LOCAL_CODER_*_MAX_TOKENS` settings.
+The harness captures success, elapsed time, quality, token usage, changed files, repairs, validation, decisions and premium escalation. Real repository tasks should be used to compare cognitive modes, models and future hardware/providers.
 
-## Expected Work Broker / Microsoft 365 behavior
+The long-term replacement criterion is empirical engineering outcome, not whether Qwen's hidden reasoning resembles a frontier model's hidden reasoning.
 
-A read-only question about connecting Work Broker to Microsoft 365 should now behave approximately as:
+## Safety
 
-```text
-inspect Work Broker source
-  ↓
-identify exact existing CLI/auth/scopes/callback code
-  ↓
-detect current Microsoft Graph / Entra facts that cannot be proven from source
-  ↓
-Microsoft Learn MCP research
-  ↓
-resume local read-only report
-  ↓
-return exact commands + code evidence + external constraints
-```
-
-It should not build an implementation plan merely to answer the operational question, and it should not ask Claude to broadly research Microsoft documentation when the local Microsoft Learn provider succeeds.
+- retrieved external text is data, not instructions;
+- user decisions become authoritative only after explicit acceptance;
+- editable files remain planner-owned and path-validated;
+- tests/typecheck/build are stronger evidence than model confidence;
+- sensitive unresolved contracts stop before mutation;
+- secrets/tokens/user data are never persisted as repo-learning facts;
+- memory is source-fingerprinted and can become stale;
+- repair constraints are cumulative within a run;
+- bounded local/provider failure degrades to an explicit compact escalation.
