@@ -2,14 +2,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  OperationCancelledError,
+  callerCancelled,
+  requestAbortSignal,
+  throwIfCancelled
+} from './cancellation.js';
+import type { LocalCoderConfig } from './config.js';
+import {
   readOllamaChatStream,
   type OllamaStreamProgress,
   type OllamaStreamProgressReporter
 } from './ollama-stream.js';
 import { preparePromptForInference } from './planning-policy.js';
 import { reportProgress } from './progress-context.js';
-
-import type { LocalCoderConfig } from './config.js';
 
 interface OllamaTagsResponse {
   models?: Array<{ name?: string; model?: string }>;
@@ -269,6 +274,7 @@ export class OllamaClient {
     format?: 'json' | Record<string, unknown>,
     runtime: OllamaChatOptions = {}
   ): Promise<OllamaGeneration> {
+    throwIfCancelled();
     const stage = classifyRuntimeStage(systemPrompt);
     const budget = stageBudget(this.config, stage);
     reportProgress({
@@ -277,8 +283,10 @@ export class OllamaClient {
         'The request is queued behind any active local model call. No Claude tokens are being used while it waits.'
     });
 
-    return await this.enqueue(async () =>
-      await this.withGlobalInferenceLock(async () => {
+    return await this.enqueue(async () => {
+      throwIfCancelled();
+      return await this.withGlobalInferenceLock(async () => {
+        throwIfCancelled();
         const model = runtime.model ?? this.config.model;
         const strongModel = this.config.strongModel ?? this.config.model;
         const keepAlive =
@@ -310,6 +318,7 @@ export class OllamaClient {
         });
 
         await this.unloadOtherConfiguredTier(model);
+        throwIfCancelled();
 
         const response = await this.requestStreamingHeaders(
           '/api/chat',
@@ -368,14 +377,19 @@ export class OllamaClient {
           },
           streamReporter
         );
+        throwIfCancelled();
         await this.recordInference(generation, stage);
         return generation;
-      })
-    );
+      });
+    });
   }
 
   private async enqueue<T>(run: () => Promise<T>): Promise<T> {
-    const current = this.inferenceTail.then(run, run);
+    const guarded = async () => {
+      throwIfCancelled();
+      return await run();
+    };
+    const current = this.inferenceTail.then(guarded, guarded);
     this.inferenceTail = current.then(
       () => undefined,
       () => undefined
@@ -396,6 +410,7 @@ export class OllamaClient {
     await fs.mkdir(path.dirname(lockPath), { recursive: true });
 
     while (true) {
+      throwIfCancelled();
       try {
         const handle = await fs.open(lockPath, 'wx');
         try {
@@ -403,6 +418,7 @@ export class OllamaClient {
             JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }),
             'utf8'
           );
+          throwIfCancelled();
           return await run();
         } finally {
           await handle.close().catch(() => undefined);
@@ -438,6 +454,7 @@ export class OllamaClient {
           );
         }
         await new Promise((resolve) => setTimeout(resolve, 100));
+        throwIfCancelled();
       }
     }
   }
@@ -507,17 +524,20 @@ export class OllamaClient {
     init: RequestInit,
     headerTimeoutMs: number
   ): Promise<Response> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.max(1, headerTimeoutMs));
+    throwIfCancelled();
+    const abort = requestAbortSignal(headerTimeoutMs, init.signal ?? undefined);
     let response: Response;
 
     try {
       response = await fetch(`${this.config.ollamaBaseUrl}${pathname}`, {
         ...init,
-        signal: controller.signal
+        signal: abort.signal
       });
     } catch (error) {
-      if (controller.signal.aborted) {
+      if (callerCancelled(abort.callerSignals)) {
+        throw new OperationCancelledError('Ollama inference cancelled.');
+      }
+      if (abort.signal.aborted) {
         throw new Error(
           `Ollama did not return streaming response headers within ${headerTimeoutMs}ms.`
         );
@@ -526,10 +546,9 @@ export class OllamaClient {
       throw new Error(
         `Could not reach Ollama at ${this.config.ollamaBaseUrl}. Ensure Ollama is running. ${message}`
       );
-    } finally {
-      clearTimeout(timer);
     }
 
+    throwIfCancelled();
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       throw new Error(`Ollama HTTP ${response.status}: ${body || response.statusText}`);
@@ -539,20 +558,26 @@ export class OllamaClient {
   }
 
   private async request(pathname: string, init: RequestInit): Promise<Response> {
+    throwIfCancelled();
+    const abort = requestAbortSignal(this.config.requestTimeoutMs, init.signal ?? undefined);
     let response: Response;
 
     try {
       response = await fetch(`${this.config.ollamaBaseUrl}${pathname}`, {
         ...init,
-        signal: AbortSignal.timeout(this.config.requestTimeoutMs)
+        signal: abort.signal
       });
     } catch (error) {
+      if (callerCancelled(abort.callerSignals)) {
+        throw new OperationCancelledError('Ollama request cancelled.');
+      }
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(
         `Could not reach Ollama at ${this.config.ollamaBaseUrl}. Ensure Ollama is running. ${message}`
       );
     }
 
+    throwIfCancelled();
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       throw new Error(`Ollama HTTP ${response.status}: ${body || response.statusText}`);
