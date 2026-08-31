@@ -13,6 +13,8 @@ param(
 
   [string]$WorkerToken = "",
 
+  [switch]$RotateWorkerToken,
+
   [string]$AllowedGitHosts = "github.com",
 
   [ValidateSet("none", "auto")]
@@ -32,7 +34,9 @@ $OllamaFirewallRule = "Local Coder - Ollama from Mac"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $WorkerEntry = Join-Path $RepoRoot "dist\worker-server.js"
 $FirewallHelpers = Join-Path $PSScriptRoot "windows-firewall.ps1"
+$AuthHelpers = Join-Path $PSScriptRoot "windows-auth.ps1"
 . $FirewallHelpers
+. $AuthHelpers
 
 function Assert-Command {
   param([string]$Name)
@@ -51,17 +55,6 @@ function Set-UserEnvironmentVariable {
   param([string]$Name, [string]$Value)
   [Environment]::SetEnvironmentVariable($Name, $Value, "User")
   Set-Item -Path "Env:$Name" -Value $Value
-}
-
-function New-WorkerToken {
-  $bytes = New-Object byte[] 32
-  $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-  try {
-    $rng.GetBytes($bytes)
-  } finally {
-    $rng.Dispose()
-  }
-  return [Convert]::ToBase64String($bytes)
 }
 
 function Replace-FirewallRule {
@@ -124,8 +117,16 @@ Assert-Command "git"
 $node = Get-Command node -ErrorAction Stop
 $localCoderNode = Install-LocalCoderNodeRuntime -NodePath $node.Source
 
-if (-not $WorkerToken) {
-  $WorkerToken = New-WorkerToken
+$tokenResolution = Resolve-LocalCoderWorkerToken `
+  -RequestedToken $WorkerToken `
+  -Rotate:$RotateWorkerToken
+$WorkerToken = $tokenResolution.Token
+
+switch ($tokenResolution.Source) {
+  "existing" { Write-Host "Worker authentication token: preserving existing token." -ForegroundColor Cyan }
+  "explicit" { Write-Host "Worker authentication token: using explicitly supplied token." -ForegroundColor Cyan }
+  "generated" { Write-Host "Worker authentication token: generated for first-time setup." -ForegroundColor Yellow }
+  "rotated" { Write-Host "Worker authentication token: ROTATED explicitly." -ForegroundColor Yellow }
 }
 
 # In full worker mode Ollama stays loopback-only. Only the authenticated worker is
@@ -207,9 +208,14 @@ if ($MaxConcurrentJobs -eq 1) {
   Write-Host "Different checkout/worktree jobs may overlap; same-checkout jobs and Ollama inference remain serialized." -ForegroundColor Yellow
 }
 Write-Host ""
-Write-Host "WORKER TOKEN - copy this once to the Mac installer:" -ForegroundColor Yellow
-Write-Host $WorkerToken -ForegroundColor Yellow
-Write-Host ""
+if ($tokenResolution.Source -in @("generated", "rotated")) {
+  Write-Host "WORKER TOKEN - copy this once to the Mac installer:" -ForegroundColor Yellow
+  Write-Host $WorkerToken -ForegroundColor Yellow
+  Write-Host ""
+} else {
+  Write-Host "Worker token was preserved and is not printed during routine setup." -ForegroundColor Cyan
+  Write-Host ""
+}
 Write-Host "Ollama remains loopback-only in Worker mode; port $OllamaPort is not opened to the LAN."
 Write-Host "The worker port $WorkerPort accepts only the supplied Mac IP and the dedicated Local Coder Node executable on any Windows network profile."
 Write-Host "System-wide Node firewall rules cannot affect the dedicated Local Coder runtime."
@@ -234,6 +240,6 @@ if ($StartWorker) {
 
 Write-Host ""
 Write-Host "Then on the Mac run:" -ForegroundColor Cyan
-Write-Host "  npm run install:claude:worker -- --host <WINDOWS_IP_OR_MESHNET_NAME> --token '<TOKEN_ABOVE>'"
+Write-Host "  npm run install:claude:worker -- --host <WINDOWS_IP_OR_MESHNET_NAME> --token '<TOKEN>'"
 Write-Host ""
 Write-Host "Do not port-forward $WorkerPort or $OllamaPort on your router."
