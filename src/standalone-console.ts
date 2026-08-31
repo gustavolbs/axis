@@ -5,12 +5,18 @@ import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from './config.js';
 import { createExecutionRuntime } from './execution-runtime.js';
+import { createControlPlaneLocalProvider } from './local-inference-provider.js';
 import { OllamaClient } from './ollama.js';
+import { ProjectAdminService } from './project-admin.js';
+import { handleProjectAdminRequest } from './project-admin-http.js';
 import { StandaloneJobManager, type StandaloneJobInput } from './standalone-job-manager.js';
 
 const config = loadConfig();
 const ollama = new OllamaClient(config);
 const runtime = createExecutionRuntime(config, ollama);
+const projectAdmin = new ProjectAdminService({
+  localProvider: createControlPlaneLocalProvider(config, ollama)
+});
 const consoleStateDir = path.join(path.dirname(config.runStorePath), 'console');
 const jobs = new StandaloneJobManager(runtime.execution, consoleStateDir);
 await jobs.restore();
@@ -63,12 +69,23 @@ async function readJson(request: IncomingMessage, maxBytes = 200_000): Promise<R
   return parsed as Record<string, unknown>;
 }
 
-function parseJobInput(body: Record<string, unknown>): StandaloneJobInput {
-  if (typeof body.workspace !== 'string' || typeof body.goal !== 'string') {
-    throw new Error('workspace and goal are required strings.');
-  }
+function parseJobInput(
+  body: Record<string, unknown>,
+  admin: ProjectAdminService
+): StandaloneJobInput {
+  if (typeof body.goal !== 'string') throw new Error('goal is required.');
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim()
+    ? body.projectId.trim()
+    : undefined;
+  const workspace = projectId
+    ? admin.getProject(projectId).workspace
+    : typeof body.workspace === 'string'
+      ? body.workspace
+      : undefined;
+  if (!workspace) throw new Error('workspace is required when projectId is not provided.');
   return {
-    workspace: body.workspace,
+    projectId,
+    workspace,
     goal: body.goal,
     context: typeof body.context === 'string' ? body.context : undefined,
     constraints: Array.isArray(body.constraints)
@@ -152,6 +169,8 @@ async function serveStatic(urlPath: string, response: ServerResponse): Promise<v
 async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://local-coder-console');
 
+  if (await handleProjectAdminRequest(request, response, projectAdmin)) return;
+
   if (request.method === 'GET' && url.pathname === '/api/events') {
     await serveEvents(request, response);
     return;
@@ -184,7 +203,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
 
   if (request.method === 'POST' && url.pathname === '/api/jobs') {
     const body = await readJson(request);
-    json(response, 202, { job: jobs.create(parseJobInput(body)) });
+    json(response, 202, { job: jobs.create(parseJobInput(body, projectAdmin)) });
     return;
   }
 
@@ -236,6 +255,8 @@ server.listen(config.consolePort ?? 7557, config.consoleHost ?? '127.0.0.1', () 
   const address = `http://${config.consoleHost ?? '127.0.0.1'}:${config.consolePort ?? 7557}`;
   console.error(`Local Coder Console listening at ${address}`);
   if ((config.consoleHost ?? '127.0.0.1') !== '127.0.0.1' && (config.consoleHost ?? '') !== '::1') {
-    console.error('WARNING: standalone console is not bound to loopback. Add authentication before exposing it to a network.');
+    console.error(
+      'WARNING: standalone job/health APIs are not authenticated on network binds. Administrative Project/provider/credential/pricing APIs remain loopback-only.'
+    );
   }
 });
