@@ -54,6 +54,7 @@ jobs:
             '.\scripts\setup-windows-host.ps1',
             '.\scripts\install-windows-worker-task.ps1',
             '.\scripts\install-windows-dashboard-task.ps1',
+            '.\scripts\ensure-windows-host.ps1',
             '.\test\windows-firewall.ps1'
           )
           foreach ($script in $scripts) {
