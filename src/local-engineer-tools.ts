@@ -167,8 +167,7 @@ function elicitationSchema(request: PremiumDecisionRequest): Record<string, unkn
               `${option.id}: ${option.label}${option.id === question.recommendedOptionId ? ' [recommended]' : ''} — ${option.tradeoff}`
             )
           ].join('\n'),
-          enum: question.options.map((option) => option.id),
-          enumNames: question.options.map((option) => option.label)
+          enum: question.options.map((option) => option.id)
         }
       ])
     )
@@ -200,15 +199,15 @@ async function executeWithDirectDecisions(
 ): Promise<LocalEngineerResult> {
   let input = initialInput;
   let result = await execution.executeEngineer(input);
-  const elicitation = (context as ElicitationContext | undefined)?.mcpReq?.elicitInput;
+  const mcpReq = (context as ElicitationContext | undefined)?.mcpReq;
 
   for (let round = 0; round < 3; round += 1) {
     const request = premiumResult(result).decisionRequest;
-    if (!request?.questions.length || !elicitation) break;
+    if (!request?.questions.length || !mcpReq?.elicitInput) break;
 
     let elicited: ElicitationResult;
     try {
-      elicited = await elicitation({
+      elicited = await mcpReq.elicitInput({
         mode: 'form',
         message: request.message,
         requestedSchema: elicitationSchema(request)
