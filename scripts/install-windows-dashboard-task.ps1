@@ -15,6 +15,14 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $DashboardEntry = Join-Path $RepoRoot "scripts\dashboard.mjs"
 $DashboardIndex = Join-Path $RepoRoot "dashboard\dist\index.html"
 $FirewallRule = "Local Coder - Dashboard from Mac"
+$FirewallHelpers = Join-Path $PSScriptRoot "windows-firewall.ps1"
+. $FirewallHelpers
+
+function Test-IsAdministrator {
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+  return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
 
 if ($Remove) {
   $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -29,6 +37,10 @@ if ($Remove) {
     Write-Host "Removed firewall rule '$FirewallRule'." -ForegroundColor Green
   }
   return
+}
+
+if (-not (Test-IsAdministrator)) {
+  throw "Run PowerShell as Administrator so the installer can repair and validate restricted Windows Firewall rules."
 }
 
 $node = Get-Command node -ErrorAction Stop
@@ -82,26 +94,22 @@ Register-ScheduledTask `
   -Principal $principal `
   -Description "Local Coder React dashboard hosted on the Windows execution plane" | Out-Null
 
-$existingRule = Get-NetFirewallRule -DisplayName $FirewallRule -ErrorAction SilentlyContinue
-if ($existingRule) {
-  Remove-NetFirewallRule -DisplayName $FirewallRule
-}
-
-# Meshnet/VPN adapters are not guaranteed to use the Windows Private network profile.
-# Apply the rule on every profile while retaining the actual security boundaries:
-# exact dashboard local address + exact Mac source address + exact TCP port.
-New-NetFirewallRule `
+# Windows can create generic "Node.js JavaScript Runtime" inbound Block rules when
+# its network-access prompt is denied. Explicit Block wins over our Allow rule, so
+# repair only those Windows-generated local rules and refuse to override custom policy.
+# The resulting Allow rule is restricted to the dashboard Node executable, exact
+# Windows Meshnet address, exact Mac source address, and exact TCP port.
+Set-LocalCoderInboundFirewallRule `
   -DisplayName $FirewallRule `
-  -Direction Inbound `
-  -Action Allow `
-  -Protocol TCP `
-  -LocalAddress $ListenHost `
-  -LocalPort $Port `
+  -ExecutablePath $node.Source `
+  -Port $Port `
   -RemoteAddress $MacIp `
-  -Profile Any | Out-Null
+  -LocalAddress $ListenHost `
+  -Profile Any
 
 Write-Host "Installed scheduled task '$TaskName'." -ForegroundColor Green
-Write-Host "Dashboard listens only on $ListenHost`:$Port and the firewall allows only Mac $MacIp to that address/port on any Windows network profile."
+Write-Host "Dashboard listens only on $ListenHost`:$Port and the firewall allows only Mac $MacIp to that Node executable/address/port on any Windows network profile."
+Write-Host "Conflicting Windows-generated Node inbound Block rules are repaired automatically; custom/managed Block policy causes installation to fail safely."
 Write-Host ""
 Write-Host "Start it now with:"
 Write-Host "  Start-ScheduledTask -TaskName '$TaskName'"
