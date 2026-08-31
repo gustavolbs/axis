@@ -13,6 +13,10 @@ const claudeConfigPath =
 const telemetryPath =
   process.env.LOCAL_CODER_TELEMETRY_PATH ??
   path.join(os.homedir(), '.local-coder-mcp', 'telemetry.jsonl');
+const statusStreamIntervalMs = Math.max(
+  500,
+  Number(process.env.LOCAL_CODER_DASHBOARD_STREAM_INTERVAL_MS ?? '1200')
+);
 
 const contentTypes = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -80,7 +84,7 @@ async function recentTelemetry(limit = 30) {
           return [];
         }
       })
-      .filter((event) => ['engineering', 'execution', 'orchestration'].includes(event.kind))
+      .filter((event) => ['engineering', 'execution', 'orchestration', 'inference'].includes(event.kind))
       .slice(-limit)
       .reverse();
   } catch (error) {
@@ -115,7 +119,8 @@ async function statusPayload() {
       platform: process.platform,
       dashboardPid: process.pid,
       workerUrl,
-      mode
+      mode,
+      transport: 'sse'
     },
     recentTelemetry: await recentTelemetry()
   };
@@ -129,6 +134,58 @@ function sendJson(response, status, value) {
     'content-length': Buffer.byteLength(body)
   });
   response.end(body);
+}
+
+function sseEvent(response, event, value) {
+  response.write(`event: ${event}\n`);
+  response.write(`data: ${JSON.stringify(value)}\n\n`);
+}
+
+function streamStatus(request, response) {
+  response.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-store, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no'
+  });
+  response.flushHeaders?.();
+  response.write('retry: 1500\n\n');
+
+  let closed = false;
+  let inFlight = false;
+  let lastHeartbeatAt = 0;
+
+  const push = async () => {
+    if (closed || inFlight) return;
+    inFlight = true;
+    try {
+      sseEvent(response, 'status', await statusPayload());
+    } catch (error) {
+      sseEvent(response, 'status-error', {
+        error: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString()
+      });
+    } finally {
+      inFlight = false;
+    }
+
+    const now = Date.now();
+    if (!closed && now - lastHeartbeatAt >= 15_000) {
+      lastHeartbeatAt = now;
+      response.write(`: heartbeat ${new Date(now).toISOString()}\n\n`);
+    }
+  };
+
+  void push();
+  const timer = setInterval(() => void push(), statusStreamIntervalMs);
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(timer);
+    if (!response.writableEnded) response.end();
+  };
+  request.on('close', close);
+  request.on('aborted', close);
 }
 
 async function sendStatic(request, response) {
@@ -174,6 +231,10 @@ async function sendStatic(request, response) {
 
 const server = http.createServer((request, response) => {
   void (async () => {
+    if (request.method === 'GET' && request.url === '/api/events') {
+      streamStatus(request, response);
+      return;
+    }
     if (request.method === 'GET' && request.url === '/api/status') {
       try {
         sendJson(response, 200, await statusPayload());
@@ -215,9 +276,13 @@ const server = http.createServer((request, response) => {
   });
 });
 
+// SSE responses are intentionally long-lived. There is no request body to time out.
+server.requestTimeout = 0;
+
 server.listen(port, host, () => {
   const url = `http://${host}:${port}`;
   console.log(`Local Coder dashboard: ${url}`);
+  console.log(`Live dashboard stream: ${url}/api/events (${statusStreamIntervalMs}ms cadence)`);
   console.log(
     process.platform === 'win32'
       ? 'Dashboard is running on the Windows execution host. Restrict inbound access with the Meshnet firewall rule.'
