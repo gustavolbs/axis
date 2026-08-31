@@ -1,0 +1,18 @@
+appId: dev.localcoder.desktop
+productName: Local Coder
+asar: true
+directories:
+  output: release
+files:
+  - desktop/**/*
+  - dist/**/*
+  - console-dist/**/*
+  - package.json
+mac:
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  target:
+    - dmg
+    - zip
+artifactName: ${productName}-${version}-${arch}.${ext}
