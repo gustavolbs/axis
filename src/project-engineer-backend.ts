@@ -12,6 +12,10 @@ import type {
   OllamaThinkingLevel
 } from './ollama.js';
 import type { OllamaStreamProgress } from './ollama-stream.js';
+import {
+  ProjectBudgetSession,
+  type ProjectBudgetSnapshot
+} from './project-budget.js';
 import { executePremiumLocalAgent } from './premium-agent.js';
 import {
   ProjectProviderRuntime,
@@ -39,7 +43,11 @@ import { RemoteWorkerClient } from './remote-worker-client.js';
 import type { RemoteWorkerHealth } from './remote-protocol.js';
 import { resolveWorkspace } from './workspace.js';
 
-export type ProjectEngineerInput = LocalEngineerInput & { projectId?: string };
+export type ProjectEngineerInput = LocalEngineerInput & {
+  projectId?: string;
+  /** Internal host correlation id so resumed decision rounds share one per-job budget. */
+  budgetJobId?: string;
+};
 
 export interface LegacyEngineerExecutor {
   executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult>;
@@ -64,6 +72,7 @@ export interface ProjectExecutionMetadata {
   localInference: 'mac-ollama' | 'windows-worker' | 'windows-worker-with-mac-fallback';
   repoMemoryScopeKey: string;
   routingTrace: ProjectRoutingTraceEntry[];
+  budget: ProjectBudgetSnapshot;
 }
 
 export type ProjectEngineerResult = LocalEngineerResult & {
@@ -90,6 +99,7 @@ export interface ProjectEngineerBackendOptions {
   providerRuntime?: Omit<ProjectProviderRuntimeOptions, 'localProvider'>;
   remoteClient?: RemoteChatClient;
   agentExecutor?: AgentExecutor;
+  budgetSessionFactory?: (project: ProjectDefinition, jobId?: string) => ProjectBudgetSession;
 }
 
 function reasoningEffort(think: OllamaThinkingLevel | undefined): ReasoningEffort | undefined {
@@ -213,9 +223,18 @@ export class ProjectAwareEngineerBackend {
 
   async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
     const resolved = await this.resolveProject(input);
-    if (!resolved.project) return await this.legacy.executeEngineer(input);
+    if (!resolved.project) {
+      const {
+        projectId: _projectId,
+        budgetJobId: _budgetJobId,
+        ...legacyInput
+      } = input;
+      return await this.legacy.executeEngineer(legacyInput);
+    }
     const { project, workspace: projectWorkspace } = resolved;
 
+    const budget = this.options.budgetSessionFactory?.(project, input.budgetJobId) ??
+      new ProjectBudgetSession(project, undefined, undefined, input.budgetJobId ? { jobId: input.budgetJobId } : {});
     const localProvider = this.localProvider();
     const providerRuntime = new ProjectProviderRuntime({
       ...(this.options.providerRuntime ?? {}),
@@ -230,10 +249,17 @@ export class ProjectAwareEngineerBackend {
       project,
       providerRuntime,
       localChat,
-      { onRoute: (event) => routingTrace.push(trace(event)) }
+      {
+        budget,
+        onRoute: (event) => routingTrace.push(trace(event))
+      }
     );
 
-    const { projectId: _projectId, ...agentInput } = input;
+    const {
+      projectId: _projectId,
+      budgetJobId: _budgetJobId,
+      ...agentInput
+    } = input;
     const memoryScopeKey = projectIsolationKey(project);
     const execution = await this.agentExecutor(routedChat, this.config, {
       ...agentInput,
@@ -247,7 +273,8 @@ export class ProjectAwareEngineerBackend {
       agentHost: 'control-plane',
       localInference: this.localInferenceLabel(),
       repoMemoryScopeKey: memoryScopeKey,
-      routingTrace
+      routingTrace,
+      budget: budget.snapshot()
     };
     return result;
   }

@@ -7,6 +7,7 @@ import type {
   OllamaThinkingLevel
 } from './ollama.js';
 import type { OllamaStreamProgress } from './ollama-stream.js';
+import type { ProjectBudgetSession } from './project-budget.js';
 import type { ModelSelection, ProjectDefinition, RoutingPolicy } from './project-store.js';
 import {
   ProjectProviderRuntime,
@@ -17,7 +18,7 @@ import {
   type FallbackConfirmation,
   type RoutedInferenceResult
 } from './routed-inference.js';
-import type { ReasoningEffort } from './providers/types.js';
+import type { InferenceRequest, ReasoningEffort } from './providers/types.js';
 
 export type LegacyAgentChatClient = Pick<OllamaClient, 'chat'>;
 export type ProjectRouteEvent = Pick<
@@ -32,6 +33,7 @@ export interface ProjectRoutedChatOptions {
   complexityScore?: number;
   blastRadius?: RoutingBlastRadius;
   confirmFallback?: FallbackConfirmation;
+  budget?: ProjectBudgetSession;
   onRoute?: (result: ProjectRouteEvent) => void;
 }
 
@@ -103,50 +105,56 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
     format?: 'json' | Record<string, unknown>,
     runtime: OllamaChatOptions = {}
   ): Promise<OllamaGeneration> {
+    const stage = classifyInferenceStage(systemPrompt);
     if (isStrictLegacyLocal(this.project)) {
-      return await this.legacyLocal.chat(systemPrompt, userPrompt, format, runtime);
+      const generation = await this.legacyLocal.chat(systemPrompt, userPrompt, format, runtime);
+      this.options.budget?.recordLocalGeneration(stage, generation.model, generation);
+      return generation;
     }
 
-    const stage = classifyInferenceStage(systemPrompt);
     const catalogOptions: RoutingCatalogOptions = {
       stage,
       localModelHint: runtime.model,
       modelSelection: this.options.modelSelection ?? this.project.defaultModel
     };
-    const { registry, candidates } = await this.providers.routingCandidates(
+    const { registry, candidates: rawCandidates } = await this.providers.routingCandidates(
       this.project,
       catalogOptions
     );
-    if (candidates.length === 0) {
+    if (rawCandidates.length === 0) {
       throw new Error(
         `Project ${this.project.id} has no configured/available model candidates for ${stage}.`
       );
     }
 
     const startedAt = Date.now();
+    const inference: Omit<InferenceRequest, 'model'> = {
+      systemPrompt,
+      userPrompt,
+      stage,
+      output: outputFormat(format, stage),
+      reasoning: runtime.think === undefined
+        ? undefined
+        : { effort: reasoningEffort(runtime.think) ?? 'none' },
+      maxOutputTokens: runtime.maxTokens,
+      timeoutMs: runtime.maxDurationMs,
+      providerOptions: {
+        ollama: {
+          numCtx: runtime.numCtx,
+          keepAlive: runtime.keepAlive,
+          think: runtime.think
+        }
+      },
+      onProgress: runtime.onStreamProgress
+        ? (progress) => runtime.onStreamProgress?.(safeStreamProgress(startedAt, progress))
+        : undefined
+    };
+    const candidates = this.options.budget
+      ? this.options.budget.annotateCandidates(rawCandidates, inference)
+      : rawCandidates;
     const routed = new RoutedInferenceRuntime(registry);
     const result = await routed.invoke({
-      inference: {
-        systemPrompt,
-        userPrompt,
-        stage,
-        output: outputFormat(format, stage),
-        reasoning: runtime.think === undefined
-          ? undefined
-          : { effort: reasoningEffort(runtime.think) ?? 'none' },
-        maxOutputTokens: runtime.maxTokens,
-        timeoutMs: runtime.maxDurationMs,
-        providerOptions: {
-          ollama: {
-            numCtx: runtime.numCtx,
-            keepAlive: runtime.keepAlive,
-            think: runtime.think
-          }
-        },
-        onProgress: runtime.onStreamProgress
-          ? (progress) => runtime.onStreamProgress?.(safeStreamProgress(startedAt, progress))
-          : undefined
-      },
+      inference,
       routing: {
         project: this.project,
         stage,
@@ -159,8 +167,32 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
         requireReasoning: runtime.think !== false && runtime.think !== undefined,
         requireStructuredOutput: format !== undefined && format !== 'json'
       },
-      confirmFallback: this.options.confirmFallback
+      confirmFallback: this.options.confirmFallback,
+      authorizeAttempt: this.options.budget
+        ? async ({ candidate }) => { await this.options.budget!.authorize(candidate, inference); }
+        : undefined,
+      onAttemptFailure: this.options.budget
+        ? ({ candidate }) => this.options.budget!.releaseAttempt(candidate)
+        : undefined
     });
+
+    const selectedCandidate = candidates.find(
+      (candidate) =>
+        candidate.providerId === result.routing.selected.providerId &&
+        candidate.modelId === result.routing.selected.modelId
+    );
+    if (!selectedCandidate) {
+      throw new Error(
+        `Routed selection ${result.routing.selected.providerId}/${result.routing.selected.modelId} is missing from its candidate catalog.`
+      );
+    }
+    if (result.result.providerId !== selectedCandidate.providerId) {
+      this.options.budget?.releaseAttempt(selectedCandidate);
+      throw new Error(
+        `Routed provider identity mismatch: selected ${selectedCandidate.providerId}, returned ${result.result.providerId}.`
+      );
+    }
+    this.options.budget?.record(stage, selectedCandidate, result.result, result.fallbackUsed);
 
     this.options.onRoute?.({
       stage,

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
@@ -68,6 +70,44 @@ function compactDecisionRequest(
   };
 }
 
+type CompactProjectExecution = {
+  projectId?: string;
+  organizationId?: string;
+  budget?: {
+    jobId?: string;
+    jobKnownCostUsd?: number;
+    jobUnknownCostEvents?: number;
+    jobReservedUpperBoundUsd?: number;
+    dailyReservedUpperBoundUsd?: number;
+    monthlyReservedUpperBoundUsd?: number;
+    warnings?: unknown[];
+    daily?: { knownCostUsd?: number; unknownCostEvents?: number; cloudEvents?: number };
+    monthly?: { knownCostUsd?: number; unknownCostEvents?: number; cloudEvents?: number };
+  };
+};
+
+function compactProjectUsage(result: LocalEngineerResult): Record<string, unknown> | undefined {
+  const execution = (result as LocalEngineerResult & { projectExecution?: CompactProjectExecution })
+    .projectExecution;
+  const budget = execution?.budget;
+  if (!execution?.projectId || !budget) return undefined;
+  return {
+    projectId: execution.projectId,
+    organizationId: execution.organizationId,
+    jobId: budget.jobId,
+    jobCostUsd: budget.jobKnownCostUsd ?? 0,
+    jobUnknownCostEvents: budget.jobUnknownCostEvents ?? 0,
+    jobReservedUpperBoundUsd: budget.jobReservedUpperBoundUsd ?? 0,
+    dailyCostUsd: budget.daily?.knownCostUsd ?? 0,
+    dailyUnknownCostEvents: budget.daily?.unknownCostEvents ?? 0,
+    monthlyCostUsd: budget.monthly?.knownCostUsd ?? 0,
+    monthlyUnknownCostEvents: budget.monthly?.unknownCostEvents ?? 0,
+    cloudCallsToday: budget.daily?.cloudEvents ?? 0,
+    activeReservedUpperBoundUsd: budget.dailyReservedUpperBoundUsd ?? 0,
+    warnings: budget.warnings ?? []
+  };
+}
+
 function compactResult(result: LocalEngineerResult): Record<string, unknown> {
   const localReasoning = reasoningStats(result);
   const validationPassed = result.validation.every((item) => item.ok);
@@ -76,6 +116,7 @@ function compactResult(result: LocalEngineerResult): Record<string, unknown> {
   ).repoIntelligence;
   const premium = premiumResult(result);
   const decisionRequest = compactDecisionRequest(premium.decisionRequest);
+  const projectUsage = compactProjectUsage(result);
 
   return {
     status: result.status,
@@ -83,6 +124,7 @@ function compactResult(result: LocalEngineerResult): Record<string, unknown> {
     summary: result.summary,
     preflight: premium.preflight,
     decisionRequest,
+    projectUsage,
     repoIntelligence: repoIntelligence
       ? {
           enabled: repoIntelligence.enabled,
@@ -192,12 +234,17 @@ function renderUserDecisionGuidance(
   return ['# USER DECISIONS (authoritative)', ...selected].join('\n');
 }
 
+type BudgetCorrelatedEngineerInput = LocalEngineerInput & { budgetJobId?: string };
+
 async function executeWithDirectDecisions(
   execution: Pick<ExecutionBackend, 'executeEngineer'>,
   initialInput: LocalEngineerInput,
   context: unknown
 ): Promise<LocalEngineerResult> {
-  let input = initialInput;
+  let input: BudgetCorrelatedEngineerInput = {
+    ...initialInput,
+    budgetJobId: randomUUID()
+  };
   let result = await execution.executeEngineer(input);
   const mcpReq = (context as ElicitationContext | undefined)?.mcpReq;
 
