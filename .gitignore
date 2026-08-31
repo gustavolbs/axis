@@ -1,6 +1,9 @@
 node_modules/
 dist/
+console-dist/
+release/
 .DS_Store
 *.log
 .env
 benchmarks/results/
+eval/results/
