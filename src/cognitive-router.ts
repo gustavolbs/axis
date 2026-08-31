@@ -20,12 +20,12 @@ export interface RoutingCandidate {
   queueDelayMs?: number;
   /** Historical end-to-end p50 for comparable inference calls. */
   p50LatencyMs?: number;
-  /** Historical success rate in [0, 1] for comparable work. */
+  /** Historical provider reliability in [0, 1] for comparable work. */
   successRate?: number;
   historicalSamples?: number;
   /** Estimated monetary cost for this stage, not the entire job. */
   estimatedCostUsd?: number;
-  /** Config/data-driven quality signal in [0, 100]. */
+  /** Config/eval-driven engineering-quality signal in [0, 100]. */
   qualityScore?: number;
   /** Explicit model catalog classification; never inferred from a provider-specific name. */
   frontier?: boolean;
@@ -142,12 +142,32 @@ function exclusionReason(
 function quality(candidate: RoutingCandidate): number {
   const explicit = finiteNonNegative(candidate.qualityScore);
   if (explicit !== undefined) return clamp(explicit, 0, 100);
-  const success = normalizeSuccessRate(candidate.successRate);
-  if (success !== undefined && (candidate.historicalSamples ?? 0) >= 3) return success * 100;
 
-  // Provider-agnostic cold-start priors. Eval/history data replaces these once available.
+  // Transport/provider success is reliability, not evidence of engineering quality.
+  // These provider-agnostic priors remain until task-level evals supply qualityScore.
   if (candidate.frontier) return 86;
   return candidate.providerKind === 'cloud' ? 72 : 60;
+}
+
+function historicalReliability(candidate: RoutingCandidate): number | undefined {
+  const success = normalizeSuccessRate(candidate.successRate);
+  if (success === undefined || (candidate.historicalSamples ?? 0) < 3) return undefined;
+  return success * 100;
+}
+
+function reliabilityAdjustment(
+  policy: Exclude<RoutingPolicy, 'auto'>,
+  candidate: RoutingCandidate
+): number {
+  const reliability = historicalReliability(candidate);
+  if (reliability === undefined) return 0;
+  const weight =
+    policy === 'speed-first' ? 0.25 :
+    policy === 'local-first' ? 0.15 :
+    0.20;
+  // 75 is a neutral learned-reliability baseline. Above it earns a bounded boost;
+  // below it is penalized without rewriting the independent engineering-quality signal.
+  return (reliability - 75) * weight;
 }
 
 function speed(candidate: RoutingCandidate): number {
@@ -204,6 +224,7 @@ function scoreCandidate(
       break;
   }
 
+  score += reliabilityAdjustment(policy, candidate);
   score += stageAffinity(request.stage, candidate);
   if (request.urgency === 'urgent') score += speedScore * 0.08;
   if ((request.complexityScore ?? 0) >= 70) score += qualityScore * 0.06;

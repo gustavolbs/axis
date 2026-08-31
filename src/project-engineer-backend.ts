@@ -41,6 +41,10 @@ import type {
   ReasoningEffort
 } from './providers/types.js';
 import type { RemoteWorkerHealth } from './remote-protocol.js';
+import {
+  mergeRoutingMetricsSources,
+  RoutingHistoryStore
+} from './routing-history.js';
 import { resolveWorkspace } from './workspace.js';
 
 export type ProjectEngineerInput = LocalEngineerInput & {
@@ -100,6 +104,7 @@ export interface ProjectEngineerBackendOptions {
   remoteClient?: RemoteChatClient;
   agentExecutor?: AgentExecutor;
   budgetSessionFactory?: (project: ProjectDefinition, jobId?: string) => ProjectBudgetSession;
+  routingHistory?: RoutingHistoryStore;
 }
 
 function reasoningEffort(think: OllamaThinkingLevel | undefined): ReasoningEffort | undefined {
@@ -209,6 +214,7 @@ export class ProjectAwareEngineerBackend {
   private readonly projects: ProjectStore;
   private readonly agentExecutor: AgentExecutor;
   private readonly remoteClient?: RemoteChatClient;
+  private readonly routingHistory: RoutingHistoryStore;
 
   constructor(
     private readonly config: LocalCoderConfig,
@@ -219,6 +225,7 @@ export class ProjectAwareEngineerBackend {
     this.projects = options.projects ?? new ProjectStore();
     this.agentExecutor = options.agentExecutor ?? executePremiumLocalAgent;
     this.remoteClient = options.remoteClient;
+    this.routingHistory = options.routingHistory ?? new RoutingHistoryStore();
   }
 
   async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
@@ -240,8 +247,13 @@ export class ProjectAwareEngineerBackend {
       this.ollama,
       this.remoteClient
     );
+    const configuredRuntime = this.options.providerRuntime ?? {};
     const providerRuntime = new ProjectProviderRuntime({
-      ...(this.options.providerRuntime ?? {}),
+      ...configuredRuntime,
+      metrics: mergeRoutingMetricsSources(
+        configuredRuntime.metrics,
+        this.routingHistory.forProject(project)
+      ),
       localProvider
     });
     const localChat: LegacyAgentChatClient =
@@ -255,7 +267,17 @@ export class ProjectAwareEngineerBackend {
       localChat,
       {
         budget,
-        onRoute: (event) => routingTrace.push(trace(event))
+        onRoute: (event) => routingTrace.push(trace(event)),
+        onAttemptComplete: (observation) => {
+          this.routingHistory.record(project, {
+            stage: observation.stage,
+            candidate: observation.candidate,
+            outcome: observation.outcome,
+            latencyMs: observation.latencyMs,
+            fallback: observation.fallback,
+            failureKind: observation.failureKind
+          });
+        }
       }
     );
 

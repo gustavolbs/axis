@@ -1,3 +1,4 @@
+import { isCancellationError } from './cancellation.js';
 import {
   routeCognitiveStage,
   RoutingConstraintError,
@@ -23,6 +24,19 @@ export interface RoutedInferenceAttempt {
   rateLimited?: boolean;
   admissionDenied?: boolean;
 }
+
+export interface RoutedInferenceAttemptObservation {
+  candidate: RoutingCandidate;
+  stage: CognitiveRoutingRequest['stage'];
+  fallback: boolean;
+  outcome: 'success' | 'error';
+  latencyMs: number;
+  failureKind?: 'retryable' | 'rate-limited' | 'fatal';
+}
+
+export type RoutedInferenceAttemptObserver = (
+  observation: RoutedInferenceAttemptObservation
+) => void | Promise<void>;
 
 export interface FallbackConfirmationRequest {
   from: RoutingCandidate;
@@ -66,6 +80,11 @@ export interface RoutedInferenceInput {
   authorizeAttempt?: AttemptAuthorizer;
   /** Cleanup hook for reservations/leases when an authorized provider attempt fails. */
   onAttemptFailure?: AttemptFailureHandler;
+  /**
+   * Best-effort telemetry hook for provider attempts that actually performed I/O.
+   * Admission denials and user cancellations are intentionally not observations.
+   */
+  onAttemptComplete?: RoutedInferenceAttemptObserver;
 }
 
 export interface RoutedInferenceResult {
@@ -149,6 +168,13 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function failureKind(error: unknown): RoutedInferenceAttemptObservation['failureKind'] {
+  const providerError = providerFailure(error);
+  if (providerError?.options.rateLimited) return 'rate-limited';
+  if (providerError?.options.retryable) return 'retryable';
+  return 'fatal';
+}
+
 /**
  * Provider-agnostic inference entrypoint. Routing is deterministic host code; it never
  * invokes a local model (or any model) to decide which provider should receive the call.
@@ -204,9 +230,17 @@ export class RoutedInferenceRuntime {
       if (isExplicit(selection)) throw lastError;
     } else {
       const primaryProvider = this.providerFor(primary);
+      const startedAt = Date.now();
       try {
         const result = await primaryProvider.invoke({ ...input.inference, model: primary.modelId });
         attempts.push({ providerId: primary.providerId, modelId: primary.modelId, status: 'success' });
+        await this.observe(input, {
+          candidate: primary,
+          stage: input.routing.stage,
+          fallback: false,
+          outcome: 'success',
+          latencyMs: Math.max(0, Date.now() - startedAt)
+        });
         return { result, routing, attempts, fallbackUsed: false };
       } catch (error) {
         lastError = error;
@@ -225,6 +259,16 @@ export class RoutedInferenceRuntime {
           fallback: false,
           error
         });
+        if (!isCancellationError(error)) {
+          await this.observe(input, {
+            candidate: primary,
+            stage: input.routing.stage,
+            fallback: false,
+            outcome: 'error',
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            failureKind: failureKind(error)
+          });
+        }
         if (!providerError || (!providerError.options.retryable && !providerError.options.rateLimited)) throw error;
         if (isExplicit(selection)) throw error;
       }
@@ -247,9 +291,17 @@ export class RoutedInferenceRuntime {
       }
 
       const provider = this.providerFor(fallback);
+      const startedAt = Date.now();
       try {
         const result = await provider.invoke({ ...input.inference, model: fallback.modelId });
         attempts.push({ providerId: fallback.providerId, modelId: fallback.modelId, status: 'success' });
+        await this.observe(input, {
+          candidate: fallback,
+          stage: input.routing.stage,
+          fallback: true,
+          outcome: 'success',
+          latencyMs: Math.max(0, Date.now() - startedAt)
+        });
         return {
           result,
           routing: {
@@ -285,6 +337,16 @@ export class RoutedInferenceRuntime {
           reason,
           error
         });
+        if (!isCancellationError(error)) {
+          await this.observe(input, {
+            candidate: fallback,
+            stage: input.routing.stage,
+            fallback: true,
+            outcome: 'error',
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            failureKind: failureKind(error)
+          });
+        }
         if (!providerError || (!providerError.options.retryable && !providerError.options.rateLimited)) throw error;
         previous = fallback;
       }
@@ -297,6 +359,19 @@ export class RoutedInferenceRuntime {
       `All eligible routed inference providers failed for stage ${input.inference.stage ?? 'other'}.`,
       { retryable: true, code: 'routing_fallback_exhausted' }
     );
+  }
+
+  private async observe(
+    input: RoutedInferenceInput,
+    observation: RoutedInferenceAttemptObservation
+  ): Promise<void> {
+    if (!input.onAttemptComplete) return;
+    try {
+      await input.onAttemptComplete(observation);
+    } catch {
+      // Routing history is advisory telemetry. A corrupt/unwritable metrics store must not
+      // change the provider result, budget outcome or fallback semantics of the job.
+    }
   }
 
   private assertCatalogMatchesRegistry(candidates: RoutingCandidate[]): void {

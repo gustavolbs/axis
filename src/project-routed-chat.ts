@@ -1,3 +1,4 @@
+import { isCancellationError } from './cancellation.js';
 import type { RoutingBlastRadius, RoutingUrgency } from './cognitive-router.js';
 import { classifyInferenceStage, type InferenceStage } from './inference-status.js';
 import type {
@@ -16,6 +17,8 @@ import {
 import {
   RoutedInferenceRuntime,
   type FallbackConfirmation,
+  type RoutedInferenceAttemptObservation,
+  type RoutedInferenceAttemptObserver,
   type RoutedInferenceResult
 } from './routed-inference.js';
 import type { InferenceRequest, ReasoningEffort } from './providers/types.js';
@@ -35,6 +38,7 @@ export interface ProjectRoutedChatOptions {
   confirmFallback?: FallbackConfirmation;
   budget?: ProjectBudgetSession;
   onRoute?: (result: ProjectRouteEvent) => void;
+  onAttemptComplete?: RoutedInferenceAttemptObserver;
 }
 
 function reasoningEffort(think: OllamaThinkingLevel | undefined): ReasoningEffort | undefined {
@@ -111,9 +115,38 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
   ): Promise<OllamaGeneration> {
     const stage = classifyInferenceStage(systemPrompt);
     if (isStrictLegacyLocal(this.project)) {
-      const generation = await this.legacyLocal.chat(systemPrompt, userPrompt, format, runtime);
-      this.options.budget?.recordLocalGeneration(stage, generation.model, generation);
-      return generation;
+      const modelId = runtime.model ?? 'ollama-local';
+      const candidate = {
+        providerId: 'ollama',
+        providerKind: 'local' as const,
+        modelId,
+        available: true
+      };
+      const startedAt = Date.now();
+      try {
+        const generation = await this.legacyLocal.chat(systemPrompt, userPrompt, format, runtime);
+        this.options.budget?.recordLocalGeneration(stage, generation.model, generation);
+        await this.observe({
+          candidate: { ...candidate, modelId: generation.model },
+          stage,
+          fallback: false,
+          outcome: 'success',
+          latencyMs: Math.max(0, Date.now() - startedAt)
+        });
+        return generation;
+      } catch (error) {
+        if (!isCancellationError(error)) {
+          await this.observe({
+            candidate,
+            stage,
+            fallback: false,
+            outcome: 'error',
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            failureKind: 'fatal'
+          });
+        }
+        throw error;
+      }
     }
 
     const catalogOptions: RoutingCatalogOptions = {
@@ -186,7 +219,8 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
             if (admission) this.options.budget!.releaseAttempt(admission);
             admissions.delete(key);
           }
-        : undefined
+        : undefined,
+      onAttemptComplete: this.options.onAttemptComplete
     });
 
     const selectedCandidate = candidates.find(
@@ -234,5 +268,14 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
       promptTokens: result.result.usage.inputTokens,
       completionTokens: result.result.usage.outputTokens
     };
+  }
+
+  private async observe(observation: RoutedInferenceAttemptObservation): Promise<void> {
+    if (!this.options.onAttemptComplete) return;
+    try {
+      await this.options.onAttemptComplete(observation);
+    } catch {
+      // History/calibration is advisory and must never alter the agent call result.
+    }
   }
 }
