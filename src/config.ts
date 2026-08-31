@@ -3,6 +3,7 @@ import path from 'node:path';
 
 export type LocalCoderExecutionMode = 'local' | 'remote' | 'auto';
 export type WorkerBootstrapMode = 'none' | 'auto';
+export type CognitiveMode = 'adaptive' | 'fast' | 'deep' | 'max';
 
 export interface LocalCoderConfig {
   ollamaBaseUrl: string;
@@ -36,6 +37,10 @@ export interface LocalCoderConfig {
   reviewMaxTokens?: number;
   reportMaxTokens?: number;
   repoLearningMaxTokens?: number;
+  /** Adaptive test-time-compute policy for the local agent. */
+  cognitiveMode?: CognitiveMode;
+  maxDeliberationPasses?: number;
+  qualityGateMinScore?: number;
   /** Local-first external research. Microsoft Learn works without tenant credentials. */
   researchEnabled?: boolean;
   microsoftLearnResearchEnabled?: boolean;
@@ -73,6 +78,10 @@ export interface LocalCoderConfig {
    * inference remains serialized by the machine-wide inference lock.
    */
   workerMaxConcurrentJobs?: number;
+
+  /** Standalone Mac control-plane UI. Loopback-only by default. */
+  consoleHost?: string;
+  consolePort?: number;
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -116,6 +125,14 @@ function parseBootstrapMode(value: string | undefined): WorkerBootstrapMode {
   if (!value) return 'none';
   if (value === 'none' || value === 'auto') return value;
   throw new Error(`Invalid LOCAL_CODER_WORKER_BOOTSTRAP: ${value}`);
+}
+
+function parseCognitiveMode(value: string | undefined): CognitiveMode {
+  if (!value) return 'adaptive';
+  if (value === 'adaptive' || value === 'fast' || value === 'deep' || value === 'max') {
+    return value;
+  }
+  throw new Error(`Invalid LOCAL_CODER_COGNITIVE_MODE: ${value}`);
 }
 
 function trimTrailingSlash(value: string | undefined): string | undefined {
@@ -197,6 +214,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
       env.LOCAL_CODER_REPO_LEARNING_MAX_TOKENS,
       2_048
     ),
+    cognitiveMode: parseCognitiveMode(env.LOCAL_CODER_COGNITIVE_MODE),
+    maxDeliberationPasses: Math.min(
+      4,
+      parsePositiveInt(env.LOCAL_CODER_MAX_DELIBERATION_PASSES, 3)
+    ),
+    qualityGateMinScore: Math.min(
+      100,
+      parsePositiveInt(env.LOCAL_CODER_QUALITY_GATE_MIN_SCORE, 80)
+    ),
     researchEnabled: parseBoolean(env.LOCAL_CODER_RESEARCH_ENABLED, true),
     microsoftLearnResearchEnabled: parseBoolean(
       env.LOCAL_CODER_MICROSOFT_LEARN_RESEARCH_ENABLED,
@@ -240,6 +266,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
     workerMaxConcurrentJobs: Math.min(
       8,
       parsePositiveInt(env.LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS, 1)
-    )
+    ),
+
+    consoleHost: env.LOCAL_CODER_CONSOLE_HOST?.trim() || '127.0.0.1',
+    consolePort: parsePositiveInt(env.LOCAL_CODER_CONSOLE_PORT, 7557)
   };
 }
