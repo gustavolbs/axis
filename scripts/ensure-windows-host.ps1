@@ -201,7 +201,7 @@ function Invoke-FullVerification {
     -LocalAddress $ListenHost
   Assert-LocalHealth -DashboardHost $ListenHost
 
-  Write-Host "" 
+  Write-Host ""
   Write-Host "Local Coder Windows host verified healthy." -ForegroundColor Green
   Write-Host "  Worker:    TCP $WorkerPort -> PID $($workerListener.ProcessId) -> $($workerListener.ExecutablePath)"
   Write-Host "  Dashboard: TCP $DashboardPort -> PID $($dashboardListener.ProcessId) -> $($dashboardListener.ExecutablePath)"
@@ -228,10 +228,10 @@ Assert-Command "ollama"
 if (-not $SkipRepoUpdate -and -not $VerifyOnly) {
   Push-Location $RepoRoot
   try {
-    $dirty = @(git status --porcelain)
+    $dirty = @(git status --porcelain --untracked-files=no)
     if ($LASTEXITCODE -ne 0) { throw "git status failed." }
     if ($dirty.Count -gt 0) {
-      throw "Repository has local changes. Commit/stash them before running automatic repair so the script never discards local work."
+      throw "Repository has tracked local changes. Commit/stash them before running automatic repair so the script never discards local work."
     }
 
     $branch = (git branch --show-current).Trim()
@@ -247,8 +247,8 @@ if (-not $SkipRepoUpdate -and -not $VerifyOnly) {
     Pop-Location
   }
 
-  # Always relaunch once after updating. This guarantees the rest of the repair uses
-  # the latest version of this orchestrator and all scripts it calls.
+  # Relaunch once after updating so every remaining step uses the current main copy
+  # of this orchestrator and all subordinate installers.
   $relaunchArgs = @(
     "-MacIp", $MacIp,
     "-ListenHost", $ListenHost,
@@ -275,20 +275,22 @@ if ($VerifyOnly) {
 }
 
 $existingToken = [Environment]::GetEnvironmentVariable("LOCAL_CODER_WORKER_TOKEN", "User")
+$setupArguments = @{
+  MacIp = $MacIp
+  Mode = "Worker"
+  Model = $Model
+  MaxConcurrentJobs = $MaxConcurrentJobs
+}
 if ($existingToken) {
   Write-Host "Preserving existing worker authentication token." -ForegroundColor Cyan
+  $setupArguments.WorkerToken = $existingToken
 } else {
   Write-Host "No existing worker token found; first-time setup will generate one." -ForegroundColor Yellow
 }
 
-Invoke-LocalScript `
-  -Path $SetupScript `
-  -Arguments @(
-    "-MacIp", $MacIp,
-    "-Mode", "Worker",
-    "-Model", $Model,
-    "-MaxConcurrentJobs", [string]$MaxConcurrentJobs
-  )
+# Run setup in this PowerShell process so a preserved bearer token is never exposed in
+# a child-process command line. The subordinate task installers do not receive secrets.
+& $SetupScript @setupArguments
 
 Invoke-LocalScript -Path $WorkerTaskScript
 Invoke-LocalScript `
