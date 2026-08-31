@@ -144,3 +144,102 @@ function Set-LocalCoderInboundFirewallRule {
     throw "Windows Firewall rule '$DisplayName' is not scoped to the expected executable $ExecutablePath."
   }
 }
+
+function Get-TcpListenerProcesses {
+  param([Parameter(Mandatory = $true)][int]$Port)
+
+  $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+  $seen = @{}
+  $processes = @()
+  foreach ($listener in $listeners) {
+    $processIdValue = [int]$listener.OwningProcess
+    if ($seen.ContainsKey($processIdValue)) {
+      continue
+    }
+    $seen[$processIdValue] = $true
+    $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $processIdValue" -ErrorAction SilentlyContinue
+    if ($processInfo) {
+      $processes += $processInfo
+    }
+  }
+  return $processes
+}
+
+function Test-ProcessCommandLineContainsPath {
+  param(
+    [Parameter(Mandatory = $true)]$Process,
+    [Parameter(Mandatory = $true)][string]$ExpectedPath
+  )
+
+  $commandLine = [string]$Process.CommandLine
+  if ([string]::IsNullOrWhiteSpace($commandLine)) {
+    return $false
+  }
+  return $commandLine.IndexOf($ExpectedPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function Stop-LocalCoderListenerForInstall {
+  param(
+    [Parameter(Mandatory = $true)][int]$Port,
+    [Parameter(Mandatory = $true)][string]$EntryPath
+  )
+
+  $listeners = @(Get-TcpListenerProcesses -Port $Port)
+  foreach ($processInfo in $listeners) {
+    if (-not (Test-ProcessCommandLineContainsPath -Process $processInfo -ExpectedPath $EntryPath)) {
+      throw "TCP port $Port is already owned by unrelated process PID $($processInfo.ProcessId): $($processInfo.CommandLine)"
+    }
+    Write-Warning "Stopping stale Local Coder listener PID $($processInfo.ProcessId) on TCP $Port before reinstall."
+    Stop-Process -Id ([int]$processInfo.ProcessId) -Force -ErrorAction Stop
+  }
+
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    if (@(Get-TcpListenerProcesses -Port $Port).Count -eq 0) {
+      return
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  if (@(Get-TcpListenerProcesses -Port $Port).Count -gt 0) {
+    throw "TCP port $Port is still occupied after stopping the stale Local Coder listener."
+  }
+}
+
+function Wait-LocalCoderListener {
+  param(
+    [Parameter(Mandatory = $true)][int]$Port,
+    [Parameter(Mandatory = $true)][string]$ExecutablePath,
+    [Parameter(Mandatory = $true)][string]$EntryPath,
+    [int]$TimeoutSeconds = 15
+  )
+
+  $expectedExecutable = Resolve-NormalizedProgramPath -Path $ExecutablePath
+  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $listeners = @(Get-TcpListenerProcesses -Port $Port)
+    if ($listeners.Count -gt 0) {
+      $matching = @($listeners | Where-Object {
+        Test-ProcessCommandLineContainsPath -Process $_ -ExpectedPath $EntryPath
+      })
+      if ($matching.Count -eq 0) {
+        $owners = ($listeners | ForEach-Object { "PID $($_.ProcessId): $($_.CommandLine)" }) -join "; "
+        throw "TCP port $Port was claimed by an unrelated process while Local Coder was starting: $owners"
+      }
+
+      foreach ($processInfo in $matching) {
+        $actualExecutable = Resolve-NormalizedProgramPath -Path ([string]$processInfo.ExecutablePath)
+        if ($actualExecutable -ne $expectedExecutable) {
+          throw "Local Coder TCP $Port is listening from unexpected executable '$($processInfo.ExecutablePath)' (PID $($processInfo.ProcessId)); expected '$ExecutablePath'."
+        }
+      }
+
+      # Windows may create an application Block rule only after the executable first
+      # opens a listening socket. Re-run remediation after the real listener exists.
+      Disable-ConflictingInboundProgramBlockRules -ExecutablePath $ExecutablePath | Out-Null
+      return $matching[0]
+    }
+    Start-Sleep -Milliseconds 250
+  }
+
+  throw "Local Coder did not establish TCP listener $Port within $TimeoutSeconds seconds."
+}
