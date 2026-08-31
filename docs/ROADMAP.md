@@ -29,40 +29,42 @@ These are the remaining items required to complete the current Local Coder stand
 
 ### 1. macOS desktop shell
 
-- [ ] Package the existing standalone control plane and React UI as `Local Coder.app`.
-- [ ] Keep the renderer sandboxed: no Node integration, context isolation on, navigation/window creation restricted.
-- [ ] Start/stop the local control-plane process with the app lifecycle.
-- [ ] Detect startup failure/port collision and present a recoverable error state.
-- [ ] Produce unsigned local `.app`/DMG artifacts in CI; signing/notarization stays configuration-driven so credentials are never committed.
-- [ ] Preserve `npm run console` as a headless/browser-accessible fallback.
+- [x] Package the existing standalone control plane and React UI as `Local Coder.app`.
+- [x] Keep the renderer sandboxed: no Node integration, context isolation on, navigation/window creation restricted.
+- [x] Start/stop the local control-plane process with the app lifecycle.
+- [x] Detect startup failure/port collision and present a recoverable error state.
+- [x] Produce unsigned local `.app`/DMG artifacts in CI; signing/notarization stays configuration-driven so credentials are never committed.
+- [x] Preserve `npm run console` as a headless/browser-accessible fallback.
 
 ### 2. Active-run cancellation
 
-- [ ] Add a cancellable job state and persisted cancellation event.
-- [ ] Propagate `AbortSignal` through Project Agent calls, routed provider inference and local/remote worker requests.
-- [ ] Release active budget reservations on cancellation.
-- [ ] Stop starting new implementation/validation/repair work once cancellation is observed.
-- [ ] Add cancellation actions to standalone Agent/Runs surfaces.
+- [x] Add a cancellable job state and persisted cancellation event.
+- [x] Propagate cancellation through Project Agent calls, routed provider inference, Ollama and local/remote worker requests.
+- [x] Release active budget reservations on cancellation.
+- [x] Stop starting new implementation/validation/repair work once cancellation is observed.
+- [x] Add cancellation actions to standalone Agent/Runs surfaces.
 
 ### 3. Real provider smoke/e2e validation
 
-- [ ] Add opt-in smoke scripts for Anthropic and OpenAI that require credentials from the existing credential system/environment.
-- [ ] Validate model discovery, structured output, usage normalization and `store:false`/non-persistence assumptions without committing credentials.
-- [ ] Add a Project-level cloud-routing smoke path proving direct cloud execution without Ollama dependency.
-- [ ] Keep cloud smoke tests disabled in normal public CI unless explicit secrets are configured.
+- [x] Add opt-in smoke scripts for Anthropic and OpenAI requiring explicit provider credentials and model IDs.
+- [x] Validate model discovery, structured output and usage normalization without committing credentials.
+- [x] Add a Project-level cloud-routing smoke path proving direct cloud execution without Ollama dependency.
+- [x] Keep cloud smoke tests disabled in normal public CI; the live workflow is manual and fails closed when secrets/model IDs are absent.
+- [x] Keep OpenAI `store:false` covered as a transport-contract assertion without claiming unverifiable server-side retention behavior.
 
 ### 4. Router calibration and comparative evals
 
-- [ ] Persist provider/stage latency, success and quality observations in a routing-history store.
-- [ ] Feed sufficiently sampled history into routing candidates instead of cold-start priors.
+- [x] Persist isolated provider/stage attempt latency and reliability observations in a routing-history store without prompts or model output.
+- [x] Feed sufficiently sampled history into routing candidates instead of latency/reliability cold-start assumptions.
+- [x] Keep cold-start behavior deterministic when history is absent or below minimum sample count.
 - [ ] Extend eval harness to compare local Qwen, configured Anthropic models, configured OpenAI models and Auto Router.
 - [ ] Report task success, quality, elapsed time, provider/model calls, fallbacks, token usage and known cost.
-- [ ] Keep cold-start behavior deterministic when history is absent or below minimum sample count.
+- [ ] Feed task-level eval evidence into explicit model quality profiles rather than treating transport success as engineering quality.
 
 ### 5. Documentation and release hardening
 
 - [ ] Document desktop installation, first-run provider setup and Project isolation semantics.
-- [ ] Add macOS packaging CI and artifact smoke validation.
+- [x] Add macOS packaging CI and artifact smoke validation.
 - [ ] Add a release checklist for signing/notarization, migration compatibility and credential safety.
 
 ## Post-MVP candidates
