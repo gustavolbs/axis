@@ -191,9 +191,12 @@ export class StandaloneJobManager {
     return snapshot(job);
   }
 
-  cancel(id: string): StandaloneJobSnapshot {
+  async cancel(id: string): Promise<StandaloneJobSnapshot> {
     const job = this.requireJob(id);
-    if (job.status === 'cancelled') return snapshot(job);
+    if (job.status === 'cancelled') {
+      await this.persistTail;
+      return snapshot(job);
+    }
     if (job.status === 'success' || job.status === 'error') {
       throw new Error(`Cannot cancel a completed job with status ${job.status}.`);
     }
@@ -205,7 +208,11 @@ export class StandaloneJobManager {
     const waiting = job.waiting;
     job.waiting = undefined;
     this.emit(job, 'cancelled', 'Job cancelled by user');
-    // Wake a suspended decision/guidance round so its cancellation context can unwind.
+    // The HTTP cancellation acknowledgement is a durability boundary: once cancel()
+    // resolves, a process restart must never restore this job as running.
+    await this.persistTail;
+    // Wake a suspended decision/guidance round after the terminal state is on disk so its
+    // cancellation context can unwind without racing a restorer against stale state.
     waiting?.resolve('');
     return snapshot(job);
   }
@@ -256,8 +263,8 @@ export class StandaloneJobManager {
     return path.join(this.stateDir!, 'jobs.json');
   }
 
-  private schedulePersist(): void {
-    if (!this.stateDir) return;
+  private schedulePersist(): Promise<void> {
+    if (!this.stateDir) return Promise.resolve();
     this.persistTail = this.persistTail.then(async () => {
       const jobs: PersistedJob[] = this.list()
         .slice(0, 30)
@@ -270,12 +277,17 @@ export class StandaloneJobManager {
         });
       await fs.mkdir(this.stateDir!, { recursive: true });
       const file = this.stateFile();
-      const temp = `${file}.tmp-${process.pid}`;
-      await fs.writeFile(temp, `${JSON.stringify(jobs, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-      await fs.rename(temp, file);
+      const temp = `${file}.tmp-${process.pid}-${randomUUID()}`;
+      try {
+        await fs.writeFile(temp, `${JSON.stringify(jobs, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+        await fs.rename(temp, file);
+      } finally {
+        await fs.rm(temp, { force: true }).catch(() => undefined);
+      }
     }).catch((error) => {
       console.error(`Local Coder Console session persistence failed: ${error instanceof Error ? error.message : String(error)}`);
     });
+    return this.persistTail;
   }
 
   private emit(
@@ -295,7 +307,7 @@ export class StandaloneJobManager {
     };
     job.events.push(event);
     job.events.splice(0, Math.max(0, job.events.length - 200));
-    this.schedulePersist();
+    void this.schedulePersist();
     const publicJob = snapshot(job);
     for (const listener of this.listeners) listener(event, publicJob);
   }
@@ -303,7 +315,7 @@ export class StandaloneJobManager {
   private wait(job: JobInternal, kind: WaitingInput['kind']): Promise<string> {
     return new Promise((resolve) => {
       job.waiting = { kind, resolve };
-      this.schedulePersist();
+      void this.schedulePersist();
     });
   }
 
@@ -388,7 +400,7 @@ export class StandaloneJobManager {
     } finally {
       job.waiting = undefined;
       job.controller = undefined;
-      this.schedulePersist();
+      void this.schedulePersist();
     }
   }
 }
