@@ -79,6 +79,7 @@ test('remote configuration is strict and has no implicit local fallback', () => 
   assert.equal(config.executionMode, 'remote');
   assert.equal(config.remoteWorkerUrl, 'http://192.168.1.50:7337');
   assert.equal(config.remoteWorkerToken, 'secret-token');
+  assert.equal(config.remoteWorkerTimeoutMs, 7_200_000);
   assert.equal(config.workerPort, 7444);
   assert.equal(config.workerBootstrap, 'auto');
   assert.deepEqual([...config.workerAllowedGitHosts], ['github.com', 'git.example.com']);
@@ -86,6 +87,11 @@ test('remote configuration is strict and has no implicit local fallback', () => 
     () => loadConfig({ LOCAL_CODER_EXECUTION_MODE: 'somewhere' }),
     /Invalid LOCAL_CODER_EXECUTION_MODE/
   );
+});
+
+test('remote worker timeout remains explicitly configurable', () => {
+  const config = loadConfig({ LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS: '123456' });
+  assert.equal(config.remoteWorkerTimeoutMs, 123_456);
 });
 
 test('remote workspace captures dirty tracked and safe untracked state without secrets', async () => {
@@ -200,6 +206,7 @@ test('Claude remote-worker installer preserves unrelated MCPs and defaults to Qw
     assert.equal(env.LOCAL_CODER_EXECUTION_MODE, 'remote');
     assert.equal(env.LOCAL_CODER_REMOTE_WORKER_URL, 'http://192.168.1.50:7337');
     assert.equal(env.LOCAL_CODER_REMOTE_WORKER_TOKEN, 'worker-secret');
+    assert.equal(env.LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS, '7200000');
     assert.equal(env.LOCAL_CODER_MODEL, 'qwen3.8:27b');
     assert.equal(env.LOCAL_CODER_NUM_CTX, '16384');
   } finally {
