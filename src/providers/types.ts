@@ -49,6 +49,12 @@ export interface InferenceRequest {
   reasoning?: { effort: ReasoningEffort };
   maxOutputTokens?: number;
   timeoutMs?: number;
+  /**
+   * Opaque, namespaced provider hints. Runtime/router code must not inspect them.
+   * Example: `{ ollama: { numCtx, keepAlive } }`. This preserves provider-specific
+   * tuning without contaminating the common inference contract.
+   */
+  providerOptions?: Record<string, unknown>;
   onProgress?: ProviderProgressReporter;
 }
 
