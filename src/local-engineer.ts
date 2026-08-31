@@ -351,13 +351,15 @@ async function structuredCall<T>(
       attempt === 1
         ? userPrompt
         : `${userPrompt}\n\nPrevious structured response was invalid. Return a schema-valid JSON object only.`;
+    // Transport/model failures are not schema failures. Retrying them can double a
+    // multi-minute timeout. Retry only after the model returned invalid structured content.
+    const generation = await model.chat(systemPrompt, prompt, format, {
+      model: config.model,
+      numCtx: config.ollamaNumCtx ?? 16_384,
+      keepAlive: config.fastModelKeepAlive ?? '90s',
+      think
+    });
     try {
-      const generation = await model.chat(systemPrompt, prompt, format, {
-        model: config.model,
-        numCtx: config.ollamaNumCtx ?? 16_384,
-        keepAlive: config.fastModelKeepAlive ?? '90s',
-        think
-      });
       return { parsed: schema.parse(JSON.parse(generation.content) as unknown), generation };
     } catch (error) {
       lastError = error;
@@ -439,16 +441,16 @@ async function collectFullEvidence(
   const sections: string[] = [];
   const included: string[] = [];
   let used = 0;
-  const budget = Math.min(config.maxContextBytes, 72_000);
+  const budget = Math.min(config.maxContextBytes, 28_000);
 
-  for (const file of dedupe(files).slice(0, 12)) {
+  for (const file of dedupe(files).slice(0, 8)) {
     try {
       resolveWorkspacePath(workspace, file);
       const snapshot = await readWorkspaceFile(workspace, file, config.maxFileBytes);
       if (snapshot.content === null) continue;
       const remaining = Math.max(0, budget - used);
       if (remaining < 500) break;
-      const content = snapshot.content.slice(0, Math.min(12_000, remaining));
+      const content = snapshot.content.slice(0, Math.min(6_000, remaining));
       sections.push(`## FILE ${file}\n${content}`);
       included.push(file);
       used += content.length;
@@ -786,8 +788,8 @@ export async function executeLocalEngineer(
     workspace,
     task: input.goal,
     hints: investigation.searchQueries,
-    maxFiles: 12,
-    maxCharsPerFile: 2_000
+    maxFiles: 8,
+    maxCharsPerFile: 1_200
   });
   const fullEvidence = await collectFullEvidence(
     workspace,
@@ -821,7 +823,7 @@ export async function executeLocalEngineer(
       .join('\n\n'),
     planningFormat,
     planningSchema,
-    'high'
+    'medium'
   );
   modelCalls.push(generationMeta('planning', planningCall.generation));
   const planned = planningCall.parsed;

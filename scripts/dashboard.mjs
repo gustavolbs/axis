@@ -89,6 +89,17 @@ async function recentTelemetry(limit = 30) {
   }
 }
 
+async function workerGet(pathname) {
+  const { workerUrl, token } = await loadConnection();
+  const response = await fetch(workerUrl + pathname, {
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(5000)
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body?.error ?? ('Worker returned HTTP ' + response.status));
+  return body;
+}
+
 async function statusPayload() {
   const { workerUrl, token, mode } = await loadConnection();
   const response = await fetch(`${workerUrl}/v1/status`, {
@@ -170,6 +181,20 @@ const server = http.createServer((request, response) => {
         sendJson(response, 503, {
           error: error instanceof Error ? error.message : String(error)
         });
+      }
+      return;
+    }
+    if (request.method === 'GET' && request.url?.startsWith('/api/history')) {
+      try {
+        const url = new URL(request.url, `http://${host}:${port}`);
+        const suffix = url.pathname.slice('/api/history'.length);
+        if (suffix && !/^\/[A-Za-z0-9-]{1,100}$/.test(suffix)) {
+          sendJson(response, 400, { error: 'Invalid history id.' });
+          return;
+        }
+        sendJson(response, 200, await workerGet('/v1/history' + suffix + url.search));
+      } catch (error) {
+        sendJson(response, 503, { error: error instanceof Error ? error.message : String(error) });
       }
       return;
     }

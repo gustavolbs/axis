@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import os from 'node:os';
+import path from 'node:path';
 
 import { loadConfig } from './config.js';
 import { executeAgenticCodeTask } from './executor.js';
@@ -12,6 +13,8 @@ import {
 } from './inference-status.js';
 import { getMachineStatus } from './machine-status.js';
 import { OllamaClient } from './ollama.js';
+import { preparePromptForInference } from './planning-policy.js';
+import { currentProgressJobId } from './progress-context.js';
 import { executeLocalCodePlan } from './orchestrator.js';
 import { reportProgress } from './progress-context.js';
 import {
@@ -25,34 +28,80 @@ import {
 } from './remote-protocol.js';
 import { executeLocalEngineerWithRepoIntelligence } from './repo-intelligence.js';
 import { WorkerScheduler } from './worker-scheduler.js';
+import { WorkerHistoryStore } from './worker-history.js';
 import { withWorkerWorkspace } from './worker-workspace.js';
 
-const WORKER_VERSION = '0.12.1';
+const WORKER_VERSION = '0.13.0';
 const config = loadConfig();
 const ollama = new OllamaClient(config);
 const scheduler = new WorkerScheduler(config.workerMaxConcurrentJobs ?? 1);
+const history = new WorkerHistoryStore(path.join(config.workerStatePath, 'history'), 200);
 const inferenceTracker = new WorkerInferenceTracker();
+const historyFailure = (error: unknown): void => {
+  console.error('local-coder history write failed: ' + (error instanceof Error ? error.message : String(error)));
+};
 
 const baseChat = ollama.chat.bind(ollama);
 ollama.chat = (async (...args: Parameters<OllamaClient['chat']>) => {
-  const [systemPrompt, userPrompt, , runtime] = args;
+  const [systemPrompt, userPrompt, format, runtime] = args;
   const stage = classifyInferenceStage(systemPrompt);
-  const inferenceId = inferenceTracker.begin(stage, runtime?.model ?? config.model);
-  reportProgress(progressAtInferenceStart(stage, userPrompt));
+  const model = runtime?.model ?? config.model;
+  const preparedPrompt = preparePromptForInference(
+    systemPrompt,
+    userPrompt,
+    runtime?.numCtx ?? config.ollamaNumCtx ?? 16_384
+  );
+  const jobId = currentProgressJobId();
+  const inferenceId = inferenceTracker.begin(stage, model);
+  reportProgress(progressAtInferenceStart(stage, preparedPrompt.userPrompt));
+  if (jobId) {
+    await history.appendEvent(jobId, {
+      type: 'model-input',
+      title: stage + ' prompt sent to Qwen',
+      stage,
+      model,
+      systemPrompt,
+      userPrompt: preparedPrompt.userPrompt,
+      promptTruncated: preparedPrompt.truncated,
+      originalUserPromptChars: preparedPrompt.originalUserPromptChars,
+      data: { format: format ?? null, thinking: runtime?.think ?? null }
+    }).catch(historyFailure);
+  }
   try {
     const generation = await baseChat(...args);
     inferenceTracker.complete(inferenceId, 'success', {
       promptTokens: generation.promptTokens,
       completionTokens: generation.completionTokens
     });
+    if (jobId) {
+      await history.appendEvent(jobId, {
+        type: 'model-output',
+        title: stage + ' output',
+        stage,
+        model: generation.model,
+        output: generation.content,
+        promptTokens: generation.promptTokens,
+        completionTokens: generation.completionTokens,
+        durationMs: generation.totalDurationNs ? generation.totalDurationNs / 1_000_000 : undefined
+      }).catch(historyFailure);
+    }
     reportProgress(progressFromInferenceResult(stage, generation.content));
     return generation;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     inferenceTracker.complete(inferenceId, 'error', { error: message });
+    if (jobId) {
+      await history.appendEvent(jobId, {
+        type: 'error',
+        title: stage + ' inference failed',
+        stage,
+        model,
+        error: message
+      }).catch(historyFailure);
+    }
     reportProgress({
       phase: stage,
-      action: `Qwen ${stage} call failed`,
+      action: 'Qwen ' + stage + ' call failed',
       detail: message,
       reasoningSummary: 'The current local inference failed before a usable structured result was produced.'
     });
@@ -306,35 +355,92 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
     throw new Error('input.goal is required.');
   }
 
-  const output = await scheduler.enqueue('engineer', isolationKey(request.workspace), (job) => {
-    job.update({
-      phase: 'workspace',
-      action: 'Reconstructing repository worktree',
-      detail: request.workspace.repositoryUrl,
-      completedSteps: []
-    });
-    return withWorkerWorkspace(request.workspace, config, async (workspace) => {
+  let historyJobId: string | undefined;
+  try {
+    const output = await scheduler.enqueue('engineer', isolationKey(request.workspace), async (job) => {
+      historyJobId = job.id;
+      await history.startRun({
+        id: job.id,
+        kind: 'engineer',
+        isolationKey: isolationKey(request.workspace),
+        startedAt: new Date().toISOString()
+      });
+      await history.annotateRun(job.id, {
+        goal: request.input.goal,
+        repositoryUrl: request.workspace.repositoryUrl
+      });
+      await history.appendEvent(job.id, {
+        type: 'request',
+        title: 'local_engineer request',
+        data: {
+          goal: request.input.goal,
+          context: request.input.context ?? null,
+          constraints: request.input.constraints ?? [],
+          language: request.input.language ?? null,
+          claudeGuidance: request.input.claudeGuidance ?? null,
+          maxRepairRounds: request.input.maxRepairRounds ?? null,
+          repositoryUrl: request.workspace.repositoryUrl,
+          baseSha: request.workspace.baseSha
+        }
+      });
       job.update({
-        phase: 'investigation',
-        action: 'Workspace reconstructed; starting local engineer',
-        detail: request.input.goal,
-        completedSteps: ['workspace']
+        phase: 'workspace',
+        action: 'Reconstructing repository worktree',
+        detail: request.workspace.repositoryUrl,
+        completedSteps: []
       });
-      return executeLocalEngineerWithRepoIntelligence(ollama, config, {
-        ...request.input,
-        workspace,
-        repoMemoryScopeKey: request.workspace.memoryScopeKey
+      return await withWorkerWorkspace(request.workspace, config, async (workspace) => {
+        job.update({
+          phase: 'investigation',
+          action: 'Workspace reconstructed; starting local engineer',
+          detail: request.input.goal,
+          completedSteps: ['workspace']
+        });
+        return await executeLocalEngineerWithRepoIntelligence(ollama, config, {
+          ...request.input,
+          workspace,
+          repoMemoryScopeKey: request.workspace.memoryScopeKey
+        });
       });
     });
-  });
 
-  json(response, 200, {
-    protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
-    result: output.result.result,
-    changes: output.result.changes
-  });
+    if (historyJobId) {
+      await history.appendEvent(historyJobId, {
+        type: 'result',
+        title: 'local_engineer result',
+        data: {
+          status: output.result.result.status,
+          phase: output.result.result.phase,
+          summary: output.result.result.summary,
+          changedFiles: output.result.result.changedFiles,
+          validation: output.result.result.validation,
+          review: output.result.result.review ?? null,
+          repairRounds: output.result.result.repairRounds,
+          modelCalls: output.result.result.modelCalls,
+          escalation: output.result.result.escalation ?? null
+        }
+      });
+      await history.finishRun(historyJobId, 'success');
+    }
+
+    json(response, 200, {
+      protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+      result: output.result.result,
+      changes: output.result.changes
+    });
+  } catch (error) {
+    if (historyJobId) {
+      const message = error instanceof Error ? error.message : String(error);
+      await history.appendEvent(historyJobId, {
+        type: 'error',
+        title: 'local_engineer failed',
+        error: message
+      }).catch(historyFailure);
+      await history.finishRun(historyJobId, 'error', message).catch(historyFailure);
+    }
+    throw error;
+  }
 }
-
 async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (!authorized(request)) {
     response.setHeader('www-authenticate', 'Bearer');
@@ -352,6 +458,27 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   if (request.method === 'GET' && request.url === '/v1/status') {
     await status(response);
     return;
+  }
+  if (request.method === 'GET' && request.url?.startsWith('/v1/history')) {
+    const url = new URL(request.url, 'http://local-coder-worker');
+    if (url.pathname === '/v1/history') {
+      const parsedLimit = Number.parseInt(url.searchParams.get('limit') ?? '50', 10);
+      json(response, 200, {
+        protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+        runs: await history.listRuns(Number.isFinite(parsedLimit) ? parsedLimit : 50)
+      });
+      return;
+    }
+    const match = /^\/v1\/history\/([A-Za-z0-9-]{1,100})$/.exec(url.pathname);
+    if (match) {
+      const run = await history.readRun(match[1]);
+      if (!run) {
+        json(response, 404, { protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION, error: 'History run not found.' });
+        return;
+      }
+      json(response, 200, { protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION, run });
+      return;
+    }
   }
 
   if (request.method !== 'POST') {

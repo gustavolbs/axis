@@ -159,7 +159,7 @@ export class WorkerScheduler {
         update: (progress) => this.updateProgress(job.id, progress)
       };
 
-      void withProgressReporter(context.update, () => job.run(context))
+      void withProgressReporter(context.update, () => job.run(context), job.id)
         .then(job.resolve, job.reject)
         .finally(() => {
           this.active.delete(job.id);
