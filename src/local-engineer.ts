@@ -31,12 +31,11 @@ export interface LocalEngineerInput {
   context?: string;
   constraints?: string[];
   language?: string;
-  /**
-   * Guidance supplied by Claude after the local engineer explicitly asked for
-   * premium reasoning, external research, or a sensitive decision.
-   */
+  /** Guidance supplied after the local engineer explicitly asked for premium reasoning, external research, or a material user decision. */
   claudeGuidance?: string;
   maxRepairRounds?: number;
+  /** Internal test-time-compute knob selected by the premium cognitive router. */
+  reviewPasses?: number;
 }
 
 export interface LocalEngineerPlanTask {
@@ -124,7 +123,6 @@ export interface LocalEngineerExecution {
 }
 
 type EngineerChatClient = Pick<OllamaClient, 'chat'>;
-
 type SnapshotMap = Map<string, WorkspaceFileSnapshot>;
 
 const investigationSchema = z.object({
@@ -178,8 +176,7 @@ const reviewSchema = z.object({
 });
 
 const investigationFormat = {
-  type: 'object',
-  additionalProperties: false,
+  type: 'object', additionalProperties: false,
   required: ['summary', 'searchQueries', 'fileHints', 'researchRequests'],
   properties: {
     summary: { type: 'string' },
@@ -190,25 +187,11 @@ const investigationFormat = {
 } satisfies Record<string, unknown>;
 
 const planningFormat = {
-  type: 'object',
-  additionalProperties: false,
-  required: [
-    'outcome',
-    'summary',
-    'analysis',
-    'confidence',
-    'decisions',
-    'unresolvedQuestions',
-    'researchRequests',
-    'riskTags',
-    'sensitiveDecisionRequired',
-    'validationScripts',
-    'tasks'
-  ],
+  type: 'object', additionalProperties: false,
+  required: ['outcome', 'summary', 'analysis', 'confidence', 'decisions', 'unresolvedQuestions', 'researchRequests', 'riskTags', 'sensitiveDecisionRequired', 'validationScripts', 'tasks'],
   properties: {
     outcome: { type: 'string', enum: ['ready', 'needs-claude'] },
-    summary: { type: 'string' },
-    analysis: { type: 'string' },
+    summary: { type: 'string' }, analysis: { type: 'string' },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
     decisions: { type: 'array', maxItems: 20, items: { type: 'string' } },
     unresolvedQuestions: { type: 'array', maxItems: 10, items: { type: 'string' } },
@@ -217,15 +200,12 @@ const planningFormat = {
     sensitiveDecisionRequired: { type: 'boolean' },
     validationScripts: { type: 'array', maxItems: 6, items: { type: 'string' } },
     tasks: {
-      type: 'array',
-      maxItems: 12,
+      type: 'array', maxItems: 12,
       items: {
-        type: 'object',
-        additionalProperties: false,
+        type: 'object', additionalProperties: false,
         required: ['id', 'task', 'dependsOn', 'editableFiles', 'contextFiles', 'constraints'],
         properties: {
-          id: { type: 'string' },
-          task: { type: 'string' },
+          id: { type: 'string' }, task: { type: 'string' },
           dependsOn: { type: 'array', items: { type: 'string' } },
           editableFiles: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string' } },
           contextFiles: { type: 'array', maxItems: 16, items: { type: 'string' } },
@@ -237,33 +217,19 @@ const planningFormat = {
 } satisfies Record<string, unknown>;
 
 const reviewFormat = {
-  type: 'object',
-  additionalProperties: false,
-  required: [
-    'verdict',
-    'confidence',
-    'summary',
-    'issues',
-    'repairTask',
-    'repairFiles',
-    'researchRequests'
-  ],
+  type: 'object', additionalProperties: false,
+  required: ['verdict', 'confidence', 'summary', 'issues', 'repairTask', 'repairFiles', 'researchRequests'],
   properties: {
     verdict: { type: 'string', enum: ['pass', 'repair', 'needs-claude'] },
-    confidence: { type: 'number', minimum: 0, maximum: 1 },
-    summary: { type: 'string' },
+    confidence: { type: 'number', minimum: 0, maximum: 1 }, summary: { type: 'string' },
     issues: {
-      type: 'array',
-      maxItems: 20,
+      type: 'array', maxItems: 20,
       items: {
-        type: 'object',
-        additionalProperties: false,
+        type: 'object', additionalProperties: false,
         required: ['severity', 'description', 'fix'],
         properties: {
           severity: { type: 'string', enum: ['low', 'medium', 'high'] },
-          file: { type: 'string' },
-          description: { type: 'string' },
-          fix: { type: 'string' }
+          file: { type: 'string' }, description: { type: 'string' }, fix: { type: 'string' }
         }
       }
     },
@@ -281,168 +247,109 @@ If repository evidence is insufficient because current external library/provider
 Return only the required JSON.`;
 
 const PLANNER_SYSTEM_PROMPT = `You are the reasoning/planning stage of a local software-engineering agent.
-Use only the supplied repository evidence plus explicit Claude guidance.
+Use only the supplied repository evidence plus explicit user/premium guidance.
 Reason from evidence, not assumptions. For bugs, distinguish observed behavior, plausible causes, evidence, and root cause. For features, identify existing architecture/contracts before proposing changes.
 Produce small dependency-ordered implementation tasks. Each task should normally touch 1-5 files and must list exact editable paths.
+For bug fixes, regressions and cross-cutting behavior changes, include the relevant existing test file(s) in the editable set when evidence identifies them and plan a regression test that preserves all interacting behaviors, not only the latest symptom.
+Treat fresh persistent regression/invariant memories in context as compatibility constraints unless current source/tests prove they are obsolete.
 Do not broaden scope merely to make implementation easier.
 Choose validation only from the supplied existing package scripts.
 Set outcome=needs-claude when a material decision remains ambiguous, external facts must be researched, a sensitive auth/credential/permission contract is unresolved, or evidence is too weak to implement safely.
-If Claude guidance is supplied, treat it as the resolved premium decision/evidence and continue locally when possible.
+If resolved guidance is supplied, treat it as the resolved premium decision/evidence and continue locally when possible.
 Return only the required JSON.`;
 
 const REVIEWER_SYSTEM_PROMPT = `You are an adversarial software-engineering reviewer. You did not author the code.
-Check the implementation against the original goal, the evidence-backed plan, constraints, changed files, and validation results.
+Check the implementation against the original goal, constraints, changed files, persistent regression invariants, and deterministic validation evidence.
 Try to falsify correctness. Look for missing requirements, regressions, unsafe assumptions, broken contracts, incomplete error handling, and tests that fail to cover the changed behavior.
+A repair must preserve every previously-established behavior. Never accept a fix that solves the latest issue by reintroducing an earlier one.
+When a bug fix or repair affects interacting behaviors and regression coverage is feasible inside the approved editable files, request a bounded regression test rather than relying on memory alone.
 Use repair when a bounded correction can be made within the already-approved editable-file set.
 Use needs-claude when correctness depends on unresolved product/security/architecture judgment or external research.
 Do not request cosmetic-only repairs unless they hide a correctness problem.
 Return only the required JSON.`;
 
-const HARD_PREMIUM_PATTERNS: Array<{ tag: string; regex: RegExp }> = [
+const REVIEW_PERSPECTIVES = [
   {
-    tag: 'cryptography',
-    regex: /\b(cryptograph|encryption scheme|decrypt|signature verification|key derivation|certificate validation)\b/i
+    id: 'correctness',
+    instruction: 'Perspective: requirements correctness. Check every stated goal/constraint, behavioral contract, error path and validation claim. The evidence-backed plan may be included as context, but do not assume it is correct.',
+    includePlanReasoning: true
   },
   {
-    tag: 'destructive-production-data',
-    regex: /\b(drop\s+(table|database)|truncate\s+table|delete production data|destructive migration)\b/i
+    id: 'regression',
+    instruction: 'Perspective: regression and edge cases. Review from the original requirement + diff + validation only. Focus on backwards compatibility, state transitions, concurrency/timing, boundary values, error handling and missing tests. Do not rely on the author/planner rationale.',
+    includePlanReasoning: false
   },
   {
-    tag: 'production-access-control',
-    regex: /\b(production\s+iam|iam\s+policy|root credentials?|production secrets? rotation)\b/i
+    id: 'architecture',
+    instruction: 'Perspective: architecture and maintenance. Review from the original requirement + diff + validation only. Look for boundary violations, duplicated abstractions, hidden coupling, lifecycle/resource leaks, public-contract drift and changes that fight existing repository structure. Do not rely on the author/planner rationale.',
+    includePlanReasoning: false
   }
+] as const;
+
+const HARD_PREMIUM_PATTERNS: Array<{ tag: string; regex: RegExp }> = [
+  { tag: 'cryptography', regex: /\b(cryptograph|encryption scheme|decrypt|signature verification|key derivation|certificate validation)\b/i },
+  { tag: 'destructive-production-data', regex: /\b(drop\s+(table|database)|truncate\s+table|delete production data|destructive migration)\b/i },
+  { tag: 'production-access-control', regex: /\b(production\s+iam|iam\s+policy|root credentials?|production secrets? rotation)\b/i }
 ];
 
-function dedupe<T>(values: T[]): T[] {
-  return [...new Set(values)];
-}
-
+function dedupe<T>(values: T[]): T[] { return [...new Set(values)]; }
 function sha256(content: string | null): string | null {
   if (content === null) return null;
   return createHash('sha256').update(content, 'utf8').digest('hex');
 }
-
-function generationMeta(
-  stage: 'investigation' | 'planning' | 'review',
-  generation: OllamaGeneration
-) {
-  return {
-    stage,
-    model: generation.model,
-    promptTokens: generation.promptTokens,
-    completionTokens: generation.completionTokens,
-    totalDurationNs: generation.totalDurationNs
-  };
+function generationMeta(stage: 'investigation' | 'planning' | 'review', generation: OllamaGeneration) {
+  return { stage, model: generation.model, promptTokens: generation.promptTokens, completionTokens: generation.completionTokens, totalDurationNs: generation.totalDurationNs };
 }
 
 async function structuredCall<T>(
-  model: EngineerChatClient,
-  config: LocalCoderConfig,
-  systemPrompt: string,
-  userPrompt: string,
-  format: Record<string, unknown>,
-  schema: z.ZodType<T>,
-  think: 'medium' | 'high'
+  model: EngineerChatClient, config: LocalCoderConfig, systemPrompt: string, userPrompt: string,
+  format: Record<string, unknown>, schema: z.ZodType<T>, think: 'medium' | 'high'
 ): Promise<{ parsed: T; generation: OllamaGeneration }> {
   let lastError: unknown;
-
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const prompt =
-      attempt === 1
-        ? userPrompt
-        : `${userPrompt}\n\nPrevious structured response was invalid. Return a schema-valid JSON object only.`;
-    // Transport/model failures are not schema failures. Retrying them can double a
-    // multi-minute timeout. Retry only after the model returned invalid structured content.
+    const prompt = attempt === 1 ? userPrompt : `${userPrompt}\n\nPrevious structured response was invalid. Return a schema-valid JSON object only.`;
     const generation = await model.chat(systemPrompt, prompt, format, {
-      model: config.model,
-      numCtx: config.ollamaNumCtx ?? 16_384,
-      keepAlive: config.fastModelKeepAlive ?? '90s',
-      think
+      model: config.model, numCtx: config.ollamaNumCtx ?? 16_384,
+      keepAlive: config.fastModelKeepAlive ?? '90s', think
     });
-    try {
-      return { parsed: schema.parse(JSON.parse(generation.content) as unknown), generation };
-    } catch (error) {
-      lastError = error;
-    }
+    try { return { parsed: schema.parse(JSON.parse(generation.content) as unknown), generation }; }
+    catch (error) { lastError = error; }
   }
-
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 function capsuleText(capsule: ContextCapsule): string {
-  const files = capsule.relevantFiles
-    .map((file) => {
-      const evidence = file.evidence
-        .map(
-          (item) =>
-            `${file.path}:${item.startLine}-${item.endLine}\n${item.content}`
-        )
-        .join('\n\n');
-      return `## ${file.path}\nscore=${file.score}; reasons=${file.reasons.join(', ')}\n${evidence}`;
-    })
-    .join('\n\n');
-
-  return [
-    `packageManager=${capsule.packageManager ?? 'unknown'}`,
-    `validationCandidates=${capsule.validationCandidates.join(', ') || '[none]'}`,
-    `queryTerms=${capsule.queryTerms.join(', ')}`,
-    files || '[no ranked evidence]'
-  ].join('\n\n');
+  const files = capsule.relevantFiles.map((file) => {
+    const evidence = file.evidence.map((item) => `${file.path}:${item.startLine}-${item.endLine}\n${item.content}`).join('\n\n');
+    return `## ${file.path}\nscore=${file.score}; reasons=${file.reasons.join(', ')}\n${evidence}`;
+  }).join('\n\n');
+  return [`packageManager=${capsule.packageManager ?? 'unknown'}`, `validationCandidates=${capsule.validationCandidates.join(', ') || '[none]'}`, `queryTerms=${capsule.queryTerms.join(', ')}`, files || '[no ranked evidence]'].join('\n\n');
 }
 
 function discoveryText(discovery: Awaited<ReturnType<typeof discoverWorkspace>>): string {
-  const files = discovery.files.slice(0, 300);
-  return [
-    `packageManager=${discovery.packageManager ?? 'unknown'}`,
-    `packageScripts=${(discovery.packageScripts ?? []).join(', ') || '[none]'}`,
-    `truncated=${String(discovery.truncated)}`,
-    '# FILE MAP',
-    files.join('\n') || '[empty]'
-  ].join('\n');
+  return [`packageManager=${discovery.packageManager ?? 'unknown'}`, `packageScripts=${(discovery.packageScripts ?? []).join(', ') || '[none]'}`, `truncated=${String(discovery.truncated)}`, '# FILE MAP', discovery.files.slice(0, 300).join('\n') || '[empty]'].join('\n');
 }
 
-async function collectSearchEvidence(
-  workspace: string,
-  queries: string[],
-  config: LocalCoderConfig
-): Promise<{ text: string; matchedFiles: string[] }> {
+async function collectSearchEvidence(workspace: string, queries: string[], config: LocalCoderConfig): Promise<{ text: string; matchedFiles: string[] }> {
   const sections: string[] = [];
   const matchedFiles: string[] = [];
-
   for (const query of queries.slice(0, 8)) {
     try {
-      const result = await searchWorkspace(workspace, query, {
-        maxResults: 12,
-        maxFiles: 800,
-        maxDepth: 10,
-        maxFileBytes: config.maxFileBytes
-      });
-      sections.push(
-        `## SEARCH ${JSON.stringify(query)}\n${result.matches
-          .map((match) => `${match.path}:${match.line} ${match.preview}`)
-          .join('\n') || '[no matches]'}`
-      );
+      const result = await searchWorkspace(workspace, query, { maxResults: 12, maxFiles: 800, maxDepth: 10, maxFileBytes: config.maxFileBytes });
+      sections.push(`## SEARCH ${JSON.stringify(query)}\n${result.matches.map((match) => `${match.path}:${match.line} ${match.preview}`).join('\n') || '[no matches]'}`);
       matchedFiles.push(...result.matches.map((match) => match.path));
     } catch (error) {
-      sections.push(
-        `## SEARCH ${JSON.stringify(query)}\n[search failed: ${error instanceof Error ? error.message : String(error)}]`
-      );
+      sections.push(`## SEARCH ${JSON.stringify(query)}\n[search failed: ${error instanceof Error ? error.message : String(error)}]`);
     }
   }
-
   return { text: sections.join('\n\n'), matchedFiles: dedupe(matchedFiles) };
 }
 
-async function collectFullEvidence(
-  workspace: string,
-  files: string[],
-  config: LocalCoderConfig
-): Promise<{ text: string; files: string[] }> {
+async function collectFullEvidence(workspace: string, files: string[], config: LocalCoderConfig): Promise<{ text: string; files: string[] }> {
   const sections: string[] = [];
   const included: string[] = [];
   let used = 0;
   const budget = Math.min(config.maxContextBytes, 28_000);
-
   for (const file of dedupe(files).slice(0, 8)) {
     try {
       resolveWorkspacePath(workspace, file);
@@ -454,165 +361,88 @@ async function collectFullEvidence(
       sections.push(`## FILE ${file}\n${content}`);
       included.push(file);
       used += content.length;
-    } catch {
-      // Planner hints are untrusted model output; invalid/blocked paths are simply ignored.
-    }
+    } catch { /* untrusted model hint */ }
   }
-
   return { text: sections.join('\n\n'), files: included };
 }
 
 function hardPremiumTags(goal: string): string[] {
   return HARD_PREMIUM_PATTERNS.filter((entry) => entry.regex.test(goal)).map((entry) => entry.tag);
 }
-
-function escalation(
-  kind: LocalEngineerEscalation['kind'],
-  reason: string,
-  questions: string[],
-  researchRequests: string[],
-  evidence: string[]
-): LocalEngineerEscalation {
-  return {
-    kind,
-    reason,
-    questions,
-    researchRequests,
-    evidence: evidence.slice(0, 12),
-    resumeWith:
-      'Call local_engineer again with the same workspace/goal plus claudeGuidance containing the resolved decision or research evidence.'
-  };
+function escalation(kind: LocalEngineerEscalation['kind'], reason: string, questions: string[], researchRequests: string[], evidence: string[]): LocalEngineerEscalation {
+  return { kind, reason, questions, researchRequests, evidence: evidence.slice(0, 12), resumeWith: 'Call local_engineer again with the same workspace/goal plus claudeGuidance containing the resolved decision or research evidence.' };
 }
-
-function validationCommands(
-  packageManager: string | undefined,
-  availableScripts: string[],
-  requestedScripts: string[],
-  config: LocalCoderConfig
-): ValidationCommand[] {
+function validationCommands(packageManager: string | undefined, availableScripts: string[], requestedScripts: string[], config: LocalCoderConfig): ValidationCommand[] {
   const command = packageManager?.split('@')[0];
   if (!command || !config.allowedValidationCommands.has(command)) return [];
-
   const available = new Set(availableScripts);
   let selected = dedupe(requestedScripts).filter((script) => available.has(script)).slice(0, 4);
-
   if (selected.length === 0) {
     if (available.has('check')) selected = ['check'];
-    else {
-      selected = ['typecheck', 'test', 'lint', 'build'].filter((script) => available.has(script)).slice(0, 3);
-    }
+    else selected = ['typecheck', 'test', 'lint', 'build'].filter((script) => available.has(script)).slice(0, 3);
   }
-
   return selected.map((script) => ({ command, args: ['run', script] }));
 }
-
 function validatePlanPaths(workspace: string, plan: LocalEngineerPlanTask[]): void {
   const ids = new Set(plan.map((task) => task.id));
   const allEditable = new Set<string>();
-
   for (const task of plan) {
     for (const dependency of task.dependsOn) {
-      if (!ids.has(dependency) || dependency === task.id) {
-        throw new Error(`Invalid local engineer dependency ${dependency} for task ${task.id}.`);
-      }
+      if (!ids.has(dependency) || dependency === task.id) throw new Error(`Invalid local engineer dependency ${dependency} for task ${task.id}.`);
     }
-    for (const file of [...task.editableFiles, ...task.contextFiles]) {
-      resolveWorkspacePath(workspace, file);
-    }
+    for (const file of [...task.editableFiles, ...task.contextFiles]) resolveWorkspacePath(workspace, file);
     for (const file of task.editableFiles) allEditable.add(file);
   }
-
-  if (allEditable.size > 30) {
-    throw new Error(`Local engineer plan touches ${allEditable.size} editable files; maximum is 30.`);
-  }
+  if (allEditable.size > 30) throw new Error(`Local engineer plan touches ${allEditable.size} editable files; maximum is 30.`);
 }
 
-async function snapshotFiles(
-  workspace: string,
-  files: string[],
-  config: LocalCoderConfig
-): Promise<SnapshotMap> {
+async function snapshotFiles(workspace: string, files: string[], config: LocalCoderConfig): Promise<SnapshotMap> {
   const snapshots: SnapshotMap = new Map();
-  for (const file of dedupe(files)) {
-    snapshots.set(file, await readWorkspaceFile(workspace, file, config.maxFileBytes));
-  }
+  for (const file of dedupe(files)) snapshots.set(file, await readWorkspaceFile(workspace, file, config.maxFileBytes));
   return snapshots;
 }
-
-async function currentSnapshots(
-  workspace: string,
-  originals: SnapshotMap,
-  config: LocalCoderConfig
-): Promise<SnapshotMap> {
+async function currentSnapshots(workspace: string, originals: SnapshotMap, config: LocalCoderConfig): Promise<SnapshotMap> {
   return await snapshotFiles(workspace, [...originals.keys()], config);
 }
-
 async function restoreSnapshots(workspace: string, snapshots: SnapshotMap): Promise<void> {
   for (const snapshot of snapshots.values()) await restoreWorkspaceFile(workspace, snapshot);
 }
-
 function aggregateDiff(before: SnapshotMap, after: SnapshotMap): { changedFiles: string[]; diff: string } {
   const changedFiles: string[] = [];
   const patches: string[] = [];
-
   for (const [file, original] of before) {
     const current = after.get(file);
     if (!current || current.content === original.content) continue;
     changedFiles.push(file);
-    patches.push(
-      createTwoFilesPatch(
-        `${file} (before local engineer)`,
-        `${file} (after local engineer)`,
-        original.content ?? '',
-        current.content ?? '',
-        '',
-        '',
-        { context: 3 }
-      )
-    );
+    patches.push(createTwoFilesPatch(`${file} (before local engineer)`, `${file} (after local engineer)`, original.content ?? '', current.content ?? '', '', '', { context: 3 }));
   }
-
   return { changedFiles, diff: patches.join('\n') };
 }
-
 function changesFromSnapshots(before: SnapshotMap, after: SnapshotMap): LocalEngineerFileChange[] {
   const changes: LocalEngineerFileChange[] = [];
   for (const [file, original] of before) {
     const current = after.get(file);
     if (!current || current.content === original.content) continue;
-    changes.push({
-      path: file,
-      beforeSha256: sha256(original.content),
-      contentBase64:
-        current.content === null ? null : Buffer.from(current.content, 'utf8').toString('base64')
-    });
+    changes.push({ path: file, beforeSha256: sha256(original.content), contentBase64: current.content === null ? null : Buffer.from(current.content, 'utf8').toString('base64') });
   }
   return changes;
 }
 
 function reviewPrompt(
-  input: LocalEngineerInput,
-  plan: LocalEngineerPlan,
-  diff: string,
-  validation: ValidationResult[],
-  chunkIndex: number,
-  chunks: number
+  input: LocalEngineerInput, plan: LocalEngineerPlan, diff: string, validation: ValidationResult[],
+  chunkIndex: number, chunks: number, perspective: (typeof REVIEW_PERSPECTIVES)[number]
 ): string {
   return [
+    `# REVIEW PERSPECTIVE\n${perspective.id}\n${perspective.instruction}`,
     `# ORIGINAL GOAL\n${input.goal}`,
     input.context ? `# USER/PROJECT CONTEXT\n${input.context}` : '',
-    input.claudeGuidance ? `# CLAUDE GUIDANCE\n${input.claudeGuidance}` : '',
-    `# PLAN ANALYSIS\n${plan.analysis}`,
-    `# PLAN DECISIONS\n${plan.decisions.map((item) => `- ${item}`).join('\n') || '[none]'}`,
+    input.claudeGuidance ? `# RESOLVED USER/PREMIUM GUIDANCE\n${input.claudeGuidance}` : '',
+    perspective.includePlanReasoning ? `# PLAN ANALYSIS\n${plan.analysis}` : '',
+    perspective.includePlanReasoning ? `# PLAN DECISIONS\n${plan.decisions.map((item) => `- ${item}`).join('\n') || '[none]'}` : `# EXPECTED SCOPE\n${plan.tasks.map((task) => `- ${task.id}: ${task.task}`).join('\n')}`,
     `# DIFF CHUNK\n${chunkIndex + 1}/${chunks}\n${diff}`,
-    `# VALIDATION\n${validation
-      .map((item) => `$ ${item.command} ${item.args.join(' ')}\nok=${String(item.ok)}\n${item.output.slice(-4000)}`)
-      .join('\n\n') || '[no deterministic validation available]'}`
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+    `# VALIDATION\n${validation.map((item) => `$ ${item.command} ${item.args.join(' ')}\nok=${String(item.ok)}\n${item.output.slice(-4000)}`).join('\n\n') || '[no deterministic validation available]'}`
+  ].filter(Boolean).join('\n\n');
 }
-
 function chunkDiff(diff: string, chunkSize: number): string[] {
   if (!diff) return ['[no diff]'];
   const chunks: string[] = [];
@@ -622,393 +452,187 @@ function chunkDiff(diff: string, chunkSize: number): string[] {
   }
   return chunks;
 }
-
 async function reviewImplementation(
-  model: EngineerChatClient,
-  config: LocalCoderConfig,
-  input: LocalEngineerInput,
-  plan: LocalEngineerPlan,
-  diff: string,
-  validation: ValidationResult[],
-  modelCalls: LocalEngineerResult['modelCalls']
-): Promise<{
-  review: LocalEngineerReview;
-  repairTask?: string;
-  repairFiles: string[];
-}> {
+  model: EngineerChatClient, config: LocalCoderConfig, input: LocalEngineerInput, plan: LocalEngineerPlan,
+  diff: string, validation: ValidationResult[], modelCalls: LocalEngineerResult['modelCalls']
+): Promise<{ review: LocalEngineerReview; repairTask?: string; repairFiles: string[] }> {
   const chunkSize = Math.max(12_000, Math.min(32_000, Math.floor(config.maxContextBytes / 3)));
   const chunks = chunkDiff(diff, chunkSize);
   if (diff.length > chunkSize * chunks.length) {
-    return {
-      review: {
-        verdict: 'needs-claude',
-        confidence: 0,
-        summary: 'The aggregate diff exceeded the bounded local review window.',
-        issues: [],
-        researchRequests: []
-      },
-      repairFiles: []
-    };
+    return { review: { verdict: 'needs-claude', confidence: 0, summary: 'The aggregate diff exceeded the bounded local review window.', issues: [], researchRequests: [] }, repairFiles: [] };
   }
-
   const reviews: Array<z.infer<typeof reviewSchema>> = [];
-  for (let index = 0; index < chunks.length; index += 1) {
-    const call = await structuredCall(
-      model,
-      config,
-      REVIEWER_SYSTEM_PROMPT,
-      reviewPrompt(input, plan, chunks[index], validation, index, chunks.length),
-      reviewFormat,
-      reviewSchema,
-      'high'
-    );
-    modelCalls.push(generationMeta('review', call.generation));
-    reviews.push(call.parsed);
+  const passCount = Math.max(1, Math.min(input.reviewPasses ?? 1, REVIEW_PERSPECTIVES.length));
+  for (let pass = 0; pass < passCount; pass += 1) {
+    const perspective = REVIEW_PERSPECTIVES[pass];
+    for (let index = 0; index < chunks.length; index += 1) {
+      const call = await structuredCall(model, config, `${REVIEWER_SYSTEM_PROMPT}\n${perspective.instruction}`, reviewPrompt(input, plan, chunks[index], validation, index, chunks.length, perspective), reviewFormat, reviewSchema, 'high');
+      modelCalls.push(generationMeta('review', call.generation));
+      reviews.push(call.parsed);
+    }
   }
-
   const allIssues = reviews.flatMap((review) => review.issues);
   const researchRequests = dedupe(reviews.flatMap((review) => review.researchRequests));
   const needsClaude = reviews.some((review) => review.verdict === 'needs-claude');
   const needsRepair = reviews.some((review) => review.verdict === 'repair');
   const confidence = Math.min(...reviews.map((review) => review.confidence));
-  const summary = reviews.map((review) => review.summary).join(' | ');
-
+  const summary = reviews.map((review, index) => `[review ${index + 1}] ${review.summary}`).join(' | ');
   return {
-    review: {
-      verdict: needsClaude ? 'needs-claude' : needsRepair ? 'repair' : 'pass',
-      confidence,
-      summary,
-      issues: allIssues,
-      researchRequests
-    },
-    repairTask: reviews.map((review) => review.repairTask).filter(Boolean).join('\n\n') || undefined,
+    review: { verdict: needsClaude ? 'needs-claude' : needsRepair ? 'repair' : 'pass', confidence, summary, issues: allIssues, researchRequests },
+    repairTask: dedupe(reviews.map((review) => review.repairTask).filter((value): value is string => Boolean(value))).join('\n\n') || undefined,
     repairFiles: dedupe(reviews.flatMap((review) => review.repairFiles))
   };
 }
 
+function issueKey(issue: LocalEngineerReviewIssue): string {
+  return `${issue.file ?? ''}\0${issue.description.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+}
+function addRepairIssues(ledger: Map<string, LocalEngineerReviewIssue>, issues: LocalEngineerReviewIssue[]): void {
+  for (const issue of issues) {
+    const key = issueKey(issue);
+    const existing = ledger.get(key);
+    if (!existing || (existing.severity === 'low' && issue.severity !== 'low') || (existing.severity === 'medium' && issue.severity === 'high')) {
+      ledger.set(key, issue);
+    }
+  }
+}
+function renderRepairLedger(ledger: Map<string, LocalEngineerReviewIssue>): string {
+  const issues = [...ledger.values()];
+  if (issues.length === 0) return '- none recorded';
+  return issues.map((issue, index) => `${index + 1}. [${issue.severity}] ${issue.file ?? '[cross-cutting]'} ${issue.description}\n   required fix/invariant: ${issue.fix}`).join('\n');
+}
+
 function compactEvidence(capsule: ContextCapsule, searchText: string): string[] {
-  const cited = capsule.relevantFiles.flatMap((file) =>
-    file.evidence.map((evidence) => `${file.path}:${evidence.startLine}-${evidence.endLine}`)
-  );
-  const searchLines = searchText
-    .split(/\r?\n/)
-    .filter((line) => /:\d+\s/.test(line))
-    .slice(0, 12);
+  const cited = capsule.relevantFiles.flatMap((file) => file.evidence.map((evidence) => `${file.path}:${evidence.startLine}-${evidence.endLine}`));
+  const searchLines = searchText.split(/\r?\n/).filter((line) => /:\d+\s/.test(line)).slice(0, 12);
   return dedupe([...cited, ...searchLines]).slice(0, 12);
 }
-
-function emptyResult(
-  workspace: string,
-  input: LocalEngineerInput,
-  status: LocalEngineerResult['status'],
-  phase: LocalEngineerResult['phase'],
-  summary: string,
-  escalationValue?: LocalEngineerEscalation
-): LocalEngineerExecution {
-  return {
-    result: {
-      status,
-      phase,
-      workspace,
-      goal: input.goal,
-      summary,
-      investigation: { searchQueries: [], evidenceFiles: [], researchRequests: [] },
-      repairRounds: 0,
-      changedFiles: [],
-      diff: '',
-      validation: [],
-      escalation: escalationValue,
-      modelCalls: []
-    },
-    changes: []
-  };
+function emptyResult(workspace: string, input: LocalEngineerInput, status: LocalEngineerResult['status'], phase: LocalEngineerResult['phase'], summary: string, escalationValue?: LocalEngineerEscalation): LocalEngineerExecution {
+  return { result: { status, phase, workspace, goal: input.goal, summary, investigation: { searchQueries: [], evidenceFiles: [], researchRequests: [] }, repairRounds: 0, changedFiles: [], diff: '', validation: [], escalation: escalationValue, modelCalls: [] }, changes: [] };
 }
 
-export async function executeLocalEngineer(
-  model: EngineerChatClient,
-  config: LocalCoderConfig,
-  input: LocalEngineerInput
-): Promise<LocalEngineerExecution> {
+export async function executeLocalEngineer(model: EngineerChatClient, config: LocalCoderConfig, input: LocalEngineerInput): Promise<LocalEngineerExecution> {
   const workspace = await resolveWorkspace(input.workspace);
   const hardTags = hardPremiumTags(input.goal);
-
   if (hardTags.length > 0 && !input.claudeGuidance?.trim()) {
-    return emptyResult(
-      workspace,
-      input,
-      'needs-claude',
-      'investigation',
-      'Premium reasoning is required before local implementation for this high-risk request.',
-      escalation(
-        'decision',
-        `High-risk categories require an explicit Claude decision before local execution: ${hardTags.join(', ')}.`,
-        ['Resolve the risky behavior/contract and provide the bounded implementation decision.'],
-        [],
-        hardTags
-      )
-    );
+    return emptyResult(workspace, input, 'needs-claude', 'investigation', 'Premium reasoning is required before local implementation for this high-risk request.', escalation('decision', `High-risk categories require an explicit premium decision before local execution: ${hardTags.join(', ')}.`, ['Resolve the risky behavior/contract and provide the bounded implementation decision.'], [], hardTags));
   }
 
   const discovery = await discoverWorkspace(workspace, { maxDepth: 6, maxEntries: 1_000 });
   const index = new RepoIndexStore(config.contextIndexPath);
-  const initialCapsule = await prepareContextCapsule(index, config, {
-    workspace,
-    task: input.goal,
-    maxFiles: 10,
-    maxCharsPerFile: 1_800
-  });
-
+  const initialCapsule = await prepareContextCapsule(index, config, { workspace, task: input.goal, maxFiles: 10, maxCharsPerFile: 1_800 });
   const modelCalls: LocalEngineerResult['modelCalls'] = [];
-  const investigationCall = await structuredCall(
-    model,
-    config,
-    INVESTIGATOR_SYSTEM_PROMPT,
-    [
-      `# GOAL\n${input.goal}`,
-      input.context ? `# CONTEXT\n${input.context}` : '',
-      input.claudeGuidance ? `# CLAUDE GUIDANCE\n${input.claudeGuidance}` : '',
-      `# REPOSITORY MAP\n${discoveryText(discovery)}`,
-      `# INITIAL EVIDENCE\n${capsuleText(initialCapsule)}`
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
-    investigationFormat,
-    investigationSchema,
-    'high'
-  );
+  const investigationCall = await structuredCall(model, config, INVESTIGATOR_SYSTEM_PROMPT, [
+    `# GOAL\n${input.goal}`,
+    input.context ? `# CONTEXT\n${input.context}` : '',
+    input.claudeGuidance ? `# RESOLVED GUIDANCE\n${input.claudeGuidance}` : '',
+    `# REPOSITORY MAP\n${discoveryText(discovery)}`,
+    `# INITIAL EVIDENCE\n${capsuleText(initialCapsule)}`
+  ].filter(Boolean).join('\n\n'), investigationFormat, investigationSchema, 'high');
   modelCalls.push(generationMeta('investigation', investigationCall.generation));
 
   const investigation = investigationCall.parsed;
-  const searchEvidence = await collectSearchEvidence(
-    workspace,
-    investigation.searchQueries,
-    config
-  );
-  const focusedCapsule = await prepareContextCapsule(index, config, {
-    workspace,
-    task: input.goal,
-    hints: investigation.searchQueries,
-    maxFiles: 8,
-    maxCharsPerFile: 1_200
-  });
-  const fullEvidence = await collectFullEvidence(
-    workspace,
-    [
-      ...investigation.fileHints,
-      ...searchEvidence.matchedFiles,
-      ...focusedCapsule.relevantFiles.map((file) => file.path)
-    ],
-    config
-  );
+  const searchEvidence = await collectSearchEvidence(workspace, investigation.searchQueries, config);
+  const focusedCapsule = await prepareContextCapsule(index, config, { workspace, task: input.goal, hints: investigation.searchQueries, maxFiles: 8, maxCharsPerFile: 1_200 });
+  const fullEvidence = await collectFullEvidence(workspace, [...investigation.fileHints, ...searchEvidence.matchedFiles, ...focusedCapsule.relevantFiles.map((file) => file.path)], config);
 
-  const planningCall = await structuredCall(
-    model,
-    config,
-    PLANNER_SYSTEM_PROMPT,
-    [
-      `# GOAL\n${input.goal}`,
-      input.context ? `# USER/PROJECT CONTEXT\n${input.context}` : '',
-      input.constraints?.length
-        ? `# CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}`
-        : '',
-      input.language ? `# LANGUAGE / STACK\n${input.language}` : '',
-      input.claudeGuidance ? `# CLAUDE GUIDANCE\n${input.claudeGuidance}` : '',
-      `# INVESTIGATION INTENT\n${investigation.summary}`,
-      `# SEARCH EVIDENCE\n${searchEvidence.text || '[none]'}`,
-      `# RANKED FILE EVIDENCE\n${capsuleText(focusedCapsule)}`,
-      `# VERIFIED FILE CONTENT\n${fullEvidence.text || '[none]'}`,
-      `# ALLOWED VALIDATION SCRIPTS\n${focusedCapsule.validationCandidates.join(', ') || '[none]'}`
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
-    planningFormat,
-    planningSchema,
-    'medium'
-  );
+  const planningCall = await structuredCall(model, config, PLANNER_SYSTEM_PROMPT, [
+    `# GOAL\n${input.goal}`,
+    input.context ? `# USER/PROJECT CONTEXT\n${input.context}` : '',
+    input.constraints?.length ? `# CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}` : '',
+    input.language ? `# LANGUAGE / STACK\n${input.language}` : '',
+    input.claudeGuidance ? `# RESOLVED GUIDANCE\n${input.claudeGuidance}` : '',
+    `# INVESTIGATION INTENT\n${investigation.summary}`,
+    `# SEARCH EVIDENCE\n${searchEvidence.text || '[none]'}`,
+    `# RANKED FILE EVIDENCE\n${capsuleText(focusedCapsule)}`,
+    `# VERIFIED FILE CONTENT\n${fullEvidence.text || '[none]'}`,
+    `# ALLOWED VALIDATION SCRIPTS\n${focusedCapsule.validationCandidates.join(', ') || '[none]'}`
+  ].filter(Boolean).join('\n\n'), planningFormat, planningSchema, 'medium');
   modelCalls.push(generationMeta('planning', planningCall.generation));
   const planned = planningCall.parsed;
   const evidenceRefs = compactEvidence(focusedCapsule, searchEvidence.text);
 
-  if (
-    planned.outcome === 'needs-claude' ||
-    planned.tasks.length === 0 ||
-    planned.confidence < 0.58 ||
-    (planned.sensitiveDecisionRequired && !input.claudeGuidance?.trim())
-  ) {
-    const kind: LocalEngineerEscalation['kind'] = planned.sensitiveDecisionRequired
-      ? 'sensitive-decision'
-      : planned.researchRequests.length > 0 || investigation.researchRequests.length > 0
-        ? 'external-research'
-        : 'decision';
+  if (planned.outcome === 'needs-claude' || planned.tasks.length === 0 || planned.confidence < 0.58 || (planned.sensitiveDecisionRequired && !input.claudeGuidance?.trim())) {
+    const kind: LocalEngineerEscalation['kind'] = planned.sensitiveDecisionRequired ? 'sensitive-decision' : planned.researchRequests.length > 0 || investigation.researchRequests.length > 0 ? 'external-research' : 'decision';
     return {
       result: {
-        status: 'needs-claude',
-        phase: 'planning',
-        workspace,
-        goal: input.goal,
-        summary: planned.summary,
-        investigation: {
-          searchQueries: investigation.searchQueries,
-          evidenceFiles: fullEvidence.files,
-          researchRequests: dedupe([
-            ...investigation.researchRequests,
-            ...planned.researchRequests
-          ])
-        },
-        plan: {
-          summary: planned.summary,
-          analysis: planned.analysis,
-          confidence: planned.confidence,
-          decisions: planned.decisions,
-          riskTags: planned.riskTags,
-          sensitiveDecisionRequired: planned.sensitiveDecisionRequired,
-          validationScripts: planned.validationScripts,
-          tasks: planned.tasks
-        },
-        repairRounds: 0,
-        changedFiles: [],
-        diff: '',
-        validation: [],
-        escalation: escalation(
-          kind,
-          planned.summary,
-          planned.unresolvedQuestions.length > 0
-            ? planned.unresolvedQuestions
-            : ['Resolve the remaining ambiguity and provide a concrete bounded decision.'],
-          dedupe([...investigation.researchRequests, ...planned.researchRequests]),
-          evidenceRefs
-        ),
+        status: 'needs-claude', phase: 'planning', workspace, goal: input.goal, summary: planned.summary,
+        investigation: { searchQueries: investigation.searchQueries, evidenceFiles: fullEvidence.files, researchRequests: dedupe([...investigation.researchRequests, ...planned.researchRequests]) },
+        plan: { summary: planned.summary, analysis: planned.analysis, confidence: planned.confidence, decisions: planned.decisions, riskTags: planned.riskTags, sensitiveDecisionRequired: planned.sensitiveDecisionRequired, validationScripts: planned.validationScripts, tasks: planned.tasks },
+        repairRounds: 0, changedFiles: [], diff: '', validation: [],
+        escalation: escalation(kind, planned.summary, planned.unresolvedQuestions.length > 0 ? planned.unresolvedQuestions : ['Resolve the remaining ambiguity and provide a concrete bounded decision.'], dedupe([...investigation.researchRequests, ...planned.researchRequests]), evidenceRefs),
         modelCalls
-      },
-      changes: []
+      }, changes: []
     };
   }
 
-  const plan: LocalEngineerPlan = {
-    summary: planned.summary,
-    analysis: planned.analysis,
-    confidence: planned.confidence,
-    decisions: planned.decisions,
-    riskTags: planned.riskTags,
-    sensitiveDecisionRequired: planned.sensitiveDecisionRequired,
-    validationScripts: planned.validationScripts,
-    tasks: planned.tasks
-  };
-
+  const plan: LocalEngineerPlan = { summary: planned.summary, analysis: planned.analysis, confidence: planned.confidence, decisions: planned.decisions, riskTags: planned.riskTags, sensitiveDecisionRequired: planned.sensitiveDecisionRequired, validationScripts: planned.validationScripts, tasks: planned.tasks };
   validatePlanPaths(workspace, plan.tasks);
   const editableFiles = dedupe(plan.tasks.flatMap((task) => task.editableFiles));
   const originals = await snapshotFiles(workspace, editableFiles, config);
-  const finalValidation = validationCommands(
-    focusedCapsule.packageManager,
-    discovery.packageScripts ?? [],
-    plan.validationScripts,
-    config
-  );
+  const finalValidation = validationCommands(focusedCapsule.packageManager, discovery.packageScripts ?? [], plan.validationScripts, config);
   const sensitiveResolved = plan.sensitiveDecisionRequired && Boolean(input.claudeGuidance?.trim());
-
   const executionPlan: LocalExecutionPlan = {
-    workspace,
-    goal: input.goal,
-    context: [input.context, `Local planner analysis: ${plan.analysis}`, input.claudeGuidance]
-      .filter(Boolean)
-      .join('\n\n'),
-    language: input.language,
-    sharedContextFiles: fullEvidence.files.slice(0, 12),
-    sharedConstraints: input.constraints,
+    workspace, goal: input.goal,
+    context: [input.context, `Local planner analysis: ${plan.analysis}`, input.claudeGuidance].filter(Boolean).join('\n\n'),
+    language: input.language, sharedContextFiles: fullEvidence.files.slice(0, 12), sharedConstraints: input.constraints,
     tasks: plan.tasks.map((task) => ({
-      id: task.id,
-      task: task.task,
-      dependsOn: task.dependsOn,
-      editableFiles: task.editableFiles,
-      contextFiles: task.contextFiles,
-      constraints: task.constraints,
-      maxAttempts: 2,
-      routing: {
-        solutionKnown: true,
-        requiresDiscovery: false,
-        requiresArchitecture: false,
-        validationKnown: finalValidation.length > 0,
-        riskTags: plan.riskTags,
-        sensitiveDecisionResolved: sensitiveResolved || undefined
-      }
+      id: task.id, task: task.task, dependsOn: task.dependsOn, editableFiles: task.editableFiles, contextFiles: task.contextFiles,
+      constraints: task.constraints, maxAttempts: 2,
+      routing: { solutionKnown: true, requiresDiscovery: false, requiresArchitecture: false, validationKnown: finalValidation.length > 0, riskTags: plan.riskTags, sensitiveDecisionResolved: sensitiveResolved || undefined }
     })),
-    finalValidation,
-    rollbackPlanOnFailure: true
+    finalValidation, rollbackPlanOnFailure: true
   };
 
   let execution: LocalExecutionPlanResult;
-  try {
-    execution = await executeLocalCodePlan(model, config, executionPlan);
-  } catch (error) {
-    await restoreSnapshots(workspace, originals);
-    throw error;
-  }
+  try { execution = await executeLocalCodePlan(model, config, executionPlan); }
+  catch (error) { await restoreSnapshots(workspace, originals); throw error; }
 
   if (execution.status !== 'success') {
     await restoreSnapshots(workspace, originals);
     return {
       result: {
-        status: 'escalated',
-        phase: 'execution',
-        workspace,
-        goal: input.goal,
+        status: 'escalated', phase: 'execution', workspace, goal: input.goal,
         summary: `Local implementation did not converge: ${execution.blockers.join(' ') || execution.phase}`,
-        investigation: {
-          searchQueries: investigation.searchQueries,
-          evidenceFiles: fullEvidence.files,
-          researchRequests: dedupe([...investigation.researchRequests, ...planned.researchRequests])
-        },
-        plan,
-        execution,
-        repairRounds: 0,
-        changedFiles: [],
-        diff: '',
-        validation: execution.finalValidation,
-        escalation: escalation(
-          'execution-failure',
-          `The local executor escalated during ${execution.phase}${execution.failedTaskId ? ` at ${execution.failedTaskId}` : ''}.`,
-          ['Use Claude to resolve the failed implementation point; then send the concrete fix back through local_engineer or the bounded local executor.'],
-          [],
-          evidenceRefs
-        ),
+        investigation: { searchQueries: investigation.searchQueries, evidenceFiles: fullEvidence.files, researchRequests: dedupe([...investigation.researchRequests, ...planned.researchRequests]) },
+        plan, execution, repairRounds: 0, changedFiles: [], diff: '', validation: execution.finalValidation,
+        escalation: escalation('execution-failure', `The local executor escalated during ${execution.phase}${execution.failedTaskId ? ` at ${execution.failedTaskId}` : ''}.`, ['Resolve the failed implementation point; then send the concrete fix back through local_engineer or the bounded local executor.'], [], evidenceRefs),
         modelCalls
-      },
-      changes: []
+      }, changes: []
     };
   }
 
   let repairRounds = 0;
   const maxRepairRounds = Math.max(0, Math.min(input.maxRepairRounds ?? 1, 2));
+  const repairLedger = new Map<string, LocalEngineerReviewIssue>();
   let current = await currentSnapshots(workspace, originals, config);
   let delta = aggregateDiff(originals, current);
   let validation = execution.finalValidation;
-  let reviewResult = await reviewImplementation(
-    model,
-    config,
-    input,
-    plan,
-    delta.diff,
-    validation,
-    modelCalls
-  );
+  let reviewResult = await reviewImplementation(model, config, input, plan, delta.diff, validation, modelCalls);
+  addRepairIssues(repairLedger, reviewResult.review.issues);
 
   while (reviewResult.review.verdict === 'repair' && repairRounds < maxRepairRounds) {
     const approvedFiles = new Set(editableFiles);
     const repairFiles = reviewResult.repairFiles.filter((file) => approvedFiles.has(file));
     const effectiveFiles = repairFiles.length > 0 ? repairFiles : delta.changedFiles;
     if (effectiveFiles.length === 0) break;
+    const ledgerText = renderRepairLedger(repairLedger);
 
     const repair = await executeAgenticCodeTask(model, config, {
       workspace,
-      task:
-        reviewResult.repairTask?.trim() ||
-        `Repair the adversarial review findings:\n${reviewResult.review.issues
-          .map((issue) => `- [${issue.severity}] ${issue.file ?? ''} ${issue.description}: ${issue.fix}`)
-          .join('\n')}`,
+      task: [
+        'Perform a monotonic regression repair. The final implementation must satisfy the original goal AND every cumulative issue below simultaneously. Do not fix the newest issue by reintroducing any earlier issue.',
+        `# CUMULATIVE REPAIR / REGRESSION LEDGER\n${ledgerText}`,
+        reviewResult.repairTask?.trim() ? `# CURRENT REVIEW REPAIR TASK\n${reviewResult.repairTask.trim()}` : ''
+      ].filter(Boolean).join('\n\n'),
       editableFiles: effectiveFiles,
       contextFiles: fullEvidence.files.slice(0, 10),
-      context: `Original goal: ${input.goal}\nLocal plan: ${plan.analysis}`,
-      constraints: input.constraints,
+      context: `Original goal: ${input.goal}\nLocal plan: ${plan.analysis}\n\nAll entries in the cumulative repair ledger are compatibility invariants for this run.`,
+      constraints: dedupe([
+        ...(input.constraints ?? []),
+        'Preserve every behavior already repaired earlier in this run; cumulative repair constraints are monotonic.',
+        'Run the full supplied validation after the repair; do not validate only the latest symptom.'
+      ]),
       language: input.language,
       validation: finalValidation,
       maxAttempts: 2,
@@ -1020,113 +644,55 @@ export async function executeLocalEngineer(
       await restoreSnapshots(workspace, originals);
       return {
         result: {
-          status: 'escalated',
-          phase: 'review',
-          workspace,
-          goal: input.goal,
-          summary: 'Local repair loop did not converge.',
-          investigation: {
-            searchQueries: investigation.searchQueries,
-            evidenceFiles: fullEvidence.files,
-            researchRequests: dedupe([...investigation.researchRequests, ...planned.researchRequests])
-          },
-          plan,
-          execution,
-          review: reviewResult.review,
-          repairRounds,
-          changedFiles: [],
-          diff: '',
-          validation: repair.validation,
-          escalation: escalation(
-            'review-failure',
-            'The local reviewer found a bounded issue, but the local repair failed validation.',
-            ['Use Claude to resolve the review/repair failure, then optionally resume local execution with claudeGuidance.'],
-            reviewResult.review.researchRequests,
-            evidenceRefs
-          ),
+          status: 'escalated', phase: 'review', workspace, goal: input.goal,
+          summary: 'Local monotonic repair loop did not converge.',
+          investigation: { searchQueries: investigation.searchQueries, evidenceFiles: fullEvidence.files, researchRequests: dedupe([...investigation.researchRequests, ...planned.researchRequests]) },
+          plan, execution, review: reviewResult.review, repairRounds, changedFiles: [], diff: '', validation: repair.validation,
+          escalation: escalation('review-failure', 'The cumulative repair ledger could not be satisfied by the bounded repair.', [
+            'Find one coherent fix that satisfies all of these regression constraints simultaneously:',
+            renderRepairLedger(repairLedger)
+          ], reviewResult.review.researchRequests, evidenceRefs),
           modelCalls
-        },
-        changes: []
+        }, changes: []
       };
     }
 
     validation = repair.validation;
     current = await currentSnapshots(workspace, originals, config);
     delta = aggregateDiff(originals, current);
-    reviewResult = await reviewImplementation(
-      model,
-      config,
-      input,
-      plan,
-      delta.diff,
-      validation,
-      modelCalls
-    );
+    reviewResult = await reviewImplementation(model, config, input, plan, delta.diff, validation, modelCalls);
+    addRepairIssues(repairLedger, reviewResult.review.issues);
   }
 
   if (reviewResult.review.verdict !== 'pass' || reviewResult.review.confidence < 0.58) {
     await restoreSnapshots(workspace, originals);
     return {
       result: {
-        status: 'needs-claude',
-        phase: 'review',
-        workspace,
-        goal: input.goal,
-        summary: reviewResult.review.summary,
-        investigation: {
-          searchQueries: investigation.searchQueries,
-          evidenceFiles: fullEvidence.files,
-          researchRequests: dedupe([
-            ...investigation.researchRequests,
-            ...planned.researchRequests,
-            ...reviewResult.review.researchRequests
-          ])
-        },
-        plan,
-        execution,
-        review: reviewResult.review,
-        repairRounds,
-        changedFiles: [],
-        diff: '',
-        validation,
+        status: 'needs-claude', phase: 'review', workspace, goal: input.goal, summary: reviewResult.review.summary,
+        investigation: { searchQueries: investigation.searchQueries, evidenceFiles: fullEvidence.files, researchRequests: dedupe([...investigation.researchRequests, ...planned.researchRequests, ...reviewResult.review.researchRequests]) },
+        plan, execution, review: reviewResult.review, repairRounds, changedFiles: [], diff: '', validation,
         escalation: escalation(
           reviewResult.review.researchRequests.length > 0 ? 'external-research' : 'review-failure',
           reviewResult.review.summary,
-          reviewResult.review.issues.map((issue) => `${issue.description} Suggested fix: ${issue.fix}`),
+          reviewResult.review.researchRequests.length > 0
+            ? reviewResult.review.issues.map((issue) => `${issue.description} Suggested fix: ${issue.fix}`)
+            : ['Find a coherent implementation that satisfies the original goal and the entire cumulative regression ledger simultaneously.', renderRepairLedger(repairLedger)],
           reviewResult.review.researchRequests,
           evidenceRefs
         ),
         modelCalls
-      },
-      changes: []
+      }, changes: []
     };
   }
 
   current = await currentSnapshots(workspace, originals, config);
   delta = aggregateDiff(originals, current);
   const changes = changesFromSnapshots(originals, current);
-
   return {
     result: {
-      status: 'success',
-      phase: 'complete',
-      workspace,
-      goal: input.goal,
-      summary: reviewResult.review.summary,
-      investigation: {
-        searchQueries: investigation.searchQueries,
-        evidenceFiles: fullEvidence.files,
-        researchRequests: dedupe([...investigation.researchRequests, ...planned.researchRequests])
-      },
-      plan,
-      execution,
-      review: reviewResult.review,
-      repairRounds,
-      changedFiles: delta.changedFiles,
-      diff: delta.diff,
-      validation,
-      modelCalls
-    },
-    changes
+      status: 'success', phase: 'complete', workspace, goal: input.goal, summary: reviewResult.review.summary,
+      investigation: { searchQueries: investigation.searchQueries, evidenceFiles: fullEvidence.files, researchRequests: dedupe([...investigation.researchRequests, ...planned.researchRequests]) },
+      plan, execution, review: reviewResult.review, repairRounds, changedFiles: delta.changedFiles, diff: delta.diff, validation, modelCalls
+    }, changes
   };
 }

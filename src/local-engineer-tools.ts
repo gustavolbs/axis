@@ -3,7 +3,11 @@ import * as z from 'zod/v4';
 
 import type { LocalCoderConfig } from './config.js';
 import type { ExecutionBackend } from './execution-runtime.js';
-import type { LocalEngineerResult } from './local-engineer.js';
+import type { LocalEngineerInput, LocalEngineerResult } from './local-engineer.js';
+import type {
+  PremiumDecisionRequest,
+  PremiumEngineerResult
+} from './premium-agent.js';
 import type { RepoIntelligenceRunSummary } from './repo-intelligence.js';
 import { RunStore } from './run-store.js';
 import { TelemetryStore } from './telemetry.js';
@@ -40,17 +44,45 @@ function reasoningStats(result: LocalEngineerResult) {
   };
 }
 
+function premiumResult(result: LocalEngineerResult): PremiumEngineerResult {
+  return result as PremiumEngineerResult;
+}
+
+function compactDecisionRequest(
+  decisionRequest: PremiumDecisionRequest | undefined
+): Record<string, unknown> | undefined {
+  if (!decisionRequest) return undefined;
+  return {
+    message: decisionRequest.message,
+    questions: decisionRequest.questions.map((question) => ({
+      id: question.id,
+      question: question.question,
+      rationale: question.rationale,
+      recommendedOptionId: question.recommendedOptionId,
+      options: question.options.map((option) => ({
+        id: option.id,
+        label: option.label,
+        tradeoff: option.tradeoff
+      }))
+    }))
+  };
+}
+
 function compactResult(result: LocalEngineerResult): Record<string, unknown> {
   const localReasoning = reasoningStats(result);
   const validationPassed = result.validation.every((item) => item.ok);
   const repoIntelligence = (
     result as LocalEngineerResult & { repoIntelligence?: RepoIntelligenceRunSummary }
   ).repoIntelligence;
+  const premium = premiumResult(result);
+  const decisionRequest = compactDecisionRequest(premium.decisionRequest);
 
   return {
     status: result.status,
     phase: result.phase,
     summary: result.summary,
+    preflight: premium.preflight,
+    decisionRequest,
     repoIntelligence: repoIntelligence
       ? {
           enabled: repoIntelligence.enabled,
@@ -94,9 +126,111 @@ function compactResult(result: LocalEngineerResult): Record<string, unknown> {
     escalation: result.escalation,
     nextAction:
       result.status === 'success'
-        ? 'Local investigation, planning, implementation, deterministic validation, adversarial review, and repo-intelligence learning completed. Do not redo the broad implementation in Claude. Fetch run details lazily only if the result is suspicious or the user asks for them.'
-        : 'Resolve only the exact escalation questions/research with Claude, then call local_engineer again with the same goal plus claudeGuidance containing the resolved decision/evidence. Do not restart the whole implementation in Claude unless the escalation explicitly requires premium-only execution.'
+        ? 'The local agent completed the requested work. Do not redo broad reasoning or implementation in Claude. Fetch run details lazily only when detailed evidence is needed.'
+        : decisionRequest
+          ? 'A material user preference is required. If direct MCP elicitation was unavailable, ask the user only the structured decisionRequest, then call local_engineer again with claudeGuidance containing the selected option(s). Do not decide the preference in Claude and do not redo repository analysis.'
+          : result.escalation?.kind === 'external-research'
+            ? 'The local research broker could not resolve only the remaining external facts. Resolve exactly those researchRequests from authoritative sources, then call local_engineer again with claudeGuidance. Do not redo repository analysis or implementation in Claude.'
+            : 'Resolve only the exact escalation gap, then call local_engineer again with claudeGuidance. Do not restart the whole implementation in Claude unless the escalation explicitly requires premium-only judgment.'
   };
+}
+
+type ElicitationResult = {
+  action?: 'accept' | 'decline' | 'cancel' | string;
+  content?: Record<string, unknown>;
+};
+
+type ElicitationContext = {
+  mcpReq?: {
+    elicitInput?: (request: {
+      mode: 'form';
+      message: string;
+      requestedSchema: Record<string, unknown>;
+    }) => Promise<ElicitationResult>;
+  };
+};
+
+function elicitationSchema(request: PremiumDecisionRequest): Record<string, unknown> {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: request.questions.map((question) => question.id),
+    properties: Object.fromEntries(
+      request.questions.map((question) => [
+        question.id,
+        {
+          type: 'string',
+          title: question.question,
+          description: [
+            question.rationale,
+            ...question.options.map((option) =>
+              `${option.id}: ${option.label}${option.id === question.recommendedOptionId ? ' [recommended]' : ''} — ${option.tradeoff}`
+            )
+          ].join('\n'),
+          enum: question.options.map((option) => option.id)
+        }
+      ])
+    )
+  };
+}
+
+function renderUserDecisionGuidance(
+  request: PremiumDecisionRequest,
+  content: Record<string, unknown>
+): string | undefined {
+  const selected: string[] = [];
+  for (const question of request.questions) {
+    const optionId = content[question.id];
+    if (typeof optionId !== 'string') continue;
+    const option = question.options.find((candidate) => candidate.id === optionId);
+    if (!option) continue;
+    selected.push(
+      `- ${question.id}: ${option.id} — ${option.label}. This is an explicit user decision and is authoritative for this run.`
+    );
+  }
+  if (!selected.length) return undefined;
+  return ['# USER DECISIONS (authoritative)', ...selected].join('\n');
+}
+
+async function executeWithDirectDecisions(
+  execution: Pick<ExecutionBackend, 'executeEngineer'>,
+  initialInput: LocalEngineerInput,
+  context: unknown
+): Promise<LocalEngineerResult> {
+  let input = initialInput;
+  let result = await execution.executeEngineer(input);
+  const mcpReq = (context as ElicitationContext | undefined)?.mcpReq;
+
+  for (let round = 0; round < 3; round += 1) {
+    const request = premiumResult(result).decisionRequest;
+    if (!request?.questions.length || !mcpReq?.elicitInput) break;
+
+    let elicited: ElicitationResult;
+    try {
+      elicited = await mcpReq.elicitInput({
+        mode: 'form',
+        message: request.message,
+        requestedSchema: elicitationSchema(request)
+      });
+    } catch {
+      // Some MCP clients do not expose elicitation yet. Preserve the structured
+      // decisionRequest so the host/Claude can ask only that question as fallback.
+      break;
+    }
+
+    if (elicited.action !== 'accept' || !elicited.content) break;
+    const decisionGuidance = renderUserDecisionGuidance(request, elicited.content);
+    if (!decisionGuidance) break;
+    input = {
+      ...input,
+      claudeGuidance: [input.claudeGuidance?.trim(), decisionGuidance]
+        .filter(Boolean)
+        .join('\n\n')
+    };
+    result = await execution.executeEngineer(input);
+  }
+
+  return result;
 }
 
 export function registerLocalEngineerTools(
@@ -117,7 +251,7 @@ export function registerLocalEngineerTools(
     {
       title: 'Local Software Engineer',
       description:
-        'Preferred entry point for open-ended repository engineering. The configured local/remote worker uses persistent per-repository intelligence plus bounded evidence gathering, high-effort local reasoning/planning, coding, validation, adversarial review, and limited repair. If premium reasoning or external research is needed it returns a compact escalation capsule; Claude should resolve only that gap and call this tool again with claudeGuidance.',
+        'Primary local-first software-engineering agent. It analyzes feature impact, follows repository conventions, researches external facts locally where possible, decomposes work into bounded dependency-ordered tasks, implements, validates, reviews, repairs, and learns repository conventions. Material user preferences are elicited directly when the MCP host supports it; Claude is only a compact fallback bridge for unresolved user decisions, external research, or premium-only judgment.',
       inputSchema: z.object({
         workspace: z.string().min(1),
         goal: z.string().min(1).max(20_000),
@@ -129,7 +263,7 @@ export function registerLocalEngineerTools(
           .max(30_000)
           .optional()
           .describe(
-            'Use only after this tool escalates: concise Claude-resolved decision, researched external facts, or premium reasoning needed to resume local execution.'
+            'Use only after the local agent requests a material user decision, unresolved authoritative research, or premium judgment. Keep it concise and do not redo repository analysis.'
           ),
         maxRepairRounds: z.number().int().min(0).max(2).default(1)
       }),
@@ -140,9 +274,9 @@ export function registerLocalEngineerTools(
         idempotentHint: false
       }
     },
-    async (input) => {
+    async (input, context) => {
       try {
-        const result = await deps.execution.executeEngineer(input);
+        const result = await executeWithDirectDecisions(deps.execution, input, context);
         const localReasoning = reasoningStats(result);
         const execution = result.execution;
         const promptTokens =

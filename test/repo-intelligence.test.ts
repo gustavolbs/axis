@@ -127,8 +127,6 @@ test('repo intelligence fingerprints dirty changes and keeps matching learned co
     assert.equal(third.retrieved[0].stale, true);
     assert.match(third.capsule, /STALE: verify source before relying/);
 
-    // Simulate a successful local-engineer run that validated the dirty v2 source and
-    // refreshed the same durable fact before that working-tree change was committed.
     await recordRepoIntelligenceLearning(third, config, {
       result: successfulResult(repo),
       facts: [boundaryFact]
@@ -195,6 +193,52 @@ test('repo intelligence notices Git changes and isolates repositories and separa
     const changed = await prepareRepoIntelligence(repoA, 'service invariant', config);
     assert.ok(changed.gitChangesDetected.includes('src/service.ts'));
     assert.equal(changed.retrieved[0]?.stale, true);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('successful repaired runs create an always-on regression invariant for future unrelated tasks', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-regression-memory-'));
+  const config = { workerStatePath: path.join(root, 'state') };
+
+  try {
+    const repo = await createRepo(root, 'repo-regression', 'https://github.com/example/repo-regression.git');
+    const first = await prepareRepoIntelligence(repo, 'fix alternating service behavior', config);
+    const repaired = successfulResult(repo);
+    repaired.goal = 'Fix mode A without breaking mode B';
+    repaired.summary = 'Both mode A and mode B now work together.';
+    repaired.repairRounds = 1;
+    repaired.review = {
+      verdict: 'pass',
+      confidence: 0.94,
+      summary: 'The final implementation preserves both interacting behaviors.',
+      issues: [],
+      researchRequests: []
+    };
+    repaired.validation = [
+      {
+        command: 'npm',
+        args: ['test'],
+        ok: true,
+        exitCode: 0,
+        output: 'all tests passed',
+        durationMs: 20
+      }
+    ];
+
+    const recorded = await recordRepoIntelligenceLearning(first, config, {
+      result: repaired,
+      facts: []
+    });
+    assert.equal(recorded.learnedFacts, 1, 'host should create a deterministic regression memory');
+
+    const future = await prepareRepoIntelligence(repo, 'rename a completely unrelated UI label', config);
+    const regression = future.retrieved.find((fact) => fact.kind === 'regression');
+    assert.ok(regression, 'fresh regression constraints must be retrieved even without semantic overlap');
+    assert.equal(regression?.stale, false);
+    assert.match(future.capsule, /HARD REGRESSION CONSTRAINT/i);
+    assert.match(future.capsule, /mode A without breaking mode B/i);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

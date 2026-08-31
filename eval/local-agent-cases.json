@@ -1,0 +1,45 @@
+[
+  {
+    "id": "small-safe-fix",
+    "category": "small-change",
+    "workspace": "REPLACE_WITH_REAL_WORKSPACE",
+    "goal": "Identify and implement one small safe objectively validated quality improvement without changing public behavior.",
+    "constraints": ["Keep the change bounded and reversible."],
+    "expected": { "status": "success", "requireValidation": true, "minQuality": 75 }
+  },
+  {
+    "id": "bug-root-cause",
+    "category": "debugging",
+    "workspace": "REPLACE_WITH_REAL_WORKSPACE",
+    "goal": "Investigate a reproducible failing test, establish root cause from evidence, implement the smallest correction and validate it.",
+    "expected": { "status": "success", "requireValidation": true, "minQuality": 80 }
+  },
+  {
+    "id": "cross-cutting-feature",
+    "category": "large-feature",
+    "workspace": "REPLACE_WITH_REAL_WORKSPACE",
+    "goal": "Implement a cross-cutting feature that requires API, state/UI and tests. Analyze impact, decompose it into dependency-ordered tasks and preserve existing public contracts unless explicitly required.",
+    "expected": { "status": "success", "requireValidation": true, "minQuality": 82 }
+  },
+  {
+    "id": "ambiguous-product-choice",
+    "category": "decision",
+    "workspace": "REPLACE_WITH_REAL_WORKSPACE",
+    "goal": "Implement a UI capability for which two materially different design-system approaches are viable and repository evidence does not establish a preference. Do not guess the durable product/architecture choice.",
+    "expected": { "status": "needs-claude", "requireValidation": false }
+  },
+  {
+    "id": "read-only-external-research",
+    "category": "research",
+    "workspace": "REPLACE_WITH_REAL_WORKSPACE",
+    "goal": "Read-only: investigate how this repository integrates with Microsoft Graph and determine the current Microsoft 365/Entra requirements from authoritative external documentation. Do not modify code.",
+    "expected": { "status": "success", "requireValidation": false, "minQuality": 60 }
+  },
+  {
+    "id": "architecture-deliberation",
+    "category": "architecture",
+    "workspace": "REPLACE_WITH_REAL_WORKSPACE",
+    "goal": "Design and implement a high-impact architecture change with multiple viable approaches, explicit rollback concerns and a broad regression surface. Use repository conventions and deterministic validation.",
+    "expected": { "status": "success", "requireValidation": true, "minQuality": 85 }
+  }
+]

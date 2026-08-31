@@ -15,6 +15,7 @@ import { getMachineStatus } from './machine-status.js';
 import { OllamaClient } from './ollama.js';
 import { preparePromptForInference } from './planning-policy.js';
 import { currentProgressJobId } from './progress-context.js';
+import { executePremiumLocalAgent, type PremiumEngineerResult } from './premium-agent.js';
 import { executeLocalCodePlan } from './orchestrator.js';
 import { reportProgress } from './progress-context.js';
 import {
@@ -26,12 +27,11 @@ import {
   type RemoteTaskRequest,
   type RemoteWorkspaceSnapshot
 } from './remote-protocol.js';
-import { executeLocalEngineerWithRepoIntelligence } from './repo-intelligence.js';
 import { WorkerScheduler } from './worker-scheduler.js';
 import { WorkerHistoryStore } from './worker-history.js';
 import { withWorkerWorkspace } from './worker-workspace.js';
 
-const WORKER_VERSION = '0.13.0';
+const WORKER_VERSION = '0.14.0';
 const config = loadConfig();
 const ollama = new OllamaClient(config);
 const scheduler = new WorkerScheduler(config.workerMaxConcurrentJobs ?? 1);
@@ -68,7 +68,13 @@ ollama.chat = (async (...args: Parameters<OllamaClient['chat']>) => {
     }).catch(historyFailure);
   }
   try {
-    const generation = await baseChat(...args);
+    const generation = await baseChat(systemPrompt, userPrompt, format, {
+      ...runtime,
+      onStreamProgress: (progress) => {
+        inferenceTracker.update(inferenceId, progress);
+        runtime?.onStreamProgress?.(progress);
+      }
+    });
     inferenceTracker.complete(inferenceId, 'success', {
       promptTokens: generation.promptTokens,
       completionTokens: generation.completionTokens
@@ -198,6 +204,15 @@ function repoIntelligenceStatus(): Record<string, unknown> {
   };
 }
 
+function researchStatus(): Record<string, unknown> {
+  return {
+    enabled: config.researchEnabled !== false,
+    microsoftLearn: config.microsoftLearnResearchEnabled !== false,
+    searxngConfigured: Boolean(config.searxngUrl),
+    policy: 'local-first'
+  };
+}
+
 async function health(response: ServerResponse): Promise<void> {
   try {
     const ollamaHealth = await ollama.health();
@@ -211,6 +226,7 @@ async function health(response: ServerResponse): Promise<void> {
       bootstrap: config.workerBootstrap,
       scheduler: scheduler.snapshot(),
       repoIntelligence: repoIntelligenceStatus(),
+      research: researchStatus(),
       ollama: ollamaHealth
     });
   } catch (error) {
@@ -241,6 +257,7 @@ async function status(response: ServerResponse): Promise<void> {
       scheduler: scheduler.snapshot(),
       inference: inferenceTracker.snapshot(),
       repoIntelligence: repoIntelligenceStatus(),
+      research: researchStatus(),
       ollama: ollamaHealth,
       machine
     });
@@ -392,11 +409,11 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
       return await withWorkerWorkspace(request.workspace, config, async (workspace) => {
         job.update({
           phase: 'investigation',
-          action: 'Workspace reconstructed; starting local engineer',
+          action: 'Workspace reconstructed; starting premium local agent',
           detail: request.input.goal,
           completedSteps: ['workspace']
         });
-        return await executeLocalEngineerWithRepoIntelligence(ollama, config, {
+        return await executePremiumLocalAgent(ollama, config, {
           ...request.input,
           workspace,
           repoMemoryScopeKey: request.workspace.memoryScopeKey
@@ -405,6 +422,7 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
     });
 
     if (historyJobId) {
+      const premium = output.result.result as PremiumEngineerResult;
       await history.appendEvent(historyJobId, {
         type: 'result',
         title: 'local_engineer result',
@@ -412,6 +430,8 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
           status: output.result.result.status,
           phase: output.result.result.phase,
           summary: output.result.result.summary,
+          preflight: premium.preflight ?? null,
+          decisionRequest: premium.decisionRequest ?? null,
           changedFiles: output.result.result.changedFiles,
           validation: output.result.result.validation,
           review: output.result.result.review ?? null,
@@ -473,7 +493,10 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     if (match) {
       const run = await history.readRun(match[1]);
       if (!run) {
-        json(response, 404, { protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION, error: 'History run not found.' });
+        json(response, 404, {
+          protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+          error: 'History run not found.'
+        });
         return;
       }
       json(response, 200, { protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION, run });

@@ -1,20 +1,23 @@
 {
   "name": "local-coder-mcp",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "private": true,
-  "description": "Claude-facing local software engineering agent with persistent per-repository intelligence and local or remote Ollama execution.",
+  "description": "Local-first software engineering agent with Claude/MCP and standalone Mac interfaces backed by local or remote Ollama execution.",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && npm run dashboard:build",
+    "build": "tsc -p tsconfig.json && npm run dashboard:build && npm run console:build",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "dev:worker": "tsx src/worker-server.ts",
     "start:worker": "node dist/worker-server.js",
     "dashboard:build": "vite build --config dashboard/vite.config.ts",
     "dashboard": "npm run dashboard:build && node scripts/dashboard.mjs",
+    "console:build": "vite build --config console/vite.config.ts",
+    "console:start": "node dist/standalone-console.js",
+    "console": "npm run build && npm run console:start",
     "test": "tsx --test test/**/*.test.ts",
     "check": "npm run build && npm test",
     "install:claude": "node scripts/install-claude-user.mjs",
@@ -22,9 +25,11 @@
     "install:claude:worker": "node scripts/install-claude-remote-worker.mjs",
     "install:routing": "node scripts/install-claude-routing-rule.mjs",
     "install:claude-token-saver": "node scripts/install-claude-token-saver.mjs",
-    "benchmark": "npm run build && node scripts/benchmark-local.mjs"
+    "benchmark": "npm run build && node scripts/benchmark-local.mjs",
+    "eval:agent": "npm run build && node scripts/eval-local-agent.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

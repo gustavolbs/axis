@@ -16,6 +16,9 @@ const projectRoot = path.resolve(import.meta.dirname, '..');
 const serverPath = path.join(projectRoot, 'dist', 'index.js');
 const claudeConfigPath =
   process.env.LOCAL_CODER_CLAUDE_CONFIG_PATH ?? path.join(os.homedir(), '.claude.json');
+const controlPlaneConfigPath =
+  process.env.LOCAL_CODER_CONTROL_PLANE_CONFIG_PATH ??
+  path.join(os.homedir(), '.local-coder-mcp', 'control-plane.json');
 
 if (!host) {
   console.error('Missing Windows host. Use --host <IP-or-hostname> or LOCAL_CODER_WINDOWS_HOST.');
@@ -53,6 +56,29 @@ if (fs.existsSync(claudeConfigPath)) {
   console.error(`Backup created: ${backupPath}`);
 }
 
+const remoteWorkerUrl = `http://${host}:${port}`;
+const controlPlaneConfig = {
+  executionMode: 'remote',
+  remoteWorkerUrl,
+  remoteWorkerToken: token,
+  model,
+  updatedAt: new Date().toISOString()
+};
+
+// This file is the canonical control-plane credential/config shared by Claude's MCP
+// process and the standalone Local Coder Console. Keep the bearer token out of shell
+// profiles and browser code; environment variables may still override it deliberately.
+fs.mkdirSync(path.dirname(controlPlaneConfigPath), { recursive: true, mode: 0o700 });
+fs.writeFileSync(controlPlaneConfigPath, `${JSON.stringify(controlPlaneConfig, null, 2)}\n`, {
+  encoding: 'utf8',
+  mode: 0o600
+});
+try {
+  fs.chmodSync(controlPlaneConfigPath, 0o600);
+} catch {
+  // Windows/non-POSIX filesystems may not honor chmod. This installer normally runs on Mac.
+}
+
 config.mcpServers ??= {};
 config.mcpServers['local-coder'] = {
   type: 'stdio',
@@ -60,31 +86,32 @@ config.mcpServers['local-coder'] = {
   args: [serverPath],
   env: {
     LOCAL_CODER_EXECUTION_MODE: 'remote',
-    LOCAL_CODER_REMOTE_WORKER_URL: `http://${host}:${port}`,
+    LOCAL_CODER_REMOTE_WORKER_URL: remoteWorkerUrl,
     LOCAL_CODER_REMOTE_WORKER_TOKEN: token,
-    // Open-ended local_engineer jobs can legitimately wait behind another Claude
-    // session in the Windows queue, so the control-plane timeout is deliberately
-    // much larger than an individual Ollama generation timeout.
     LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS: '7200000',
     LOCAL_CODER_REMOTE_MAX_DELTA_BYTES: '8000000',
     LOCAL_CODER_ADAPTIVE_MODELS: 'false',
     LOCAL_CODER_MODEL: model,
     LOCAL_CODER_FAST_MODEL: model,
     LOCAL_CODER_STRONG_MODEL: model,
-    // 16K is deliberately conservative for the RTX 3060 worker. Repo intelligence
-    // and focused evidence should beat blindly expanding the advertised model context.
     LOCAL_CODER_NUM_CTX: '16384',
     LOCAL_CODER_MAX_CONTEXT_BYTES: '96000',
-    LOCAL_CODER_TIMEOUT_MS: '600000'
+    LOCAL_CODER_TIMEOUT_MS: '600000',
+    LOCAL_CODER_COGNITIVE_MODE: 'adaptive',
+    LOCAL_CODER_MAX_DELIBERATION_PASSES: '3',
+    LOCAL_CODER_QUALITY_GATE_MIN_SCORE: '80',
+    LOCAL_CODER_RESEARCH_ENABLED: 'true',
+    LOCAL_CODER_MICROSOFT_LEARN_RESEARCH_ENABLED: 'true'
   }
 };
 
 fs.mkdirSync(path.dirname(claudeConfigPath), { recursive: true });
 fs.writeFileSync(claudeConfigPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 
-console.log(`Configured local-coder in strict remote-worker mode at http://${host}:${port}.`);
+console.log(`Configured local-coder in strict remote-worker mode at ${remoteWorkerUrl}.`);
 console.log(`Expected worker model: ${model}`);
-console.log('The bearer token was written only to the user Claude config and is not printed here.');
-console.log('Independent Claude sessions may submit work concurrently; the Windows worker queues heavy jobs by default.');
+console.log(`Shared control-plane config: ${controlPlaneConfigPath}`);
+console.log('The bearer token was written to the protected shared control-plane config and Claude config; it is not printed here.');
+console.log('Claude and the standalone Console now resolve the same worker URL/token/model by default.');
 console.log('Remote mode does not silently fall back to local Mac inference if the worker is unavailable.');
-console.log('Fully quit and reopen Claude Code Desktop before testing local_coder_health.');
+console.log('Fully quit and reopen Claude before testing local_coder_health. The standalone Console can be started with npm run console.');

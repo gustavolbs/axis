@@ -1,8 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { readOllamaChatStream } from './ollama-stream.js';
+import {
+  readOllamaChatStream,
+  type OllamaStreamProgress,
+  type OllamaStreamProgressReporter
+} from './ollama-stream.js';
 import { preparePromptForInference } from './planning-policy.js';
+import { reportProgress } from './progress-context.js';
 
 import type { LocalCoderConfig } from './config.js';
 
@@ -12,6 +17,23 @@ interface OllamaTagsResponse {
 
 interface OllamaPsResponse {
   models?: Array<{ name?: string; model?: string }>;
+}
+
+type RuntimeStage =
+  | 'impact-analysis'
+  | 'deliberation'
+  | 'investigation'
+  | 'planning'
+  | 'implementation'
+  | 'review'
+  | 'report'
+  | 'repo-learning'
+  | 'other';
+
+interface StageBudget {
+  stage: RuntimeStage;
+  maxDurationMs?: number;
+  maxTokens?: number;
 }
 
 export interface OllamaHealth {
@@ -33,6 +55,7 @@ export interface OllamaHealth {
     idleMs: number;
     maxDurationMs: number;
   };
+  stageBudgets: Record<string, { maxDurationMs?: number; maxTokens?: number }>;
   availableModels: string[];
 }
 
@@ -53,18 +76,92 @@ export interface OllamaChatOptions {
   keepAlive?: string | number;
   /** Model-agnostic thinking intent. The client adapts it to model-specific templates. */
   think?: OllamaThinkingLevel;
+  /** Optional caller override. The stage policy still cannot exceed the global hard cap. */
+  maxDurationMs?: number;
+  /** Optional Ollama num_predict override. */
+  maxTokens?: number;
+  /** Safe progress metadata only; hidden reasoning text is never surfaced. */
+  onStreamProgress?: OllamaStreamProgressReporter;
 }
 
 function isQwen38(model: string): boolean {
   return /^qwen3\.8(?::|$)/i.test(model);
 }
 
-/**
- * Qwen3.8 exposes xhigh as its default maximum reasoning effort, but its current
- * chat template does not accept the literal `high` string. Ollama's native
- * `think: true` lets that template select its default xhigh mode. Keep callers
- * model-agnostic by translating only the maximum-reasoning intent for Qwen3.8.
- */
+function classifyRuntimeStage(systemPrompt: string): RuntimeStage {
+  const prompt = systemPrompt.toLowerCase();
+  if (prompt.includes('pre-implementation impact analysis')) return 'impact-analysis';
+  if (
+    prompt.includes('architect a in a deliberate software-engineering system') ||
+    prompt.includes('adversarial architecture critic') ||
+    prompt.includes('final architecture judge')
+  ) {
+    return 'deliberation';
+  }
+  if (prompt.includes('investigation stage of a local software-engineering agent')) {
+    return 'investigation';
+  }
+  if (prompt.includes('reasoning/planning stage of a local software-engineering agent')) {
+    return 'planning';
+  }
+  if (prompt.includes('read-only repository research reporter')) return 'report';
+  if (prompt.includes('adversarial software-engineering reviewer')) return 'review';
+  if (prompt.includes('durable repository intelligence')) return 'repo-learning';
+  if (prompt.includes('local coding execution model') || prompt.includes('local coding executor')) {
+    return 'implementation';
+  }
+  return 'other';
+}
+
+function stageBudget(config: LocalCoderConfig, stage: RuntimeStage): StageBudget {
+  switch (stage) {
+    case 'impact-analysis':
+      return {
+        stage,
+        maxDurationMs: config.investigationMaxDurationMs ?? 300_000,
+        maxTokens: config.investigationMaxTokens ?? 2_048
+      };
+    case 'deliberation':
+      return {
+        stage,
+        maxDurationMs: config.planningMaxDurationMs ?? 600_000,
+        maxTokens: config.planningMaxTokens ?? 3_072
+      };
+    case 'investigation':
+      return {
+        stage,
+        maxDurationMs: config.investigationMaxDurationMs ?? 300_000,
+        maxTokens: config.investigationMaxTokens ?? 2_048
+      };
+    case 'planning':
+      return {
+        stage,
+        maxDurationMs: config.planningMaxDurationMs ?? 600_000,
+        maxTokens: config.planningMaxTokens ?? 3_072
+      };
+    case 'review':
+      return {
+        stage,
+        maxDurationMs: config.reviewMaxDurationMs ?? 600_000,
+        maxTokens: config.reviewMaxTokens ?? 3_072
+      };
+    case 'report':
+      return {
+        stage,
+        maxDurationMs: config.reportMaxDurationMs ?? 480_000,
+        maxTokens: config.reportMaxTokens ?? 3_072
+      };
+    case 'repo-learning':
+      return {
+        stage,
+        maxDurationMs: config.repoLearningMaxDurationMs ?? 300_000,
+        maxTokens: config.repoLearningMaxTokens ?? 2_048
+      };
+    default:
+      return { stage };
+  }
+}
+
 export function normalizeThinkingForModel(
   model: string,
   think: OllamaThinkingLevel | undefined
@@ -73,14 +170,37 @@ export function normalizeThinkingForModel(
   return think;
 }
 
-/**
- * Bounded code generation already receives a planner-owned task, exact editable
- * paths, repository context and host-side validation. Qwen3.8 should still reason,
- * but at low effort so expensive xhigh thinking is reserved for investigation,
- * planning and adversarial review. Legacy/non-thinking models keep their old call.
- */
+function stageThinking(
+  model: string,
+  stage: RuntimeStage,
+  requested: OllamaThinkingLevel | undefined
+): OllamaThinkingLevel | undefined {
+  if (
+    isQwen38(model) &&
+    (stage === 'impact-analysis' || stage === 'investigation') &&
+    requested === 'high'
+  ) {
+    return 'medium';
+  }
+  return normalizeThinkingForModel(model, requested);
+}
+
 export function codingThinkingForModel(model: string): OllamaThinkingLevel | undefined {
   return isQwen38(model) ? 'low' : undefined;
+}
+
+function progressAction(stage: RuntimeStage, progress: OllamaStreamProgress): string {
+  const label =
+    stage === 'impact-analysis'
+      ? 'impact analysis'
+      : stage === 'deliberation'
+        ? 'architectural deliberation'
+        : stage === 'other'
+          ? 'model'
+          : stage;
+  return progress.state === 'thinking'
+    ? `Qwen is actively reasoning for ${label}`
+    : `Qwen is generating the ${label} result`;
 }
 
 export class OllamaClient {
@@ -95,6 +215,24 @@ export class OllamaClient {
       idleMs: this.config.inferenceIdleTimeoutMs ?? 300_000,
       maxDurationMs: this.config.inferenceMaxDurationMs ?? 1_800_000
     };
+  }
+
+  private stageBudgets() {
+    const stages: RuntimeStage[] = [
+      'impact-analysis',
+      'deliberation',
+      'investigation',
+      'planning',
+      'review',
+      'report',
+      'repo-learning'
+    ];
+    return Object.fromEntries(
+      stages.map((stage) => {
+        const budget = stageBudget(this.config, stage);
+        return [stage, { maxDurationMs: budget.maxDurationMs, maxTokens: budget.maxTokens }];
+      })
+    );
   }
 
   async health(): Promise<OllamaHealth> {
@@ -120,6 +258,7 @@ export class OllamaClient {
       maxParallelInferences: 1,
       globalInferenceLock: true,
       inferenceTimeouts: this.inferenceTimeouts(),
+      stageBudgets: this.stageBudgets(),
       availableModels
     };
   }
@@ -130,6 +269,14 @@ export class OllamaClient {
     format?: 'json' | Record<string, unknown>,
     runtime: OllamaChatOptions = {}
   ): Promise<OllamaGeneration> {
+    const stage = classifyRuntimeStage(systemPrompt);
+    const budget = stageBudget(this.config, stage);
+    reportProgress({
+      action: `Waiting for the local inference slot (${stage})`,
+      reasoningSummary:
+        'The request is queued behind any active local model call. No Claude tokens are being used while it waits.'
+    });
+
     return await this.enqueue(async () =>
       await this.withGlobalInferenceLock(async () => {
         const model = runtime.model ?? this.config.model;
@@ -139,17 +286,29 @@ export class OllamaClient {
           (model === strongModel
             ? this.config.strongModelKeepAlive ?? '30s'
             : this.config.fastModelKeepAlive ?? '90s');
-        const think = normalizeThinkingForModel(model, runtime.think);
+        const think = stageThinking(model, stage, runtime.think);
         const preparedPrompt = preparePromptForInference(
           systemPrompt,
           userPrompt,
           runtime.numCtx ?? this.config.ollamaNumCtx ?? 16_384
         );
         const timeouts = this.inferenceTimeouts();
+        const maxDurationMs = Math.max(
+          1,
+          Math.min(
+            timeouts.maxDurationMs,
+            runtime.maxDurationMs ?? budget.maxDurationMs ?? timeouts.maxDurationMs
+          )
+        );
+        const maxTokens = runtime.maxTokens ?? budget.maxTokens;
 
-        // The lock is shared by every local-coder MCP process. Once held, inspect Ollama's
-        // actual loaded-model state so a second Claude Code session cannot leave the other
-        // tier resident while this process starts a new inference.
+        reportProgress({
+          action: `Inference slot acquired; preparing ${model}`,
+          reasoningSummary: budget.maxDurationMs
+            ? `${stage} has a ${Math.round(maxDurationMs / 60_000)} minute wall-clock budget${maxTokens ? ` and ${maxTokens} generated-token budget` : ''}.`
+            : 'The model is being prepared for a bounded local inference.'
+        });
+
         await this.unloadOtherConfiguredTier(model);
 
         const response = await this.requestStreamingHeaders(
@@ -169,23 +328,47 @@ export class OllamaClient {
               ...(think !== undefined ? { think } : {}),
               options: {
                 temperature: format ? 0 : 0.2,
-                num_ctx: runtime.numCtx ?? this.config.ollamaNumCtx ?? 16_384
+                num_ctx: runtime.numCtx ?? this.config.ollamaNumCtx ?? 16_384,
+                ...(maxTokens ? { num_predict: maxTokens } : {})
               }
             })
           },
           timeouts.headerMs
         );
 
-        // The header timer is cleared as soon as Ollama accepts the streaming request.
-        // Stream liveness is then governed independently: a cold/thinking model gets a
-        // generous first-chunk window, active chunks reset the idle timer, and a hard cap
-        // still prevents a genuinely runaway inference from occupying the GPU forever.
-        const generation = await readOllamaChatStream(response, model, {
-          firstChunkTimeoutMs: timeouts.firstChunkMs,
-          idleTimeoutMs: timeouts.idleMs,
-          maxDurationMs: timeouts.maxDurationMs
+        reportProgress({
+          action: 'Ollama accepted the request; waiting for Qwen stream activity',
+          reasoningSummary:
+            'Headers are back from Ollama. The worker is now watching stream liveness and will distinguish active thinking from answer generation.'
         });
-        await this.recordInference(generation);
+
+        let lastUiReportAt = 0;
+        const streamReporter: OllamaStreamProgressReporter = (progress) => {
+          runtime.onStreamProgress?.(progress);
+          const now = Date.now();
+          if (now - lastUiReportAt < 750) return;
+          lastUiReportAt = now;
+          reportProgress({
+            action: progressAction(stage, progress),
+            detail: `${progress.chunkCount} stream chunks · ${progress.thinkingChars} hidden-thinking chars observed · ${progress.outputChars} output chars`,
+            reasoningSummary:
+              progress.state === 'thinking'
+                ? 'The model is not stalled: hidden reasoning chunks are actively arriving. Their content is intentionally not exposed.'
+                : 'The model has moved from internal reasoning to generating the structured stage result.'
+          });
+        };
+
+        const generation = await readOllamaChatStream(
+          response,
+          model,
+          {
+            firstChunkTimeoutMs: Math.min(timeouts.firstChunkMs, maxDurationMs),
+            idleTimeoutMs: Math.min(timeouts.idleMs, maxDurationMs),
+            maxDurationMs
+          },
+          streamReporter
+        );
+        await this.recordInference(generation, stage);
         return generation;
       })
     );
@@ -202,8 +385,6 @@ export class OllamaClient {
 
   private async withGlobalInferenceLock<T>(run: () => Promise<T>): Promise<T> {
     const lockPath = path.join(path.dirname(this.config.telemetryPath), 'inference.lock');
-    // The lock must never be considered stale while a valid long inference is still
-    // allowed to run. Keep its stale threshold beyond the absolute inference cap.
     const maxInferenceMs = this.config.inferenceMaxDurationMs ?? 1_800_000;
     const staleAfterMs = Math.max(
       maxInferenceMs + 120_000,
@@ -211,6 +392,7 @@ export class OllamaClient {
       300_000
     );
     const deadline = Date.now() + staleAfterMs * 2;
+    let lastWaitReportAt = 0;
     await fs.mkdir(path.dirname(lockPath), { recursive: true });
 
     while (true) {
@@ -240,6 +422,16 @@ export class OllamaClient {
           throw statError;
         }
 
+        const now = Date.now();
+        if (now - lastWaitReportAt >= 2_000) {
+          lastWaitReportAt = now;
+          reportProgress({
+            action: 'Waiting for the machine-wide Qwen inference lock',
+            reasoningSummary:
+              'Another Local Coder session currently owns the GPU/model slot. This job is healthy and queued locally.'
+          });
+        }
+
         if (Date.now() >= deadline) {
           throw new Error(
             `Timed out waiting for the machine-wide local-coder inference lock at ${lockPath}.`
@@ -258,6 +450,7 @@ export class OllamaClient {
 
     const loaded = await this.loadedModelsUnlocked();
     if (loaded.includes(otherModel)) {
+      reportProgress({ action: `Unloading inactive model tier ${otherModel}` });
       await this.unloadUnlocked(otherModel);
     }
   }
@@ -278,7 +471,7 @@ export class OllamaClient {
     });
   }
 
-  private async recordInference(generation: OllamaGeneration): Promise<void> {
+  private async recordInference(generation: OllamaGeneration, stage: RuntimeStage): Promise<void> {
     if (!this.config.telemetryEnabled) return;
 
     try {
@@ -289,12 +482,17 @@ export class OllamaClient {
           timestamp: new Date().toISOString(),
           kind: 'inference',
           status: 'success',
+          stage,
           model: generation.model,
           promptTokens: generation.promptTokens,
           completionTokens: generation.completionTokens,
           generationDurationMs: generation.totalDurationNs
             ? generation.totalDurationNs / 1_000_000
-            : 0
+            : 0,
+          tokensPerSecond:
+            generation.totalDurationNs && generation.completionTokens
+              ? generation.completionTokens / (generation.totalDurationNs / 1_000_000_000)
+              : undefined
         })}\n`,
         'utf8'
       );
@@ -329,8 +527,6 @@ export class OllamaClient {
         `Could not reach Ollama at ${this.config.ollamaBaseUrl}. Ensure Ollama is running. ${message}`
       );
     } finally {
-      // Important: do not abort the response body after headers arrive. The stream
-      // reader owns liveness/absolute timeouts from this point forward.
       clearTimeout(timer);
     }
 

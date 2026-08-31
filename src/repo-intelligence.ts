@@ -17,12 +17,14 @@ const MEMORY_VERSION = 1 as const;
 const MAX_FACTS = 160;
 const MAX_EPISODES = 120;
 const MAX_RETRIEVED_FACTS = 14;
+const MAX_ALWAYS_ON_REGRESSIONS = 6;
 const MAX_CHANGED_PATHS = 500;
 
 export type RepoMemoryKind =
   | 'architecture'
   | 'convention'
   | 'invariant'
+  | 'regression'
   | 'procedure'
   | 'episodic'
   | 'failure';
@@ -202,9 +204,7 @@ async function gitIdentity(workspace: string, suppliedMemoryScopeKey?: string): 
   identityKey: string;
 }> {
   const resolvedWorkspace = await resolveWorkspace(workspace);
-  const repoRoot = await fs.realpath(
-    await git(resolvedWorkspace, ['rev-parse', '--show-toplevel'])
-  );
+  const repoRoot = await fs.realpath(await git(resolvedWorkspace, ['rev-parse', '--show-toplevel']));
   const repositoryUrl = await git(repoRoot, ['remote', 'get-url', 'origin']);
   const currentSha = await git(repoRoot, ['rev-parse', 'HEAD']);
   const relative = path.relative(repoRoot, resolvedWorkspace);
@@ -241,7 +241,6 @@ async function loadDocument(
     return parsed;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      // Corrupt or old memory should not poison an engineering run. Keep a backup and rebuild.
       await fs.rename(memoryFile, `${memoryFile}.invalid-${Date.now()}`).catch(() => undefined);
     }
     const now = new Date().toISOString();
@@ -325,20 +324,14 @@ async function refreshFreshness(
 ): Promise<void> {
   for (const fact of facts) {
     let stale = false;
-
     for (const source of fact.sourcePaths.slice(0, 8)) {
       const expected = fact.sourceFingerprints[source] ?? null;
       const current = await fileFingerprint(workspace, source);
-
-      // A Git-path change is a revalidation signal, not automatic invalidation. This
-      // matters when local-coder learned from a dirty file and the user later commits
-      // exactly that content: the SHA changes but the learned source remains identical.
       if (current !== expected || (gitChangedPaths.has(source) && expected === null)) {
         stale = true;
         break;
       }
     }
-
     fact.stale = stale;
     if (!stale) fact.lastValidatedSha = currentSha;
   }
@@ -346,7 +339,7 @@ async function refreshFreshness(
 
 function familiarity(document: RepoIntelligenceDocument): RepoFamiliarity {
   const architectureFacts = document.facts.filter((fact) =>
-    ['architecture', 'invariant'].includes(fact.kind)
+    ['architecture', 'invariant', 'regression'].includes(fact.kind)
   ).length;
   const conventionFacts = document.facts.filter((fact) =>
     ['convention', 'procedure'].includes(fact.kind)
@@ -374,8 +367,14 @@ function familiarity(document: RepoIntelligenceDocument): RepoFamiliarity {
 
 function retrieveFacts(document: RepoIntelligenceDocument, goal: string): RepoMemoryFact[] {
   const terms = new Set(tokenize(goal));
+  const alwaysOnRegressions = document.facts
+    .filter((fact) => fact.kind === 'regression' && !fact.stale)
+    .sort((a, b) => b.confidence - a.confidence || b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, MAX_ALWAYS_ON_REGRESSIONS);
+  const alwaysOnIds = new Set(alwaysOnRegressions.map((fact) => fact.id));
   const kindWeight: Record<RepoMemoryKind, number> = {
-    invariant: 8,
+    regression: 12,
+    invariant: 9,
     architecture: 7,
     procedure: 6,
     convention: 5,
@@ -383,23 +382,26 @@ function retrieveFacts(document: RepoIntelligenceDocument, goal: string): RepoMe
     episodic: 2
   };
 
-  const scored = document.facts.map((fact) => {
-    const factTerms = new Set(tokenize(`${fact.text} ${fact.tags.join(' ')} ${fact.sourcePaths.join(' ')}`));
-    let overlap = 0;
-    for (const term of terms) if (factTerms.has(term)) overlap += 1;
-    const generalPrior = ['invariant', 'architecture', 'procedure'].includes(fact.kind) ? 1 : 0;
-    const score =
-      (overlap * 10 + kindWeight[fact.kind] + generalPrior) *
-      fact.confidence *
-      (fact.stale ? 0.3 : 1);
-    return { fact, score };
-  });
+  const scored = document.facts
+    .filter((fact) => !alwaysOnIds.has(fact.id))
+    .map((fact) => {
+      const factTerms = new Set(tokenize(`${fact.text} ${fact.tags.join(' ')} ${fact.sourcePaths.join(' ')}`));
+      let overlap = 0;
+      for (const term of terms) if (factTerms.has(term)) overlap += 1;
+      const generalPrior = ['regression', 'invariant', 'architecture', 'procedure'].includes(fact.kind) ? 1 : 0;
+      const score =
+        (overlap * 10 + kindWeight[fact.kind] + generalPrior) *
+        fact.confidence *
+        (fact.stale ? 0.3 : 1);
+      return { fact, score };
+    });
 
-  return scored
+  const ranked = scored
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score || b.fact.updatedAt.localeCompare(a.fact.updatedAt))
-    .slice(0, MAX_RETRIEVED_FACTS)
+    .slice(0, Math.max(0, MAX_RETRIEVED_FACTS - alwaysOnRegressions.length))
     .map(({ fact }) => fact);
+  return [...alwaysOnRegressions, ...ranked];
 }
 
 function memoryCapsule(retrieved: RepoMemoryFact[], score: RepoFamiliarity): string {
@@ -408,12 +410,15 @@ function memoryCapsule(retrieved: RepoMemoryFact[], score: RepoFamiliarity): str
   }
   const lines = retrieved.map((fact) => {
     const state = fact.stale ? 'STALE: verify source before relying' : 'fresh';
-    return `- [${fact.kind}] [${state}] confidence=${fact.confidence.toFixed(2)} ${fact.text}\n  sources: ${fact.sourcePaths.join(', ') || '[none]'}`;
+    const policy = fact.kind === 'regression'
+      ? ' HARD REGRESSION CONSTRAINT: preserve this behavior unless current source/tests prove it obsolete.'
+      : '';
+    return `- [${fact.kind}] [${state}] confidence=${fact.confidence.toFixed(2)}${policy} ${fact.text}\n  sources: ${fact.sourcePaths.join(', ') || '[none]'}`;
   });
   return [
     '# PERSISTENT REPO INTELLIGENCE',
     `Familiarity: ${score.overall}/100 (architecture=${score.architecture}, conventions=${score.conventions}, history=${score.history}, freshness=${score.freshness}).`,
-    'These are prior evidence-backed memories, not authority. Current source code/tests win. Verify any STALE memory before using it, and do not preserve a remembered pattern when current repository evidence contradicts it.',
+    'Current source/tests remain authoritative. Fresh regression memories are monotonic compatibility constraints: a new fix must preserve them, not trade one repaired behavior for another. Verify STALE memories before use.',
     ...lines
   ].join('\n');
 }
@@ -478,6 +483,26 @@ function learningKey(kind: RepoMemoryKind, text: string): string {
   return hash(`${kind}\0${text.trim().toLowerCase().replace(/\s+/g, ' ')}`).slice(0, 24);
 }
 
+function deterministicRegressionLearning(result: LocalEngineerResult): ProposedRepoLearning | undefined {
+  if (result.status !== 'success' || result.repairRounds <= 0 || result.changedFiles.length === 0) return undefined;
+  const validation = result.validation
+    .filter((item) => item.ok)
+    .map((item) => `${item.command} ${item.args.join(' ')}`.trim())
+    .slice(0, 4);
+  return {
+    kind: 'regression',
+    text: [
+      `A previous change for "${result.goal.slice(0, 500)}" required ${result.repairRounds} repair round(s) before it was accepted.`,
+      'Future changes touching these files must preserve the final combined behavior instead of trading one repaired behavior for another.',
+      result.review?.summary ? `Final review: ${result.review.summary.slice(0, 700)}` : '',
+      validation.length ? `Final validation: ${validation.join('; ')}` : ''
+    ].filter(Boolean).join(' '),
+    tags: ['regression', 'repair-history', 'compatibility-invariant'],
+    sourcePaths: result.changedFiles.slice(0, 8),
+    confidence: 0.92
+  };
+}
+
 export async function recordRepoIntelligenceLearning(
   session: RepoIntelligenceSession,
   config: IntelligenceConfig,
@@ -496,11 +521,13 @@ export async function recordRepoIntelligenceLearning(
       ...input.result.investigation.evidenceFiles,
       ...(input.result.plan?.tasks.flatMap((task) => [...task.editableFiles, ...task.contextFiles]) ?? [])
     ]);
+    const deterministicRegression = deterministicRegressionLearning(input.result);
+    const proposedFacts = [...(input.facts ?? []), ...(deterministicRegression ? [deterministicRegression] : [])];
 
-    for (const proposed of input.facts ?? []) {
+    for (const proposed of proposedFacts) {
       const sourcePaths = [...new Set(proposed.sourcePaths.filter((source) => allowedEvidence.has(source)))].slice(0, 8);
       if (
-        ['architecture', 'convention', 'invariant', 'procedure'].includes(proposed.kind) &&
+        ['architecture', 'convention', 'invariant', 'regression', 'procedure'].includes(proposed.kind) &&
         sourcePaths.length === 0
       ) {
         continue;
@@ -511,9 +538,9 @@ export async function recordRepoIntelligenceLearning(
       const next: RepoMemoryFact = {
         id,
         kind: proposed.kind,
-        text: proposed.text.trim().slice(0, 1200),
+        text: proposed.text.trim().slice(0, 1600),
         tags: [...new Set(proposed.tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))].slice(0, 12),
-        confidence: Math.min(0.95, clamp01(proposed.confidence)),
+        confidence: Math.min(0.97, clamp01(proposed.confidence)),
         sourcePaths,
         sourceFingerprints: fingerprints,
         observedAtSha: identity.currentSha,
@@ -562,7 +589,7 @@ const learningFormat = {
         properties: {
           kind: {
             type: 'string',
-            enum: ['architecture', 'convention', 'invariant', 'procedure', 'episodic', 'failure']
+            enum: ['architecture', 'convention', 'invariant', 'regression', 'procedure', 'episodic', 'failure']
           },
           text: { type: 'string' },
           tags: { type: 'array', maxItems: 12, items: { type: 'string' } },
@@ -586,26 +613,19 @@ async function extractLearnings(
   const prompt = [
     `# GOAL\n${result.goal}`,
     `# RESULT\n${result.summary}`,
-    result.plan
-      ? `# PLAN DECISIONS\n${result.plan.decisions.map((item) => `- ${item}`).join('\n')}`
-      : '',
+    result.plan ? `# PLAN DECISIONS\n${result.plan.decisions.map((item) => `- ${item}`).join('\n')}` : '',
     `# CHANGED FILES\n${result.changedFiles.map((item) => `- ${item}`).join('\n')}`,
-    result.review
-      ? `# REVIEW\nverdict=${result.review.verdict}; confidence=${result.review.confidence}\n${result.review.summary}`
-      : '',
-    `# VALIDATION\n${result.validation
-      .map((item) => `${item.ok ? 'PASS' : 'FAIL'} ${item.command} ${item.args.join(' ')}`)
-      .join('\n')}`,
+    result.review ? `# REVIEW\nverdict=${result.review.verdict}; confidence=${result.review.confidence}\n${result.review.summary}` : '',
+    `# VALIDATION\n${result.validation.map((item) => `${item.ok ? 'PASS' : 'FAIL'} ${item.command} ${item.args.join(' ')}`).join('\n')}`,
     `# REPAIR ROUNDS\n${result.repairRounds}`,
     `# DIFF (bounded)\n${result.diff.slice(0, 12_000)}`
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+  ].filter(Boolean).join('\n\n');
 
   const system = `You maintain durable repository intelligence for future software-engineering tasks.
-Extract only reusable knowledge supported by this successful run: architecture boundaries, conventions, invariants, repeatable procedures, useful past failure lessons, or a concise episode.
+Extract only reusable knowledge supported by this successful run: architecture boundaries, conventions, invariants, regression-sensitive interactions, repeatable procedures, useful past failure lessons, or a concise episode.
+Use kind=regression when the run demonstrates that two or more behaviors must be preserved together, especially after repair rounds or a fix that initially regressed another behavior. Regression memories are future compatibility constraints, not anecdotes.
 Do not store secrets, credentials, tokens, user data, transient generated values, or broad facts unsupported by repository evidence.
-For architecture/convention/invariant/procedure facts, cite one or more supplied repository paths. Prefer a few high-value durable facts over many weak facts.
+For architecture/convention/invariant/regression/procedure facts, cite one or more supplied repository paths. Prefer a few high-value durable facts over many weak facts.
 Do not treat Claude-only guidance or model speculation as durable truth unless the successful repository result provides source evidence.
 Return JSON only.`;
 
