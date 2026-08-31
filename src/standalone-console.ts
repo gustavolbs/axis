@@ -207,6 +207,12 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     return;
   }
 
+  const cancelMatch = /^\/api\/jobs\/([A-Za-z0-9-]+)\/cancel$/.exec(url.pathname);
+  if (request.method === 'POST' && cancelMatch) {
+    json(response, 200, { job: jobs.cancel(cancelMatch[1]) });
+    return;
+  }
+
   const decisionMatch = /^\/api\/jobs\/([A-Za-z0-9-]+)\/decision$/.exec(url.pathname);
   if (request.method === 'POST' && decisionMatch) {
     const body = await readJson(request);

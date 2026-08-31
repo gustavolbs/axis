@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 
 import { AdminPanel, type AdminProject } from './AdminPanel.js';
 import { App } from './App.js';
+import { RunCancellationControl } from './RunCancellationControl.js';
 import { RunInspector } from './RunInspector.js';
 
 type Surface = 'agent' | 'projects' | 'runs';
@@ -69,6 +70,7 @@ export function ConsoleRoot() {
       <button className={surface === 'agent' ? 'active' : ''} onClick={() => selectSurface('agent')}>Agent</button>
       <button className={surface === 'projects' ? 'active' : ''} onClick={() => selectSurface('projects')}>Projects</button>
       <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')}>Runs</button>
+      <RunCancellationControl />
     </nav>
 
     {surface === 'agent' ? <App /> : null}
