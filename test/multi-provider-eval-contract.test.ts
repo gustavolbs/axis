@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const script = fs.readFileSync(new URL('../scripts/eval-multi-provider.mjs', import.meta.url), 'utf8');
+const scriptUrl = new URL('../scripts/eval-multi-provider.mjs', import.meta.url);
+const scriptPath = fileURLToPath(scriptUrl);
+const repoRoot = path.resolve(path.dirname(scriptPath), '..');
+const script = fs.readFileSync(scriptUrl, 'utf8');
 
 test('comparative eval uses disposable worktrees and never resets the source repository', () => {
   assert.match(script, /worktree', 'add', '--detach'/);
@@ -22,6 +28,28 @@ test('source node_modules reuse is disabled by default and requires an explicit 
 test('example workspace placeholders are allowed only for non-executing dry runs', () => {
   assert.match(script, /readCases\(args\.file, \{ allowPlaceholders: !args\.execute \}\)/);
   assert.match(script, /!allowPlaceholders && item\.workspace\.includes\('REPLACE_WITH_REAL_WORKSPACE'\)/);
+});
+
+test('default comparative eval dry-run executes without inference or real workspace configuration', () => {
+  const result = spawnSync(process.execPath, [scriptPath, '--variants', 'qwen'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ANTHROPIC_API_KEY: '',
+      OPENAI_API_KEY: ''
+    },
+    timeout: 15_000
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const output = JSON.parse(result.stdout) as {
+    mode?: string;
+    safety?: { executionUsesDetachedWorktrees?: boolean; sourceNodeModulesReuse?: string };
+  };
+  assert.equal(output.mode, 'dry-run');
+  assert.equal(output.safety?.executionUsesDetachedWorktrees, true);
+  assert.equal(output.safety?.sourceNodeModulesReuse, 'disabled');
 });
 
 test('cloud eval models are explicit configuration rather than hardcoded provider model ids', () => {
