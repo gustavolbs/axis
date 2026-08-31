@@ -204,20 +204,42 @@ export class CredentialManager {
     if (!this.keychain.isAvailable()) {
       throw new Error('macOS Keychain is not available for persistent credential storage.');
     }
+
+    // Validate metadata before mutating Keychain. Disk failures can still happen after the
+    // secret write, so replacement also snapshots the previous secret for rollback.
     const id = assertId(input.id, 'Credential id');
     const providerId = assertId(input.providerId, 'Provider id');
+    const label = assertLabel(input.label);
+    const organizationId = input.organizationId
+      ? assertId(input.organizationId, 'Organization id')
+      : undefined;
     const secretId = providerSecretId(providerId, id);
+    const existingProfile = this.profiles.get(id);
+    if (existingProfile && existingProfile.providerId !== providerId) {
+      throw new Error(`Credential ${id} already belongs to provider ${existingProfile.providerId}.`);
+    }
+    const previousSecret =
+      existingProfile?.secret.backend === 'macos-keychain' && existingProfile.secret.id === secretId
+        ? this.keychain.get(secretId)
+        : undefined;
+
     this.keychain.set(secretId, input.secret);
     try {
       return this.profiles.upsert({
         id,
         providerId,
-        label: input.label,
-        organizationId: input.organizationId,
+        label,
+        organizationId,
         secret: { backend: 'macos-keychain', id: secretId }
       });
     } catch (error) {
-      try { this.keychain.delete(secretId); } catch { /* avoid masking metadata error */ }
+      try {
+        if (previousSecret !== undefined) this.keychain.set(secretId, previousSecret);
+        else this.keychain.delete(secretId);
+      } catch {
+        // Do not mask the metadata failure. The caller can retry Replace/Remove and the
+        // secret itself is never copied into the thrown error.
+      }
       throw error;
     }
   }
