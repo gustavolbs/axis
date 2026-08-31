@@ -11,6 +11,7 @@ import {
   restoreWorkspaceFile,
   writeWorkspaceFile
 } from '../src/workspace.js';
+import { createDirectoryLink } from './fs-test-utils.js';
 
 async function withWorkspace(run: (workspace: string) => Promise<void>) {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-mcp-'));
@@ -46,7 +47,7 @@ test('read and write reject symlinks that resolve outside the workspace', async 
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-outside-'));
     try {
       await fs.writeFile(path.join(outside, 'secret.ts'), 'secret\n');
-      await fs.symlink(outside, path.join(workspace, 'linked'));
+      await createDirectoryLink(outside, path.join(workspace, 'linked'));
 
       await assert.rejects(
         () => readWorkspaceFile(workspace, 'linked/secret.ts', 10_000),
@@ -70,7 +71,7 @@ test('allows a workspace path whose own path resolves through a symlink', async 
   try {
     await fs.mkdir(path.join(realWorkspace, 'src'), { recursive: true });
     await fs.writeFile(path.join(realWorkspace, 'src/a.ts'), 'before\n');
-    await fs.symlink(realWorkspace, workspaceAlias);
+    await createDirectoryLink(realWorkspace, workspaceAlias);
 
     const snapshot = await readWorkspaceFile(workspaceAlias, 'src/a.ts', 10_000);
     assert.equal(snapshot.content, 'before\n');
