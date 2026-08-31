@@ -20,7 +20,8 @@ interface OllamaPsResponse {
 }
 
 type RuntimeStage =
-  | 'analysis'
+  | 'impact-analysis'
+  | 'deliberation'
   | 'investigation'
   | 'planning'
   | 'implementation'
@@ -89,22 +90,23 @@ function isQwen38(model: string): boolean {
 
 function classifyRuntimeStage(systemPrompt: string): RuntimeStage {
   const prompt = systemPrompt.toLowerCase();
-  if (prompt.includes('pre-implementation impact analysis')) return 'analysis';
+  if (prompt.includes('pre-implementation impact analysis')) return 'impact-analysis';
+  if (
+    prompt.includes('architect a in a deliberate software-engineering system') ||
+    prompt.includes('adversarial architecture critic') ||
+    prompt.includes('final architecture judge')
+  ) {
+    return 'deliberation';
+  }
   if (prompt.includes('investigation stage of a local software-engineering agent')) {
     return 'investigation';
   }
   if (prompt.includes('reasoning/planning stage of a local software-engineering agent')) {
     return 'planning';
   }
-  if (prompt.includes('read-only repository research reporter')) {
-    return 'report';
-  }
-  if (prompt.includes('adversarial software-engineering reviewer')) {
-    return 'review';
-  }
-  if (prompt.includes('durable repository intelligence')) {
-    return 'repo-learning';
-  }
+  if (prompt.includes('read-only repository research reporter')) return 'report';
+  if (prompt.includes('adversarial software-engineering reviewer')) return 'review';
+  if (prompt.includes('durable repository intelligence')) return 'repo-learning';
   if (prompt.includes('local coding execution model') || prompt.includes('local coding executor')) {
     return 'implementation';
   }
@@ -113,11 +115,17 @@ function classifyRuntimeStage(systemPrompt: string): RuntimeStage {
 
 function stageBudget(config: LocalCoderConfig, stage: RuntimeStage): StageBudget {
   switch (stage) {
-    case 'analysis':
+    case 'impact-analysis':
       return {
         stage,
         maxDurationMs: config.investigationMaxDurationMs ?? 300_000,
         maxTokens: config.investigationMaxTokens ?? 2_048
+      };
+    case 'deliberation':
+      return {
+        stage,
+        maxDurationMs: config.planningMaxDurationMs ?? 600_000,
+        maxTokens: config.planningMaxTokens ?? 3_072
       };
     case 'investigation':
       return {
@@ -169,7 +177,7 @@ function stageThinking(
 ): OllamaThinkingLevel | undefined {
   if (
     isQwen38(model) &&
-    (stage === 'analysis' || stage === 'investigation') &&
+    (stage === 'impact-analysis' || stage === 'investigation') &&
     requested === 'high'
   ) {
     return 'medium';
@@ -183,7 +191,13 @@ export function codingThinkingForModel(model: string): OllamaThinkingLevel | und
 
 function progressAction(stage: RuntimeStage, progress: OllamaStreamProgress): string {
   const label =
-    stage === 'analysis' ? 'impact analysis' : stage === 'other' ? 'model' : stage;
+    stage === 'impact-analysis'
+      ? 'impact analysis'
+      : stage === 'deliberation'
+        ? 'architectural deliberation'
+        : stage === 'other'
+          ? 'model'
+          : stage;
   return progress.state === 'thinking'
     ? `Qwen is actively reasoning for ${label}`
     : `Qwen is generating the ${label} result`;
@@ -205,7 +219,8 @@ export class OllamaClient {
 
   private stageBudgets() {
     const stages: RuntimeStage[] = [
-      'analysis',
+      'impact-analysis',
+      'deliberation',
       'investigation',
       'planning',
       'review',
