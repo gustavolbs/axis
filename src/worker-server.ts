@@ -3,6 +3,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isCancellationError, withCancellationSignal } from './cancellation.js';
 import { loadConfig } from './config.js';
 import { executeAgenticCodeTask } from './executor.js';
 import {
@@ -461,6 +462,7 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
     throw error;
   }
 }
+
 async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (!authorized(request)) {
     response.setHeader('www-authenticate', 'Bearer');
@@ -542,7 +544,25 @@ if (!config.workerToken) {
 }
 
 const server = http.createServer((request, response) => {
-  void route(request, response).catch((error) => {
+  const controller = new AbortController();
+  request.once('aborted', () => controller.abort());
+  response.once('close', () => {
+    if (!response.writableEnded) controller.abort();
+  });
+
+  void withCancellationSignal(controller.signal, () => route(request, response)).catch((error) => {
+    if (controller.signal.aborted || isCancellationError(error)) {
+      if (!response.headersSent && !response.destroyed) {
+        json(response, 499, {
+          protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+          error: 'Request cancelled.'
+        });
+      } else if (!response.destroyed) {
+        response.destroy();
+      }
+      return;
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     console.error(`local-coder worker request failed: ${message}`);
     if (!response.headersSent) {
