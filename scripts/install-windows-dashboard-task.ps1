@@ -87,6 +87,9 @@ if ($existingRule) {
   Remove-NetFirewallRule -DisplayName $FirewallRule
 }
 
+# Meshnet/VPN adapters are not guaranteed to use the Windows Private network profile.
+# Apply the rule on every profile while retaining the actual security boundaries:
+# exact dashboard local address + exact Mac source address + exact TCP port.
 New-NetFirewallRule `
   -DisplayName $FirewallRule `
   -Direction Inbound `
@@ -95,10 +98,10 @@ New-NetFirewallRule `
   -LocalAddress $ListenHost `
   -LocalPort $Port `
   -RemoteAddress $MacIp `
-  -Profile Private | Out-Null
+  -Profile Any | Out-Null
 
 Write-Host "Installed scheduled task '$TaskName'." -ForegroundColor Green
-Write-Host "Dashboard listens only on $ListenHost`:$Port and the firewall allows only Mac $MacIp on the Private profile."
+Write-Host "Dashboard listens only on $ListenHost`:$Port and the firewall allows only Mac $MacIp to that address/port on any Windows network profile."
 Write-Host ""
 Write-Host "Start it now with:"
 Write-Host "  Start-ScheduledTask -TaskName '$TaskName'"
