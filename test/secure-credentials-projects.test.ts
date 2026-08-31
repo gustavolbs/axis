@@ -17,6 +17,7 @@ import {
 import {
   ProjectStore,
   assertProjectCredentialIsolation,
+  assertProjectProviderAllowed,
   projectIsolationKey
 } from '../src/project-store.js';
 import {
@@ -37,6 +38,15 @@ class MemorySecretStore implements SecretStore {
   get(id: string): string | undefined { return this.values.get(id); }
   set(id: string, value: string): void { this.values.set(id, value); }
   delete(id: string): boolean { return this.values.delete(id); }
+}
+
+class FailingCredentialProfileStore extends CredentialProfileStore {
+  failWrites = false;
+
+  override upsert(input: Omit<CredentialProfile, 'createdAt' | 'updatedAt'>): CredentialProfile {
+    if (this.failWrites) throw new Error('simulated metadata write failure');
+    return super.upsert(input);
+  }
 }
 
 test('macOS Keychain writer sends secrets through stdin, never process argv', () => {
@@ -129,14 +139,45 @@ test('credential metadata never persists API keys', () => {
   assert.equal(keychain.values.size, 0);
 });
 
+test('failed credential metadata replacement restores the previous Keychain value', () => {
+  const dir = tempDir('credential-rollback');
+  const profiles = new FailingCredentialProfileStore(path.join(dir, 'credentials.json'));
+  const keychain = new MemorySecretStore();
+  const manager = new CredentialManager(profiles, { keychain });
+
+  manager.addOrReplaceKeychainCredential({
+    id: 'company-a-anthropic',
+    providerId: 'anthropic',
+    label: 'Company A Anthropic',
+    organizationId: 'company-a',
+    secret: 'old-secret'
+  });
+  profiles.failWrites = true;
+
+  assert.throws(
+    () => manager.addOrReplaceKeychainCredential({
+      id: 'company-a-anthropic',
+      providerId: 'anthropic',
+      label: 'Company A Anthropic Replacement',
+      organizationId: 'company-a',
+      secret: 'new-secret'
+    }),
+    /simulated metadata write failure/
+  );
+  assert.equal(keychain.values.get('provider/anthropic/company-a-anthropic'), 'old-secret');
+  assert.equal(manager.resolve('company-a-anthropic'), 'old-secret');
+});
+
 test('projects default to local-only-safe settings and persist isolation fields', () => {
   const dir = tempDir('projects');
   const store = new ProjectStore(path.join(dir, 'projects.json'));
+  const workspace = path.join(dir, 'repo');
   const project = store.create({
     id: 'change-pilot',
     name: 'ChangePilot',
-    workspace: path.join(dir, 'repo'),
-    organizationId: 'personal'
+    workspace,
+    organizationId: 'personal',
+    budgets: { monthlyUsd: 10 }
   });
 
   assert.equal(project.defaultRoutingPolicy, 'local-first');
@@ -145,10 +186,25 @@ test('projects default to local-only-safe settings and persist isolation fields'
   assert.deepEqual(project.privacy.allowedProviderIds, ['ollama']);
   assert.equal(project.repoIntelligenceScope, 'project');
   assert.equal(project.concurrency, 1);
+  assert.equal(project.budgets.monthlyUsd, 10);
   assert.equal(project.budgets.hardStopFraction, 1);
   assert.deepEqual(project.budgets.warningFractions, [0.5, 0.75, 0.9]);
   assert.match(projectIsolationKey(project), /^[a-f0-9]{64}$/);
   assert.deepEqual(store.get('change-pilot'), project);
+
+  const updated = store.update('change-pilot', { budgets: { dailyUsd: 1 } });
+  assert.equal(updated.budgets.monthlyUsd, 10);
+  assert.equal(updated.budgets.dailyUsd, 1);
+
+  assert.throws(
+    () => store.create({
+      id: 'other-company-same-workspace',
+      name: 'Other Company',
+      workspace,
+      organizationId: 'company-b'
+    }),
+    /already assigned to organization personal/
+  );
 });
 
 test('corporate projects enforce provider and credential organization isolation', () => {
@@ -181,6 +237,11 @@ test('corporate projects enforce provider and credential organization isolation'
     updatedAt: new Date(0).toISOString()
   };
   assert.doesNotThrow(() => assertProjectCredentialIsolation(project, [validCredential]));
+  assert.doesNotThrow(() => assertProjectProviderAllowed(project, 'anthropic', 'cloud'));
+  assert.throws(
+    () => assertProjectProviderAllowed(project, 'openai', 'cloud'),
+    /blocked by project.*allowlist/
+  );
   assert.throws(
     () => assertProjectCredentialIsolation(project, [{ ...validCredential, organizationId: 'company-b' }]),
     /outside project.*organization isolation boundary/
@@ -188,6 +249,24 @@ test('corporate projects enforce provider and credential organization isolation'
   assert.throws(
     () => assertProjectCredentialIsolation(project, [{ ...validCredential, providerId: 'openai' }]),
     /belongs to openai, not anthropic/
+  );
+});
+
+test('cloud transmission requires explicit project permission even if provider is allowlisted', () => {
+  const dir = tempDir('cloud-block');
+  const store = new ProjectStore(path.join(dir, 'projects.json'));
+  const project = store.create({
+    id: 'private-project',
+    name: 'Private Project',
+    workspace: path.join(dir, 'private'),
+    organizationId: 'private-org',
+    privacy: { cloudAllowed: false, allowedProviderIds: ['ollama', 'anthropic'] }
+  });
+
+  assert.doesNotThrow(() => assertProjectProviderAllowed(project, 'ollama', 'local'));
+  assert.throws(
+    () => assertProjectProviderAllowed(project, 'anthropic', 'cloud'),
+    /does not allow cloud inference/
   );
 });
 
