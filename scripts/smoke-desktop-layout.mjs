@@ -15,6 +15,19 @@ const sizes = [
   [1440, 900]
 ];
 const zoomFactors = [0.8, 1, 1.25, 1.5];
+const surfaces = [
+  { label: 'Agent', selector: '.app-shell' },
+  { label: 'Projects', selector: '.admin-shell' },
+  { label: 'Runs', selector: '.runs-shell' }
+];
+const watchdog = setTimeout(() => {
+  console.error('Desktop layout smoke exceeded its 45 second safety limit.');
+  app.exit(2);
+}, 45_000);
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function mime(file) {
   if (file.endsWith('.html')) return 'text/html; charset=utf-8';
@@ -31,6 +44,11 @@ function staticServer() {
     if (pathname === '/api/jobs') {
       response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       response.end('{"jobs":[]}');
+      return;
+    }
+    if (pathname === '/api/projects') {
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      response.end('{"projects":[]}');
       return;
     }
     if (pathname === '/api/events') {
@@ -69,7 +87,17 @@ async function listen(server) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function measure(window) {
+async function selectSurface(window, label) {
+  await window.webContents.executeJavaScript(`(() => {
+    const target = [...document.querySelectorAll('.surface-switcher button')]
+      .find((button) => button.textContent?.trim() === ${JSON.stringify(label)});
+    if (!target) throw new Error('Missing surface button: ${label}');
+    target.click();
+  })()`, true);
+  await delay(45);
+}
+
+async function measure(window, surfaceSelector) {
   return window.webContents.executeJavaScript(`(() => {
     const rect = (selector) => {
       const element = document.querySelector(selector);
@@ -78,18 +106,21 @@ async function measure(window) {
       return { left: value.left, top: value.top, right: value.right, bottom: value.bottom, width: value.width, height: value.height };
     };
     const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const surfaceSelector = ${JSON.stringify(surfaceSelector)};
+    const surfaceRoot = document.querySelector(surfaceSelector);
     return {
       viewport,
       documentScrollWidth: document.documentElement.scrollWidth,
       bodyScrollWidth: document.body.scrollWidth,
       titlebar: rect('.desktop-titlebar'),
       switcher: rect('.surface-switcher'),
-      surface: rect('.surface-viewport'),
-      shell: rect('.app-shell'),
-      sidebar: rect('.sidebar'),
-      main: rect('.main'),
-      mainOverflowY: getComputedStyle(document.querySelector('.main')).overflowY,
-      sidebarOverflowY: getComputedStyle(document.querySelector('.sidebar')).overflowY
+      viewportSurface: rect('.surface-viewport'),
+      surfaceRoot: rect(surfaceSelector),
+      sidebar: surfaceSelector === '.app-shell' ? rect('.sidebar') : null,
+      main: surfaceSelector === '.app-shell' ? rect('.main') : null,
+      mainOverflowY: surfaceSelector === '.app-shell' ? getComputedStyle(document.querySelector('.main')).overflowY : null,
+      sidebarOverflowY: surfaceSelector === '.app-shell' ? getComputedStyle(document.querySelector('.sidebar')).overflowY : null,
+      surfaceOverflowY: surfaceRoot ? getComputedStyle(surfaceRoot).overflowY : null
     };
   })()`, true);
 }
@@ -103,23 +134,28 @@ function withinViewport(name, rect, viewport) {
   if (rect.width <= 0 || rect.height <= 0) throw new Error(`${name} has invalid dimensions: ${JSON.stringify(rect)}`);
 }
 
-function assertLayout(result, size, zoom) {
+function assertLayout(result, size, zoom, surface) {
   const { viewport } = result;
   const epsilon = 2;
   if (result.documentScrollWidth > viewport.width + epsilon || result.bodyScrollWidth > viewport.width + epsilon) {
-    throw new Error(`horizontal page overflow at ${size.join('x')} zoom ${zoom}: ${JSON.stringify(result)}`);
+    throw new Error(`horizontal page overflow on ${surface.label} at ${size.join('x')} zoom ${zoom}: ${JSON.stringify(result)}`);
   }
   withinViewport('desktop titlebar', result.titlebar, viewport);
   withinViewport('surface switcher', result.switcher, viewport);
-  withinViewport('surface viewport', result.surface, viewport);
-  withinViewport('agent shell', result.shell, viewport);
-  withinViewport('main pane', result.main, viewport);
-  withinViewport('session navigation', result.sidebar, viewport);
-  if (!['auto', 'scroll'].includes(result.mainOverflowY)) {
-    throw new Error(`main pane is not independently scrollable at ${size.join('x')} zoom ${zoom}: ${result.mainOverflowY}`);
-  }
-  if (!['auto', 'scroll', 'hidden'].includes(result.sidebarOverflowY)) {
-    throw new Error(`sidebar has unsafe vertical overflow at ${size.join('x')} zoom ${zoom}: ${result.sidebarOverflowY}`);
+  withinViewport('surface viewport', result.viewportSurface, viewport);
+  withinViewport(`${surface.label} root`, result.surfaceRoot, viewport);
+
+  if (surface.selector === '.app-shell') {
+    withinViewport('main pane', result.main, viewport);
+    withinViewport('session navigation', result.sidebar, viewport);
+    if (!['auto', 'scroll'].includes(result.mainOverflowY)) {
+      throw new Error(`main pane is not independently scrollable at ${size.join('x')} zoom ${zoom}: ${result.mainOverflowY}`);
+    }
+    if (!['auto', 'scroll', 'hidden'].includes(result.sidebarOverflowY)) {
+      throw new Error(`sidebar has unsafe vertical overflow at ${size.join('x')} zoom ${zoom}: ${result.sidebarOverflowY}`);
+    }
+  } else if (!['auto', 'scroll'].includes(result.surfaceOverflowY)) {
+    throw new Error(`${surface.label} root is not independently scrollable at ${size.join('x')} zoom ${zoom}: ${result.surfaceOverflowY}`);
   }
 }
 
@@ -154,17 +190,24 @@ try {
     window.setSize(width, height, false);
     for (const zoom of zoomFactors) {
       window.webContents.setZoomFactor(zoom);
-      await new Promise((resolve) => setTimeout(resolve, 80));
-      const result = await measure(window);
-      assertLayout(result, [width, height], zoom);
-      checks.push({ width, height, zoom, viewport: result.viewport });
+      await delay(70);
+      for (const surface of surfaces) {
+        await selectSurface(window, surface.label);
+        const result = await measure(window, surface.selector);
+        assertLayout(result, [width, height], zoom, surface);
+        checks.push({ surface: surface.label, width, height, zoom, viewport: result.viewport });
+      }
     }
   }
 
   console.log(JSON.stringify({ ok: true, checks }, null, 2));
 } finally {
+  clearTimeout(watchdog);
   if (window && !window.isDestroyed()) window.destroy();
   server.closeAllConnections?.();
-  await new Promise((resolve) => server.close(resolve));
+  await Promise.race([
+    new Promise((resolve) => server.close(resolve)),
+    delay(1_500)
+  ]);
   app.quit();
 }
