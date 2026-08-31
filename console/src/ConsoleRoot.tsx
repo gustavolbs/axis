@@ -65,17 +65,27 @@ export function ConsoleRoot() {
     }
   }
 
-  return <div className="console-root">
-    <nav className="surface-switcher" aria-label="Standalone console section">
-      <button className={surface === 'agent' ? 'active' : ''} onClick={() => selectSurface('agent')}>Agent</button>
-      <button className={surface === 'projects' ? 'active' : ''} onClick={() => selectSurface('projects')}>Projects</button>
-      <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')}>Runs</button>
-      <RunCancellationControl />
-    </nav>
+  return <div className={`console-root surface-${surface}`}>
+    <header className="desktop-titlebar">
+      <div className="desktop-titlebar-brand" aria-label="Local Coder">
+        <span className="local-coder-mark" aria-hidden="true">LC</span>
+        <strong>Local Coder</strong>
+      </div>
+      <nav className="surface-switcher" aria-label="Standalone console section">
+        <button className={surface === 'agent' ? 'active' : ''} onClick={() => selectSurface('agent')}>Agent</button>
+        <button className={surface === 'projects' ? 'active' : ''} onClick={() => selectSurface('projects')}>Projects</button>
+        <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')}>Runs</button>
+      </nav>
+      <div className="desktop-titlebar-actions">
+        <RunCancellationControl />
+      </div>
+    </header>
 
-    {surface === 'agent' ? <App /> : null}
-    {surface === 'projects' ? <AdminPanel onRunProject={prepareProjectRun} /> : null}
-    {surface === 'runs' ? <RunInspector /> : null}
+    <div className="surface-viewport">
+      {surface === 'agent' ? <App /> : null}
+      {surface === 'projects' ? <AdminPanel onRunProject={prepareProjectRun} /> : null}
+      {surface === 'runs' ? <RunInspector /> : null}
+    </div>
 
     {runDraft ? <div className="modal-backdrop" role="presentation" onMouseDown={() => !running && setRunDraft(undefined)}>
       <form className="run-project-modal panel" onSubmit={(event) => void submitProjectRun(event)} onMouseDown={(event) => event.stopPropagation()}>
