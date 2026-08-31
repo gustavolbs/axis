@@ -11,7 +11,9 @@ import { StandaloneJobManager, type StandaloneJobInput } from './standalone-job-
 const config = loadConfig();
 const ollama = new OllamaClient(config);
 const runtime = createExecutionRuntime(config, ollama);
-const jobs = new StandaloneJobManager(runtime.execution);
+const consoleStateDir = path.join(path.dirname(config.runStorePath), 'console');
+const jobs = new StandaloneJobManager(runtime.execution, consoleStateDir);
+await jobs.restore();
 const subscribers = new Set<ServerResponse>();
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const staticDir = path.resolve(moduleDir, '..', 'console-dist');
@@ -41,9 +43,7 @@ function broadcast(event: string, payload: unknown): void {
   }
 }
 
-jobs.subscribe((event, job) => {
-  broadcast('job', { event, job });
-});
+jobs.subscribe((event, job) => broadcast('job', { event, job }));
 
 async function readJson(request: IncomingMessage, maxBytes = 200_000): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
@@ -108,9 +108,7 @@ async function serveEvents(request: IncomingMessage, response: ServerResponse): 
   try {
     sse(response, 'worker', await workerStatus());
   } catch (error) {
-    sse(response, 'worker-error', {
-      error: error instanceof Error ? error.message : String(error)
-    });
+    sse(response, 'worker-error', { error: error instanceof Error ? error.message : String(error) });
   }
   request.on('close', () => subscribers.delete(response));
 }
@@ -124,10 +122,10 @@ const mime: Record<string, string> = {
 };
 
 async function serveStatic(urlPath: string, response: ServerResponse): Promise<void> {
-  const requested = urlPath === '/' ? '/index.html' : urlPath;
+  const requested = urlPath === '/' ? 'index.html' : urlPath.replace(/^[/\\]+/, '');
   const clean = path.normalize(requested).replace(/^([.][.][/\\])+/, '');
-  let target = path.join(staticDir, clean);
-  if (!target.startsWith(staticDir)) {
+  let target = path.resolve(staticDir, clean);
+  if (target !== staticDir && !target.startsWith(`${staticDir}${path.sep}`)) {
     json(response, 403, { error: 'Forbidden.' });
     return;
   }
@@ -140,9 +138,7 @@ async function serveStatic(urlPath: string, response: ServerResponse): Promise<v
     try {
       content = await fs.readFile(target);
     } catch {
-      json(response, 503, {
-        error: 'Standalone console assets are not built. Run npm run console:build.'
-      });
+      json(response, 503, { error: 'Standalone console assets are not built. Run npm run console:build.' });
       return;
     }
   }
@@ -164,7 +160,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     try {
       json(response, 200, {
         ok: true,
-        console: { host: config.consoleHost, port: config.consolePort },
+        console: { host: config.consoleHost, port: config.consolePort, stateDir: consoleStateDir },
         cognitiveMode: config.cognitiveMode,
         execution: await runtime.health()
       });
@@ -188,22 +184,19 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
 
   if (request.method === 'POST' && url.pathname === '/api/jobs') {
     const body = await readJson(request);
-    const job = jobs.create(parseJobInput(body));
-    json(response, 202, { job });
+    json(response, 202, { job: jobs.create(parseJobInput(body)) });
     return;
   }
 
   const decisionMatch = /^\/api\/jobs\/([A-Za-z0-9-]+)\/decision$/.exec(url.pathname);
   if (request.method === 'POST' && decisionMatch) {
     const body = await readJson(request);
-    const selections =
-      body.selections && typeof body.selections === 'object' && !Array.isArray(body.selections)
-        ? Object.fromEntries(
-            Object.entries(body.selections as Record<string, unknown>).filter(
-              (entry): entry is [string, string] => typeof entry[1] === 'string'
-            )
-          )
-        : {};
+    const selections: Record<string, string> = {};
+    if (body.selections && typeof body.selections === 'object' && !Array.isArray(body.selections)) {
+      for (const [key, value] of Object.entries(body.selections as Record<string, unknown>)) {
+        if (typeof value === 'string') selections[key] = value;
+      }
+    }
     json(response, 200, { job: jobs.submitDecision(decisionMatch[1], selections) });
     return;
   }
@@ -220,7 +213,6 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     await serveStatic(url.pathname, response);
     return;
   }
-
   json(response, 404, { error: 'Not found.' });
 }
 
@@ -236,9 +228,7 @@ const statusTimer = setInterval(() => {
   if (subscribers.size === 0) return;
   void workerStatus()
     .then((status) => broadcast('worker', status))
-    .catch((error) =>
-      broadcast('worker-error', { error: error instanceof Error ? error.message : String(error) })
-    );
+    .catch((error) => broadcast('worker-error', { error: error instanceof Error ? error.message : String(error) }));
 }, 1_000);
 statusTimer.unref();
 
@@ -246,6 +236,6 @@ server.listen(config.consolePort ?? 7557, config.consoleHost ?? '127.0.0.1', () 
   const address = `http://${config.consoleHost ?? '127.0.0.1'}:${config.consolePort ?? 7557}`;
   console.error(`Local Coder Console listening at ${address}`);
   if ((config.consoleHost ?? '127.0.0.1') !== '127.0.0.1' && (config.consoleHost ?? '') !== '::1') {
-    console.error('WARNING: standalone console is not bound to loopback. Add an authentication layer before exposing it to a network.');
+    console.error('WARNING: standalone console is not bound to loopback. Add authentication before exposing it to a network.');
   }
 });
