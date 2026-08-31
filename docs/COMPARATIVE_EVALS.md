@@ -13,11 +13,12 @@ For every case/variant pair the harness:
 1. resolves the source workspace's Git root and HEAD;
 2. requires the source repository to be clean;
 3. creates a detached temporary `git worktree` at that exact HEAD;
-4. optionally symlinks the source root `node_modules` into the disposable worktree for dependency reuse;
-5. runs Local Coder only inside the disposable worktree;
-6. removes the worktree after the case.
+4. runs Local Coder only inside the disposable worktree;
+5. removes the worktree after the case.
 
 The source repository is never reset, checked out or cleaned by the harness.
+
+By default the worktree does **not** reuse the source repository's `node_modules`, because a validation/package script could mutate dependencies through a symlink. If a repository needs the already-installed dependency tree and you accept that tradeoff, enable it explicitly with `--reuse-node-modules`. The harness never installs dependencies into the source repository itself.
 
 Project metadata, credential metadata, Usage Ledger and Routing History used by an eval run are also temporary. Cloud credentials remain environment-backed; API key values are never written to the eval state or report.
 
@@ -42,19 +43,25 @@ Explicit Anthropic/OpenAI variants force the control-plane local-compute topolog
 
 ## Cases
 
-The existing `eval/local-agent-cases.json` is an example matrix and contains placeholder workspaces. For real execution, create a case file with real, **clean Git workspaces** and goals that are objectively assessable.
+The existing `eval/local-agent-cases.json` is an example matrix and contains placeholder workspaces. A dry run may inspect this file, but `--execute` fails closed until every selected case uses a real workspace.
 
-Use the same cases for every variant. Categories can include small changes, debugging, large features, architecture, research and material-decision behavior.
+For a real comparison, create a case file with real, **clean Git workspaces** and goals that are objectively assessable. Use the same cases for every variant. Categories can include small changes, debugging, large features, architecture, research and material-decision behavior.
 
 ## Dry run
 
-Dry run performs no model inference:
+Dry run performs no model inference and tolerates the example workspace placeholders:
+
+```bash
+npm run eval:providers
+```
+
+or:
 
 ```bash
 npm run eval:providers -- --file /path/to/cases.json
 ```
 
-It reports selected variants and configuration readiness.
+It reports selected variants, configuration readiness and source-isolation settings.
 
 ## Execute
 
@@ -64,6 +71,15 @@ npm run eval:providers -- \
   --file /path/to/cases.json \
   --variants qwen,anthropic,openai,auto \
   --out ./eval/results/provider-comparison.json
+```
+
+If deterministic validation in the disposable worktree needs the source repository's existing dependency tree, explicitly opt in:
+
+```bash
+npm run eval:providers -- \
+  --execute \
+  --reuse-node-modules \
+  --file /path/to/cases.json
 ```
 
 The process exits with code `2` when one or more case expectations fail, and `1` for harness/configuration failures.
@@ -83,7 +99,7 @@ Each case/variant record contains:
 - changed-file count;
 - deterministic validation outcomes.
 
-Aggregate sections report pass/success rate, mean quality, mean elapsed time, tokens, known cost and fallback count per variant plus category-level results.
+Aggregate sections report pass/success rate, mean quality, mean elapsed time, tokens, known cost and fallback count per variant plus category-level results. The report also records whether source `node_modules` reuse was enabled.
 
 Known cost uses the normal Local Coder `PricingStore`. If pricing is not configured for a cloud model, the report keeps that fact explicit through `unknownCostEvents` rather than inventing a price.
 
