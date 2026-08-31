@@ -11,6 +11,12 @@ import type {
 
 type OllamaProviderClient = Pick<OllamaClient, 'health' | 'chat'>;
 
+export interface OllamaProviderRuntimeHints {
+  numCtx?: number;
+  keepAlive?: string | number;
+  think?: OllamaThinkingLevel;
+}
+
 const capabilities: ProviderCapabilities = {
   modelDiscovery: true,
   streaming: true,
@@ -25,6 +31,27 @@ function thinking(effort: ReasoningEffort | undefined): OllamaThinkingLevel | un
   if (effort === 'none') return false;
   if (effort === 'low' || effort === 'medium') return effort;
   return 'high';
+}
+
+function runtimeHints(request: InferenceRequest): OllamaProviderRuntimeHints {
+  const raw = request.providerOptions?.ollama;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const value = raw as Record<string, unknown>;
+  const numCtx =
+    typeof value.numCtx === 'number' && Number.isInteger(value.numCtx) && value.numCtx > 0
+      ? value.numCtx
+      : undefined;
+  const keepAlive =
+    typeof value.keepAlive === 'string' ||
+    (typeof value.keepAlive === 'number' && Number.isFinite(value.keepAlive))
+      ? value.keepAlive
+      : undefined;
+  const think =
+    typeof value.think === 'boolean' ||
+    value.think === 'low' || value.think === 'medium' || value.think === 'high'
+      ? value.think
+      : undefined;
+  return { numCtx, keepAlive, think };
 }
 
 export class OllamaInferenceProvider implements InferenceProvider {
@@ -75,6 +102,7 @@ export class OllamaInferenceProvider implements InferenceProvider {
     const started = Date.now();
     let eventCount = 0;
     let outputChars = 0;
+    const hints = runtimeHints(request);
     request.onProgress?.({
       providerId: this.id,
       model: request.model,
@@ -90,7 +118,9 @@ export class OllamaInferenceProvider implements InferenceProvider {
       request.output?.type === 'json_schema' ? request.output.schema : undefined,
       {
         model: request.model,
-        think: thinking(request.reasoning?.effort),
+        numCtx: hints.numCtx,
+        keepAlive: hints.keepAlive,
+        think: hints.think ?? thinking(request.reasoning?.effort),
         maxDurationMs: request.timeoutMs,
         maxTokens: request.maxOutputTokens,
         onStreamProgress: (progress) => {
