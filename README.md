@@ -102,7 +102,7 @@ Important invariants:
 - provider fallback cannot silently cross a material privacy/cost boundary;
 - budget admission occurs before provider I/O.
 
-See [docs/MULTI_PROVIDER_FOUNDATION.md](docs/MULTI_PROVIDER_FOUNDATION.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+See [docs/MULTI_PROVIDER_FOUNDATION.md](docs/MULTI_PROVIDER_FOUNDATION.md), [docs/INSTALLATION.md](docs/INSTALLATION.md), and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Credentials, pricing and budgets
 
@@ -144,21 +144,27 @@ See:
 - [docs/WINDOWS_REMOTE_SETUP.md](docs/WINDOWS_REMOTE_SETUP.md)
 - [docs/NORDVPN_MESHNET.md](docs/NORDVPN_MESHNET.md)
 
-## Standalone Console
+## Standalone macOS app and Console
 
-Run the current browser-accessible standalone control plane with:
+Development desktop launch:
+
+```bash
+npm run desktop
+```
+
+Browser-accessible fallback:
 
 ```bash
 npm run console
 ```
 
-Default bind:
+Default loopback bind:
 
 ```text
 http://127.0.0.1:7557
 ```
 
-The standalone UI currently exposes three operational surfaces:
+The standalone UI exposes three operational surfaces:
 
 - **Agent** — sessions, decisions, plan, diff, validation, research and quality evidence;
 - **Projects** — provider/model discovery, routing policy, credentials, pricing, privacy and budgets;
@@ -166,7 +172,13 @@ The standalone UI currently exposes three operational surfaces:
 
 Project/provider/credential administration is restricted to loopback clients. The UI does not recompute routing or financial state; it renders backend-authoritative snapshots.
 
-The next product step is packaging this same control plane and React UI as `Local Coder.app` on macOS while preserving `npm run console` as a fallback.
+The desktop shell packages the same React UI and Node control plane as `Local Coder.app`; it does not create a second Agent Runtime. Normal CI produces unsigned development artifacts. Distribution uses the separate manual **macOS Signed Release** workflow, which fails closed unless Developer ID signing and Apple notarization credentials are configured and verifies `codesign`, stapler, and Gatekeeper before uploading artifacts.
+
+See:
+
+- [docs/DESKTOP_SHELL.md](docs/DESKTOP_SHELL.md)
+- [docs/INSTALLATION.md](docs/INSTALLATION.md)
+- [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
 
 ## Persistent repository intelligence
 
@@ -255,11 +267,23 @@ Project-aware multi-provider routing is a separate layer above this local-comput
 
 ## Eval suite
 
+Local Agent Runtime eval:
+
 ```bash
 npm run eval:agent
 ```
 
-The existing harness records task success, elapsed time, quality score, token counts, changed files, repairs, validation, user decisions and escalation. The current roadmap extends it with per-provider/model comparisons, known cost and Auto Router calibration.
+Multi-provider comparative eval dry-run:
+
+```bash
+npm run eval:providers
+```
+
+The comparative harness can run the same repository tasks against local Qwen, configured Anthropic models, configured OpenAI models, and Auto Router from identical detached Git worktrees. It reports expectation pass rate, engineering quality, elapsed time, routing/provider/model attempts, fallbacks, token usage, known/unknown cost, changed files, and deterministic validation outcomes.
+
+Persistent quality-profile updates are explicit opt-in and require sufficient successful full-task evidence. Transport success is tracked separately as reliability and is not treated as engineering quality.
+
+See [docs/COMPARATIVE_EVALS.md](docs/COMPARATIVE_EVALS.md) and [docs/ROUTER_CALIBRATION.md](docs/ROUTER_CALIBRATION.md).
 
 ## Safety boundaries
 
@@ -283,15 +307,9 @@ The existing harness records task success, elapsed time, quality score, token co
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the authoritative current checklist.
 
-Current product-completion sequence:
+The current standalone multi-provider product sequence now includes desktop packaging, end-to-end cancellation, opt-in cloud smoke validation, persisted Auto Router calibration, comparative provider evals, and signed/notarized release hardening. A real signed distribution artifact still requires your Apple Developer signing/notarization secrets, and live Anthropic/OpenAI smoke/eval execution requires the corresponding provider credentials.
 
-1. package `Local Coder.app` for macOS;
-2. propagate active-run cancellation end-to-end;
-3. add opt-in real Anthropic/OpenAI smoke validation;
-4. calibrate and benchmark the Auto Router with persisted execution history;
-5. release/documentation hardening.
-
-Repo Impact Graph / GraphRAG and broader multi-worker scheduling remain post-MVP candidates.
+Repo Impact Graph / GraphRAG, broader multi-worker scheduling, automatic updates, and signed release delivery automation beyond the current manual verified workflow remain post-MVP candidates.
 
 ## License
 
