@@ -21,6 +21,15 @@ const capabilities: ProviderCapabilities = {
   toolUse: false
 };
 
+function remoteFailure(error: unknown): ProviderError | undefined {
+  if (!(error instanceof RemoteWorkerError)) return undefined;
+  return new ProviderError('ollama', error.message, {
+    status: error.status,
+    retryable: error.unavailable,
+    code: 'remote_worker_error'
+  });
+}
+
 /**
  * Exposes the Windows worker's configured Qwen model as the Project router's local
  * provider while the Agent Runtime itself remains on the Mac control plane.
@@ -40,7 +49,12 @@ export class RemoteWorkerInferenceProvider implements InferenceProvider {
   constructor(private readonly client: RemoteWorkerProviderClient) {}
 
   async listModels(): Promise<ModelDefinition[]> {
-    const health = await this.client.health();
+    let health;
+    try {
+      health = await this.client.health();
+    } catch (error) {
+      throw remoteFailure(error) ?? error;
+    }
     if (!health.ok || !health.model?.trim()) {
       throw new ProviderError(this.id, 'Remote worker did not report a usable configured model.', {
         retryable: true,
@@ -138,14 +152,7 @@ export class RemoteWorkerInferenceProvider implements InferenceProvider {
         }
       };
     } catch (error) {
-      if (error instanceof RemoteWorkerError) {
-        throw new ProviderError(this.id, error.message, {
-          status: error.status,
-          retryable: error.unavailable,
-          code: 'remote_worker_error'
-        });
-      }
-      throw error;
+      throw remoteFailure(error) ?? error;
     }
   }
 }
