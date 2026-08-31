@@ -25,7 +25,7 @@ Status baseline: 2026-08-31.
 
 ## Product-completion sequence
 
-These are the remaining items required to complete the current Local Coder standalone product direction.
+The implementation checklist for the current standalone multi-provider product direction is complete. Operational live-provider and signed-release runs still require the corresponding external credentials.
 
 ### 1. macOS desktop shell
 
@@ -57,15 +57,26 @@ These are the remaining items required to complete the current Local Coder stand
 - [x] Persist isolated provider/stage attempt latency and reliability observations in a routing-history store without prompts or model output.
 - [x] Feed sufficiently sampled history into routing candidates instead of latency/reliability cold-start assumptions.
 - [x] Keep cold-start behavior deterministic when history is absent or below minimum sample count.
-- [ ] Extend eval harness to compare local Qwen, configured Anthropic models, configured OpenAI models and Auto Router.
-- [ ] Report task success, quality, elapsed time, provider/model calls, fallbacks, token usage and known cost.
-- [ ] Feed task-level eval evidence into explicit model quality profiles rather than treating transport success as engineering quality.
+- [x] Extend eval harness to compare local Qwen, configured Anthropic models, configured OpenAI models and Auto Router.
+- [x] Report task success, quality, elapsed time, provider/model calls, fallbacks, token usage and known cost.
+- [x] Feed task-level eval evidence into explicit model quality profiles rather than treating transport success as engineering quality.
 
 ### 5. Documentation and release hardening
 
-- [ ] Document desktop installation, first-run provider setup and Project isolation semantics.
+- [x] Document desktop installation, first-run provider setup and Project isolation semantics.
 - [x] Add macOS packaging CI and artifact smoke validation.
-- [ ] Add a release checklist for signing/notarization, migration compatibility and credential safety.
+- [x] Add a separate manual Developer ID + notarization release workflow that fails closed when credentials are absent.
+- [x] Verify release artifacts with `codesign`, stapler and Gatekeeper, including the app copied inside the generated DMG.
+- [x] Add a release checklist for signing/notarization, migration compatibility and credential safety.
+
+## External operational gates
+
+These are not missing implementation; they require credentials or deliberate release inputs that are not committed to the repository.
+
+- [ ] Execute live Anthropic/OpenAI smoke tests with real provider credentials and explicit current model IDs.
+- [ ] Run the comparative eval suite on representative real repositories with the intended production provider/model set.
+- [ ] Configure Apple Developer signing/notarization secrets and produce the first verified signed distribution artifact.
+- [ ] Choose and bump the public release version/tag deliberately before distribution.
 
 ## Post-MVP candidates
 
@@ -75,4 +86,4 @@ These are intentionally not prerequisites for the standalone multi-provider prod
 - [ ] Multi-worker scheduling beyond the current local compute topology.
 - [ ] Stale mirror/index/run retention and garbage collection.
 - [ ] Dependency/template worktree cache optimization.
-- [ ] Automatic update channel and signed release delivery.
+- [ ] Automatic update channel and signed release delivery beyond the current manual verified workflow.
