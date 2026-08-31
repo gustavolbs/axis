@@ -24,6 +24,18 @@ export interface LocalCoderConfig {
   inferenceIdleTimeoutMs?: number;
   /** Hard per-inference safety cap even when the stream remains active. */
   inferenceMaxDurationMs?: number;
+  /** Stage-specific wall-clock budgets. These cap runaway reasoning before the global safety cap. */
+  investigationMaxDurationMs?: number;
+  planningMaxDurationMs?: number;
+  reviewMaxDurationMs?: number;
+  reportMaxDurationMs?: number;
+  repoLearningMaxDurationMs?: number;
+  /** Stage-specific generation budgets (Ollama num_predict). */
+  investigationMaxTokens?: number;
+  planningMaxTokens?: number;
+  reviewMaxTokens?: number;
+  reportMaxTokens?: number;
+  repoLearningMaxTokens?: number;
   validationTimeoutMs: number;
   maxFileBytes: number;
   maxContextBytes: number;
@@ -143,6 +155,39 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
     inferenceMaxDurationMs: parsePositiveInt(
       env.LOCAL_CODER_INFERENCE_MAX_DURATION_MS,
       1_800_000
+    ),
+    // Premium UX requires stage SLAs rather than allowing every reasoning call to
+    // consume the full 30-minute emergency cap. These remain tunable from the host.
+    investigationMaxDurationMs: parsePositiveInt(
+      env.LOCAL_CODER_INVESTIGATION_MAX_DURATION_MS,
+      300_000
+    ),
+    planningMaxDurationMs: parsePositiveInt(
+      env.LOCAL_CODER_PLANNING_MAX_DURATION_MS,
+      600_000
+    ),
+    reviewMaxDurationMs: parsePositiveInt(
+      env.LOCAL_CODER_REVIEW_MAX_DURATION_MS,
+      600_000
+    ),
+    reportMaxDurationMs: parsePositiveInt(
+      env.LOCAL_CODER_REPORT_MAX_DURATION_MS,
+      480_000
+    ),
+    repoLearningMaxDurationMs: parsePositiveInt(
+      env.LOCAL_CODER_REPO_LEARNING_MAX_DURATION_MS,
+      300_000
+    ),
+    investigationMaxTokens: parsePositiveInt(
+      env.LOCAL_CODER_INVESTIGATION_MAX_TOKENS,
+      2_048
+    ),
+    planningMaxTokens: parsePositiveInt(env.LOCAL_CODER_PLANNING_MAX_TOKENS, 3_072),
+    reviewMaxTokens: parsePositiveInt(env.LOCAL_CODER_REVIEW_MAX_TOKENS, 3_072),
+    reportMaxTokens: parsePositiveInt(env.LOCAL_CODER_REPORT_MAX_TOKENS, 3_072),
+    repoLearningMaxTokens: parsePositiveInt(
+      env.LOCAL_CODER_REPO_LEARNING_MAX_TOKENS,
+      2_048
     ),
     validationTimeoutMs: parsePositiveInt(env.LOCAL_CODER_VALIDATION_TIMEOUT_MS, 180_000),
     maxFileBytes: parsePositiveInt(env.LOCAL_CODER_MAX_FILE_BYTES, 120_000),
