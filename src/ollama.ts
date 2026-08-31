@@ -20,6 +20,7 @@ interface OllamaPsResponse {
 }
 
 type RuntimeStage =
+  | 'analysis'
   | 'investigation'
   | 'planning'
   | 'implementation'
@@ -88,6 +89,7 @@ function isQwen38(model: string): boolean {
 
 function classifyRuntimeStage(systemPrompt: string): RuntimeStage {
   const prompt = systemPrompt.toLowerCase();
+  if (prompt.includes('pre-implementation impact analysis')) return 'analysis';
   if (prompt.includes('investigation stage of a local software-engineering agent')) {
     return 'investigation';
   }
@@ -111,6 +113,12 @@ function classifyRuntimeStage(systemPrompt: string): RuntimeStage {
 
 function stageBudget(config: LocalCoderConfig, stage: RuntimeStage): StageBudget {
   switch (stage) {
+    case 'analysis':
+      return {
+        stage,
+        maxDurationMs: config.investigationMaxDurationMs ?? 300_000,
+        maxTokens: config.investigationMaxTokens ?? 2_048
+      };
     case 'investigation':
       return {
         stage,
@@ -146,12 +154,6 @@ function stageBudget(config: LocalCoderConfig, stage: RuntimeStage): StageBudget
   }
 }
 
-/**
- * Qwen3.8 exposes xhigh as its default maximum reasoning effort, but its current
- * chat template does not accept the literal `high` string. Ollama's native
- * `think: true` lets that template select its default xhigh mode. Keep callers
- * model-agnostic by translating only the maximum-reasoning intent for Qwen3.8.
- */
 export function normalizeThinkingForModel(
   model: string,
   think: OllamaThinkingLevel | undefined
@@ -160,31 +162,28 @@ export function normalizeThinkingForModel(
   return think;
 }
 
-/**
- * Investigation only needs to identify evidence/search gaps, not perform the final
- * architecture decision. Avoid paying Qwen3.8 xhigh cost there. Planning/review retain
- * the caller-selected reasoning level because those stages own higher-value judgment.
- */
 function stageThinking(
   model: string,
   stage: RuntimeStage,
   requested: OllamaThinkingLevel | undefined
 ): OllamaThinkingLevel | undefined {
-  if (isQwen38(model) && stage === 'investigation' && requested === 'high') return 'medium';
+  if (
+    isQwen38(model) &&
+    (stage === 'analysis' || stage === 'investigation') &&
+    requested === 'high'
+  ) {
+    return 'medium';
+  }
   return normalizeThinkingForModel(model, requested);
 }
 
-/**
- * Bounded code generation already receives a planner-owned task, exact editable
- * paths, repository context and host-side validation. Qwen3.8 should still reason,
- * but at low effort so expensive reasoning is reserved for planning and review.
- */
 export function codingThinkingForModel(model: string): OllamaThinkingLevel | undefined {
   return isQwen38(model) ? 'low' : undefined;
 }
 
 function progressAction(stage: RuntimeStage, progress: OllamaStreamProgress): string {
-  const label = stage === 'other' ? 'model' : stage;
+  const label =
+    stage === 'analysis' ? 'impact analysis' : stage === 'other' ? 'model' : stage;
   return progress.state === 'thinking'
     ? `Qwen is actively reasoning for ${label}`
     : `Qwen is generating the ${label} result`;
@@ -206,6 +205,7 @@ export class OllamaClient {
 
   private stageBudgets() {
     const stages: RuntimeStage[] = [
+      'analysis',
       'investigation',
       'planning',
       'review',
@@ -294,9 +294,6 @@ export class OllamaClient {
             : 'The model is being prepared for a bounded local inference.'
         });
 
-        // The lock is shared by every local-coder MCP process. Once held, inspect Ollama's
-        // actual loaded-model state so a second Claude session cannot leave the other
-        // tier resident while this process starts a new inference.
         await this.unloadOtherConfiguredTier(model);
 
         const response = await this.requestStreamingHeaders(
@@ -346,10 +343,6 @@ export class OllamaClient {
           });
         };
 
-        // The header timer is cleared as soon as Ollama accepts the streaming request.
-        // Stream liveness is then governed independently: active thinking/output chunks
-        // reset the idle timer, while a stage SLA caps runaway reasoning well before the
-        // 30-minute global emergency ceiling.
         const generation = await readOllamaChatStream(
           response,
           model,
@@ -377,8 +370,6 @@ export class OllamaClient {
 
   private async withGlobalInferenceLock<T>(run: () => Promise<T>): Promise<T> {
     const lockPath = path.join(path.dirname(this.config.telemetryPath), 'inference.lock');
-    // The lock must never be considered stale while a valid long inference is still
-    // allowed to run. Keep its stale threshold beyond the absolute inference cap.
     const maxInferenceMs = this.config.inferenceMaxDurationMs ?? 1_800_000;
     const staleAfterMs = Math.max(
       maxInferenceMs + 120_000,
@@ -521,8 +512,6 @@ export class OllamaClient {
         `Could not reach Ollama at ${this.config.ollamaBaseUrl}. Ensure Ollama is running. ${message}`
       );
     } finally {
-      // Important: do not abort the response body after headers arrive. The stream
-      // reader owns liveness/absolute timeouts from this point forward.
       clearTimeout(timer);
     }
 
