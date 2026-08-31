@@ -1,3 +1,27 @@
+function Install-LocalCoderNodeRuntime {
+  param([Parameter(Mandatory = $true)][string]$NodePath)
+
+  if (-not (Test-Path $NodePath)) {
+    throw "Node executable not found at $NodePath."
+  }
+
+  $stateRoot = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".local-coder-mcp"
+  $runtimeRoot = Join-Path $stateRoot "runtime"
+  $runtimeNode = Join-Path $runtimeRoot "node.exe"
+  New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
+
+  if (-not (Test-Path $runtimeNode)) {
+    Copy-Item -LiteralPath $NodePath -Destination $runtimeNode -Force
+  }
+
+  $version = & $runtimeNode --version
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
+    throw "Dedicated Local Coder Node runtime at $runtimeNode failed validation."
+  }
+
+  return (Resolve-Path $runtimeNode).Path
+}
+
 function Resolve-NormalizedProgramPath {
   param([Parameter(Mandatory = $true)][string]$Path)
 
