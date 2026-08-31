@@ -27,7 +27,7 @@ import { executeLocalEngineerWithRepoIntelligence } from './repo-intelligence.js
 import { WorkerScheduler } from './worker-scheduler.js';
 import { withWorkerWorkspace } from './worker-workspace.js';
 
-const WORKER_VERSION = '0.12.0';
+const WORKER_VERSION = '0.12.1';
 const config = loadConfig();
 const ollama = new OllamaClient(config);
 const scheduler = new WorkerScheduler(config.workerMaxConcurrentJobs ?? 1);
@@ -245,7 +245,11 @@ async function handleTask(body: unknown, response: ServerResponse): Promise<void
       files: request.input.editableFiles
     });
     return withWorkerWorkspace(request.workspace, config, async (workspace) => {
-      job.update({ phase: 'implementation', action: 'Workspace ready; executing bounded code task', completedSteps: ['workspace'] });
+      job.update({
+        phase: 'implementation',
+        action: 'Workspace ready; executing bounded code task',
+        completedSteps: ['workspace']
+      });
       return executeAgenticCodeTask(ollama, config, { ...request.input, workspace });
     });
   });
@@ -269,9 +273,17 @@ async function handlePlan(body: unknown, response: ServerResponse): Promise<void
   }
 
   const output = await scheduler.enqueue('plan', isolationKey(request.workspace), (job) => {
-    job.update({ phase: 'workspace', action: 'Reconstructing remote workspace', detail: request.workspace.repositoryUrl });
+    job.update({
+      phase: 'workspace',
+      action: 'Reconstructing remote workspace',
+      detail: request.workspace.repositoryUrl
+    });
     return withWorkerWorkspace(request.workspace, config, async (workspace) => {
-      job.update({ phase: 'implementation', action: 'Workspace ready; executing implementation plan', completedSteps: ['workspace'] });
+      job.update({
+        phase: 'implementation',
+        action: 'Workspace ready; executing implementation plan',
+        completedSteps: ['workspace']
+      });
       return executeLocalCodePlan(ollama, config, { ...request.input, workspace }, job.update);
     });
   });
