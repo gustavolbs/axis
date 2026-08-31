@@ -50,9 +50,11 @@ jobs:
         shell: pwsh
         run: |
           $scripts = @(
+            '.\scripts\windows-firewall.ps1',
             '.\scripts\setup-windows-host.ps1',
             '.\scripts\install-windows-worker-task.ps1',
-            '.\scripts\install-windows-dashboard-task.ps1'
+            '.\scripts\install-windows-dashboard-task.ps1',
+            '.\test\windows-firewall.ps1'
           )
           foreach ($script in $scripts) {
             $tokens = $null
@@ -67,3 +69,7 @@ jobs:
               exit 1
             }
           }
+
+      - name: Test Windows firewall guard
+        shell: pwsh
+        run: .\test\windows-firewall.ps1

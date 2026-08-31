@@ -30,6 +30,9 @@ $ErrorActionPreference = "Stop"
 $WorkerFirewallRule = "Local Coder - Worker from Mac"
 $OllamaFirewallRule = "Local Coder - Ollama from Mac"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$WorkerEntry = Join-Path $RepoRoot "dist\worker-server.js"
+$FirewallHelpers = Join-Path $PSScriptRoot "windows-firewall.ps1"
+. $FirewallHelpers
 
 function Assert-Command {
   param([string]$Name)
@@ -118,13 +121,16 @@ if ($Mode -eq "OllamaOnly") {
 Assert-Command "node"
 Assert-Command "npm"
 Assert-Command "git"
+$node = Get-Command node -ErrorAction Stop
+$localCoderNode = Install-LocalCoderNodeRuntime -NodePath $node.Source
 
 if (-not $WorkerToken) {
   $WorkerToken = New-WorkerToken
 }
 
 # In full worker mode Ollama stays loopback-only. Only the authenticated worker is
-# exposed to the LAN/Meshnet, and Windows Firewall further restricts that port to the Mac.
+# exposed to LAN/Meshnet. A dedicated Local Coder Node runtime isolates the worker
+# from generic firewall rules created for the system-wide Node installation.
 Set-UserEnvironmentVariable "OLLAMA_HOST" "127.0.0.1:$OllamaPort"
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_HOST" "0.0.0.0"
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_PORT" "$WorkerPort"
@@ -153,7 +159,15 @@ Set-UserEnvironmentVariable "LOCAL_CODER_INFERENCE_MAX_DURATION_MS" "1800000"
 Set-UserEnvironmentVariable "LOCAL_CODER_VALIDATION_TIMEOUT_MS" "600000"
 Set-UserEnvironmentVariable "LOCAL_CODER_REPO_INTELLIGENCE_ENABLED" $(if ($DisableRepoIntelligence) { "false" } else { "true" })
 
-Replace-FirewallRule -DisplayName $WorkerFirewallRule -Port $WorkerPort -RemoteAddress $MacIp
+# If Windows ever creates a generic inbound Block for the dedicated runtime, repair
+# only the standard local popup-generated rule. Custom/managed security policy is
+# never silently disabled and instead fails setup with an explicit error.
+Set-LocalCoderInboundFirewallRule `
+  -DisplayName $WorkerFirewallRule `
+  -ExecutablePath $localCoderNode `
+  -Port $WorkerPort `
+  -RemoteAddress $MacIp `
+  -Profile Any
 
 $oldOllamaRule = Get-NetFirewallRule -DisplayName $OllamaFirewallRule -ErrorAction SilentlyContinue
 if ($oldOllamaRule) {
@@ -183,6 +197,7 @@ Write-Host "Allowed Git hosts: $AllowedGitHosts"
 Write-Host "Bootstrap mode: $Bootstrap"
 Write-Host "Heavy job concurrency: $MaxConcurrentJobs"
 Write-Host "Persistent repo intelligence: $(if ($DisableRepoIntelligence) { 'disabled' } else { 'enabled' })"
+Write-Host "Dedicated Node runtime: $localCoderNode"
 if (-not $DisableRepoIntelligence) {
   Write-Host "Repo intelligence is stored outside target repositories under the worker state directory." -ForegroundColor Cyan
 }
@@ -196,7 +211,8 @@ Write-Host "WORKER TOKEN - copy this once to the Mac installer:" -ForegroundColo
 Write-Host $WorkerToken -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Ollama remains loopback-only in Worker mode; port $OllamaPort is not opened to the LAN."
-Write-Host "The worker port $WorkerPort accepts only the supplied Mac IP on Private network profiles."
+Write-Host "The worker port $WorkerPort accepts only the supplied Mac IP and the dedicated Local Coder Node executable on any Windows network profile."
+Write-Host "System-wide Node firewall rules cannot affect the dedicated Local Coder runtime."
 Write-Host ""
 Write-Host "If Ollama was previously configured for LAN access, quit it from the system tray and restart it now."
 Write-Host ""
@@ -204,14 +220,16 @@ Write-Host ""
 if ($StartWorker) {
   Write-Host "Starting worker in a separate PowerShell window..." -ForegroundColor Cyan
   $escapedRoot = $RepoRoot.Replace("'", "''")
+  $escapedNode = $localCoderNode.Replace("'", "''")
+  $escapedWorkerEntry = $WorkerEntry.Replace("'", "''")
   Start-Process powershell -ArgumentList @(
     "-NoExit",
     "-Command",
-    "Set-Location '$escapedRoot'; npm run start:worker"
+    "Set-Location '$escapedRoot'; & '$escapedNode' '$escapedWorkerEntry'"
   )
 } else {
-  Write-Host "Start the worker from a new PowerShell in this repository:" -ForegroundColor Cyan
-  Write-Host "  npm run start:worker"
+  Write-Host "Start the worker with the dedicated Local Coder runtime:" -ForegroundColor Cyan
+  Write-Host "  & '$localCoderNode' '$WorkerEntry'"
 }
 
 Write-Host ""

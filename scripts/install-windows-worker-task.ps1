@@ -6,6 +6,8 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $WorkerEntry = Join-Path $RepoRoot "dist\worker-server.js"
+$FirewallHelpers = Join-Path $PSScriptRoot "windows-firewall.ps1"
+. $FirewallHelpers
 
 if ($Remove) {
   $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -19,6 +21,7 @@ if ($Remove) {
 }
 
 $node = Get-Command node -ErrorAction Stop
+$localCoderNode = Install-LocalCoderNodeRuntime -NodePath $node.Source
 if (-not (Test-Path $WorkerEntry)) {
   throw "Missing $WorkerEntry. Run npm run build first."
 }
@@ -27,7 +30,7 @@ if (-not [Environment]::GetEnvironmentVariable("LOCAL_CODER_WORKER_TOKEN", "User
 }
 
 $action = New-ScheduledTaskAction `
-  -Execute $node.Source `
+  -Execute $localCoderNode `
   -Argument ('"{0}"' -f $WorkerEntry) `
   -WorkingDirectory $RepoRoot
 
@@ -59,8 +62,9 @@ Register-ScheduledTask `
   -Description "Authenticated local-coder execution worker for Claude Code" | Out-Null
 
 Write-Host "Installed scheduled task '$TaskName'." -ForegroundColor Green
-Write-Host "It starts the worker at Windows logon using:"
-Write-Host "  $($node.Source) $WorkerEntry"
+Write-Host "It starts the worker at Windows logon using the dedicated Local Coder Node runtime:"
+Write-Host "  $localCoderNode $WorkerEntry"
+Write-Host "System-wide Node firewall rules cannot target this runtime path."
 Write-Host ""
 Write-Host "Start it now with:"
 Write-Host "  Start-ScheduledTask -TaskName '$TaskName'"
