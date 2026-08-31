@@ -312,12 +312,22 @@ export class ProjectAdminService {
     return this.pricing.list();
   }
 
-  setPricing(providerId: string, modelId: string, value: ModelPricing): ModelPricing {
-    return this.pricing.set(providerId, modelId, value);
+  async setPricing(
+    providerId: string,
+    modelId: string,
+    value: ModelPricing
+  ): Promise<ModelPricing> {
+    return await this.ledger.withBudgetLock(() => {
+      this.assertPricingMutable(providerId, modelId);
+      return this.pricing.set(providerId, modelId, value);
+    });
   }
 
-  removePricing(providerId: string, modelId: string): boolean {
-    return this.pricing.remove(providerId, modelId);
+  async removePricing(providerId: string, modelId: string): Promise<boolean> {
+    return await this.ledger.withBudgetLock(() => {
+      this.assertPricingMutable(providerId, modelId);
+      return this.pricing.remove(providerId, modelId);
+    });
   }
 
   usage(projectId: string, now = new Date()): ProjectUsageView {
@@ -415,6 +425,19 @@ export class ProjectAdminService {
       defaultModel: project.defaultModel,
       providers
     };
+  }
+
+  private assertPricingMutable(providerId: string, modelId: string): void {
+    const active = this.ledger.listReservations().filter(
+      (reservation) =>
+        reservation.providerId === providerId &&
+        reservation.modelId === modelId
+    );
+    if (active.length > 0) {
+      throw new Error(
+        `Pricing for ${providerId}/${modelId} cannot change while ${active.length} budget reservation(s) are active.`
+      );
+    }
   }
 
   private assertCredentialReplacementIsolation(input: CreateCredentialInput): void {
