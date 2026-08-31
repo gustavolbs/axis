@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 import type { ExecutionBackend } from './execution-runtime.js';
 import type { LocalEngineerInput, LocalEngineerResult } from './local-engineer.js';
@@ -53,6 +55,8 @@ type JobInternal = StandaloneJobSnapshot & {
   guidance?: string;
 };
 
+type PersistedJob = Omit<JobInternal, 'waiting'>;
+
 export type JobListener = (event: StandaloneJobEvent, job: StandaloneJobSnapshot) => void;
 
 function premium(result: LocalEngineerResult): PremiumEngineerResult {
@@ -86,9 +90,7 @@ function renderSelections(
   for (const question of request.questions) {
     const selectedId = selections[question.id];
     const option = question.options.find((candidate) => candidate.id === selectedId);
-    if (!option) {
-      throw new Error(`Invalid selection for decision ${question.id}.`);
-    }
+    if (!option) throw new Error(`Invalid selection for decision ${question.id}.`);
     lines.push(`- ${question.id}: ${option.id} — ${option.label}.`);
   }
   return lines.join('\n');
@@ -97,8 +99,48 @@ function renderSelections(
 export class StandaloneJobManager {
   private readonly jobs = new Map<string, JobInternal>();
   private readonly listeners = new Set<JobListener>();
+  private persistTail: Promise<void> = Promise.resolve();
 
-  constructor(private readonly execution: Pick<ExecutionBackend, 'executeEngineer'>) {}
+  constructor(
+    private readonly execution: Pick<ExecutionBackend, 'executeEngineer'>,
+    private readonly stateDir?: string
+  ) {}
+
+  async restore(): Promise<void> {
+    if (!this.stateDir) return;
+    const file = this.stateFile();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await fs.readFile(file, 'utf8')) as unknown;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw new Error(
+        `Could not restore Local Coder Console sessions from ${file}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    if (!Array.isArray(parsed)) throw new Error(`Standalone job store ${file} must contain an array.`);
+
+    for (const raw of parsed.slice(0, 30)) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+      const job = raw as PersistedJob;
+      if (typeof job.id !== 'string' || !job.input || typeof job.input.goal !== 'string') continue;
+      this.jobs.set(job.id, {
+        ...job,
+        events: Array.isArray(job.events) ? job.events.slice(-200) : []
+      });
+    }
+
+    // A process restart cannot preserve an in-flight HTTP request, but source-of-truth
+    // workspaces and compact guidance are durable. Re-run interrupted active jobs from
+    // the same goal; decision/guidance checkpoints remain paused and user-answerable.
+    for (const job of this.jobs.values()) {
+      if (job.status === 'queued' || job.status === 'running') {
+        job.status = 'queued';
+        this.emit(job, 'status', 'Console restarted; resuming job from durable checkpoint');
+        void this.run(job);
+      }
+    }
+  }
 
   subscribe(listener: JobListener): () => void {
     this.listeners.add(listener);
@@ -125,11 +167,7 @@ export class StandaloneJobManager {
       status: 'queued',
       createdAt: now,
       updatedAt: now,
-      input: {
-        ...input,
-        workspace: input.workspace.trim(),
-        goal: input.goal.trim()
-      },
+      input: { ...input, workspace: input.workspace.trim(), goal: input.goal.trim() },
       rounds: 0,
       events: []
     };
@@ -141,33 +179,31 @@ export class StandaloneJobManager {
 
   submitDecision(id: string, selections: Record<string, string>): StandaloneJobSnapshot {
     const job = this.requireJob(id);
-    if (job.status !== 'waiting-decision' || !job.waiting || job.waiting.kind !== 'decision') {
-      throw new Error('Job is not waiting for a decision.');
-    }
+    if (job.status !== 'waiting-decision') throw new Error('Job is not waiting for a decision.');
     if (!job.decisionRequest) throw new Error('Decision request is missing.');
     const guidance = renderSelections(job.decisionRequest, selections);
     job.guidance = mergeGuidance(job.guidance, guidance);
     job.decisionRequest = undefined;
-    const waiting = job.waiting;
+    const waiting = job.waiting?.kind === 'decision' ? job.waiting : undefined;
     job.waiting = undefined;
     job.status = 'running';
     this.emit(job, 'decision', 'User decision received', { selections });
-    waiting.resolve(guidance);
+    if (waiting) waiting.resolve(guidance);
+    else void this.run(job);
     return snapshot(job);
   }
 
   submitGuidance(id: string, guidance: string): StandaloneJobSnapshot {
     const job = this.requireJob(id);
-    if (job.status !== 'waiting-guidance' || !job.waiting || job.waiting.kind !== 'guidance') {
-      throw new Error('Job is not waiting for guidance.');
-    }
+    if (job.status !== 'waiting-guidance') throw new Error('Job is not waiting for guidance.');
     if (!guidance.trim()) throw new Error('guidance is required.');
     job.guidance = mergeGuidance(job.guidance, guidance);
-    const waiting = job.waiting;
+    const waiting = job.waiting?.kind === 'guidance' ? job.waiting : undefined;
     job.waiting = undefined;
     job.status = 'running';
     this.emit(job, 'guidance', 'Additional guidance received');
-    waiting.resolve(guidance.trim());
+    if (waiting) waiting.resolve(guidance.trim());
+    else void this.run(job);
     return snapshot(job);
   }
 
@@ -175,6 +211,32 @@ export class StandaloneJobManager {
     const job = this.jobs.get(id);
     if (!job) throw new Error('Job not found.');
     return job;
+  }
+
+  private stateFile(): string {
+    return path.join(this.stateDir!, 'jobs.json');
+  }
+
+  private schedulePersist(): void {
+    if (!this.stateDir) return;
+    this.persistTail = this.persistTail.then(async () => {
+      const jobs: PersistedJob[] = this.list()
+        .slice(0, 30)
+        .map((publicJob) => {
+          const internal = this.jobs.get(publicJob.id)!;
+          return {
+            ...publicJob,
+            guidance: internal.guidance
+          };
+        });
+      await fs.mkdir(this.stateDir!, { recursive: true });
+      const file = this.stateFile();
+      const temp = `${file}.tmp-${process.pid}`;
+      await fs.writeFile(temp, `${JSON.stringify(jobs, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+      await fs.rename(temp, file);
+    }).catch((error) => {
+      console.error(`Local Coder Console session persistence failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
   }
 
   private emit(
@@ -193,7 +255,8 @@ export class StandaloneJobManager {
       data
     };
     job.events.push(event);
-    job.events.splice(200);
+    job.events.splice(0, Math.max(0, job.events.length - 200));
+    this.schedulePersist();
     const publicJob = snapshot(job);
     for (const listener of this.listeners) listener(event, publicJob);
   }
@@ -201,20 +264,18 @@ export class StandaloneJobManager {
   private wait(job: JobInternal, kind: WaitingInput['kind']): Promise<string> {
     return new Promise((resolve) => {
       job.waiting = { kind, resolve };
+      this.schedulePersist();
     });
   }
 
   private async run(job: JobInternal): Promise<void> {
     try {
       job.status = 'running';
-      this.emit(job, 'status', 'Local agent started');
+      this.emit(job, 'status', job.rounds > 0 ? 'Local agent resumed' : 'Local agent started');
 
-      for (let round = 1; round <= 6; round += 1) {
+      for (let round = Math.max(1, job.rounds + 1); round <= 6; round += 1) {
         job.rounds = round;
-        const input: LocalEngineerInput = {
-          ...job.input,
-          claudeGuidance: job.guidance
-        };
+        const input: LocalEngineerInput = { ...job.input, claudeGuidance: job.guidance };
         this.emit(job, 'status', `Agent round ${round} running`);
         const result = await this.execution.executeEngineer(input);
         job.result = result;
