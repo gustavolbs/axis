@@ -43,22 +43,39 @@ function Get-ConflictingInboundProgramBlockRules {
   return $matches
 }
 
+function Test-IsWindowsNodePopupBlockRule {
+  param([Parameter(Mandatory = $true)]$Rule)
+
+  return (
+    $Rule.DisplayName -eq "Node.js JavaScript Runtime" -and
+    $Rule.PolicyStoreSourceType.ToString() -eq "Local"
+  )
+}
+
 function Disable-ConflictingInboundProgramBlockRules {
   param([Parameter(Mandatory = $true)][string]$ExecutablePath)
 
   $conflicts = @(Get-ConflictingInboundProgramBlockRules -ExecutablePath $ExecutablePath)
-  foreach ($rule in $conflicts) {
-    Write-Warning "Disabling conflicting Windows Firewall rule '$($rule.DisplayName)' ($($rule.Name)) for $ExecutablePath. Explicit Block rules override Local Coder Allow rules."
+  $automatic = @($conflicts | Where-Object { Test-IsWindowsNodePopupBlockRule -Rule $_ })
+  $protected = @($conflicts | Where-Object { -not (Test-IsWindowsNodePopupBlockRule -Rule $_) })
+
+  foreach ($rule in $automatic) {
+    Write-Warning "Disabling Windows-generated Node firewall Block rule '$($rule.DisplayName)' ($($rule.Name)) for $ExecutablePath. Explicit Block rules override Local Coder Allow rules."
     Disable-NetFirewallRule -Name $rule.Name -ErrorAction Stop
+  }
+
+  if ($protected.Count -gt 0) {
+    $details = ($protected | ForEach-Object { "'$($_.DisplayName)' [$($_.Name)]" }) -join ", "
+    throw "A custom or managed inbound Block rule applies to $ExecutablePath and would override Local Coder: $details. Local Coder will not disable non-default security policy automatically."
   }
 
   $remaining = @(Get-ConflictingInboundProgramBlockRules -ExecutablePath $ExecutablePath)
   if ($remaining.Count -gt 0) {
     $names = ($remaining | ForEach-Object { $_.DisplayName }) -join ", "
-    throw "Conflicting inbound Block rule(s) still apply to $ExecutablePath: $names"
+    throw "Conflicting inbound Block rule(s) still apply to $ExecutablePath after remediation: $names"
   }
 
-  return $conflicts
+  return $automatic
 }
 
 function Set-LocalCoderInboundFirewallRule {
