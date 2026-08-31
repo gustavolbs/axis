@@ -12,6 +12,10 @@ import type {
   OllamaThinkingLevel
 } from './ollama.js';
 import type { OllamaStreamProgress } from './ollama-stream.js';
+import {
+  ProjectBudgetSession,
+  type ProjectBudgetSnapshot
+} from './project-budget.js';
 import { executePremiumLocalAgent } from './premium-agent.js';
 import {
   ProjectProviderRuntime,
@@ -64,6 +68,7 @@ export interface ProjectExecutionMetadata {
   localInference: 'mac-ollama' | 'windows-worker' | 'windows-worker-with-mac-fallback';
   repoMemoryScopeKey: string;
   routingTrace: ProjectRoutingTraceEntry[];
+  budget: ProjectBudgetSnapshot;
 }
 
 export type ProjectEngineerResult = LocalEngineerResult & {
@@ -90,6 +95,7 @@ export interface ProjectEngineerBackendOptions {
   providerRuntime?: Omit<ProjectProviderRuntimeOptions, 'localProvider'>;
   remoteClient?: RemoteChatClient;
   agentExecutor?: AgentExecutor;
+  budgetSessionFactory?: (project: ProjectDefinition) => ProjectBudgetSession;
 }
 
 function reasoningEffort(think: OllamaThinkingLevel | undefined): ReasoningEffort | undefined {
@@ -216,6 +222,7 @@ export class ProjectAwareEngineerBackend {
     if (!resolved.project) return await this.legacy.executeEngineer(input);
     const { project, workspace: projectWorkspace } = resolved;
 
+    const budget = this.options.budgetSessionFactory?.(project) ?? new ProjectBudgetSession(project);
     const localProvider = this.localProvider();
     const providerRuntime = new ProjectProviderRuntime({
       ...(this.options.providerRuntime ?? {}),
@@ -230,7 +237,10 @@ export class ProjectAwareEngineerBackend {
       project,
       providerRuntime,
       localChat,
-      { onRoute: (event) => routingTrace.push(trace(event)) }
+      {
+        budget,
+        onRoute: (event) => routingTrace.push(trace(event))
+      }
     );
 
     const { projectId: _projectId, ...agentInput } = input;
@@ -247,7 +257,8 @@ export class ProjectAwareEngineerBackend {
       agentHost: 'control-plane',
       localInference: this.localInferenceLabel(),
       repoMemoryScopeKey: memoryScopeKey,
-      routingTrace
+      routingTrace,
+      budget: budget.snapshot()
     };
     return result;
   }
