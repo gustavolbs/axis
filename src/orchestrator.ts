@@ -385,7 +385,7 @@ export async function executeLocalCodePlan(
         detail: task.task,
         taskId: task.id,
         files: dedupe(task.editableFiles),
-        validation: task.validation?.map((item) => `${item.command} ${item.args.join(' ')}`).join(' · ') || undefined,
+        validation: task.validation?.map((item) => `${item.command} ${(item.args ?? []).join(' ')}`).join(' · ') || undefined,
         reasoningSummary: `The planner selected task ${task.id} as the next bounded implementation step.`
       });
 
@@ -424,7 +424,7 @@ export async function executeLocalCodePlan(
     }
 
     const validationLabel = (plan.finalValidation ?? [])
-      .map((item) => `${item.command} ${item.args.join(' ')}`)
+      .map((item) => `${item.command} ${(item.args ?? []).join(' ')}`)
       .join(' · ');
     progress?.({
       phase: 'validation',
