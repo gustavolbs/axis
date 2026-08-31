@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { CredentialProfile } from './credential-store.js';
+import type { ProviderKind } from './providers/types.js';
 
 export type RoutingPolicy =
   | 'auto'
@@ -144,14 +145,22 @@ function normalizeCredentialMap(input: Record<string, string> | undefined): Reco
 
 function normalizeProject(
   input: CreateProjectInput,
-  existing?: ProjectDefinition
+  existing?: ProjectDefinition,
+  preserveUpdatedAt?: string
 ): ProjectDefinition {
-  const now = new Date().toISOString();
+  const now = preserveUpdatedAt ?? new Date().toISOString();
   const routing = input.defaultRoutingPolicy ?? existing?.defaultRoutingPolicy ?? 'local-first';
   if (!ROUTING_POLICIES.has(routing)) throw new Error(`Unsupported routing policy: ${routing}`);
   const concurrency = input.concurrency ?? existing?.concurrency ?? 1;
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
     throw new Error('Project concurrency must be an integer between 1 and 32.');
+  }
+  const privacy = normalizePrivacy(input.privacy ?? existing?.privacy);
+  const defaultModel = normalizeModel(input.defaultModel ?? existing?.defaultModel);
+  if (defaultModel.mode === 'explicit' && !privacy.allowedProviderIds.includes(defaultModel.providerId)) {
+    throw new Error(
+      `Explicit model provider ${defaultModel.providerId} is not allowed by the project provider allowlist.`
+    );
   }
   return {
     id: safeId(input.id ?? existing?.id ?? randomUUID(), 'Project id'),
@@ -160,8 +169,8 @@ function normalizeProject(
     organizationId: safeId(input.organizationId, 'Organization id'),
     organizationName: input.organizationName ? text(input.organizationName, 'Organization name') : undefined,
     defaultRoutingPolicy: routing,
-    defaultModel: normalizeModel(input.defaultModel ?? existing?.defaultModel),
-    privacy: normalizePrivacy(input.privacy ?? existing?.privacy),
+    defaultModel,
+    privacy,
     credentialProfileIds: normalizeCredentialMap(input.credentialProfileIds ?? existing?.credentialProfileIds),
     budgets: normalizeBudgets(input.budgets ?? existing?.budgets),
     repoIntelligenceScope: 'project',
@@ -202,9 +211,27 @@ function parseProject(value: unknown): ProjectDefinition | undefined {
       credentialProfileIds: existing.credentialProfileIds,
       budgets: existing.budgets,
       concurrency: existing.concurrency
-    }, existing);
+    }, existing, existing.updatedAt);
   } catch {
     return undefined;
+  }
+}
+
+function assertWorkspaceOrganizationIsolation(
+  projects: ProjectDefinition[],
+  candidate: ProjectDefinition,
+  ignoreProjectId?: string
+): void {
+  const conflict = projects.find((project) =>
+    project.id !== ignoreProjectId &&
+    project.workspace === candidate.workspace &&
+    project.organizationId !== candidate.organizationId
+  );
+  if (conflict) {
+    throw new Error(
+      `Workspace ${candidate.workspace} is already assigned to organization ${conflict.organizationId}; ` +
+      `it cannot also be assigned to ${candidate.organizationId}.`
+    );
   }
 }
 
@@ -219,6 +246,19 @@ export function projectIsolationKey(project: Pick<ProjectDefinition, 'id' | 'org
     .update('\0')
     .update(project.id)
     .digest('hex');
+}
+
+export function assertProjectProviderAllowed(
+  project: ProjectDefinition,
+  providerId: string,
+  providerKind: ProviderKind
+): void {
+  if (!project.privacy.allowedProviderIds.includes(providerId)) {
+    throw new Error(`Provider ${providerId} is blocked by project ${project.id}'s allowlist.`);
+  }
+  if (providerKind === 'cloud' && !project.privacy.cloudAllowed) {
+    throw new Error(`Project ${project.id} does not allow cloud inference.`);
+  }
 }
 
 export function assertProjectCredentialIsolation(
@@ -259,6 +299,7 @@ export class ProjectStore {
     if (state.projects.some((entry) => entry.id === project.id)) {
       throw new Error(`Project already exists: ${project.id}`);
     }
+    assertWorkspaceOrganizationIsolation(state.projects, project);
     state.projects.unshift(project);
     state.updatedAt = project.updatedAt;
     this.write(state);
@@ -270,6 +311,9 @@ export class ProjectStore {
     const state = this.read();
     const current = state.projects.find((entry) => entry.id === projectId);
     if (!current) throw new Error(`Project not found: ${projectId}`);
+    const mergedBudgets = patch.budgets
+      ? { ...current.budgets, ...patch.budgets }
+      : current.budgets;
     const project = normalizeProject({
       id: current.id,
       name: patch.name ?? current.name,
@@ -280,9 +324,10 @@ export class ProjectStore {
       defaultModel: patch.defaultModel ?? current.defaultModel,
       privacy: patch.privacy ?? current.privacy,
       credentialProfileIds: patch.credentialProfileIds ?? current.credentialProfileIds,
-      budgets: patch.budgets ?? current.budgets,
+      budgets: mergedBudgets,
       concurrency: patch.concurrency ?? current.concurrency
     }, current);
+    assertWorkspaceOrganizationIsolation(state.projects, project, projectId);
     state.projects = state.projects.map((entry) => entry.id === projectId ? project : entry);
     state.updatedAt = project.updatedAt;
     this.write(state);
