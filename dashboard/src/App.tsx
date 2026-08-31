@@ -2,23 +2,16 @@ import {
   Activity,
   BrainCircuit,
   CheckCircle2,
-  ChevronRight,
   Clock3,
   Cpu,
-  FileCode2,
   Gauge,
-  GitBranch,
   HardDrive,
-  ListTree,
   MemoryStick,
-  MonitorCog,
-  Network,
   Radio,
   ServerCog,
   Sparkles,
   TerminalSquare,
-  Workflow,
-  Zap
+  Workflow
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -86,10 +79,7 @@ type StatusPayload = {
     active: Job[];
     queued: Job[];
   };
-  inference?: {
-    current: Inference | null;
-    recent: Inference[];
-  };
+  inference?: { current: Inference | null; recent: Inference[] };
   ollama?: {
     ok: boolean;
     numCtx?: number;
@@ -116,20 +106,26 @@ type StatusPayload = {
     workerUrl?: string;
     transport?: string;
   };
-  recentTelemetry?: Array<Record<string, unknown>>;
 };
 
-const pipeline = [
-  ['workspace', 'Workspace'],
-  ['investigation', 'Investigation'],
-  ['planning', 'Planning'],
-  ['implementation', 'Implementation'],
-  ['validation', 'Validation'],
-  ['review', 'Review'],
-  ['repair', 'Repair'],
-  ['repo-learning', 'Repo learning'],
-  ['complete', 'Complete']
-] as const;
+type Stage = { key: string; label: string };
+
+const pipeline: Stage[] = [
+  { key: 'workspace', label: 'Workspace' },
+  { key: 'impact-analysis', label: 'Impact' },
+  { key: 'deliberation', label: 'Deliberation' },
+  { key: 'investigation', label: 'Investigation' },
+  { key: 'research', label: 'Research' },
+  { key: 'decision', label: 'Decision' },
+  { key: 'planning', label: 'Planning' },
+  { key: 'implementation', label: 'Implementation' },
+  { key: 'validation', label: 'Validation' },
+  { key: 'review', label: 'Review' },
+  { key: 'repair', label: 'Repair' },
+  { key: 'quality-gate', label: 'Quality' },
+  { key: 'repo-learning', label: 'Learning' },
+  { key: 'complete', label: 'Complete' }
+];
 
 function bytes(value?: number) {
   if (!Number.isFinite(value)) return '—';
@@ -168,31 +164,36 @@ function shortTime(value?: string) {
   });
 }
 
+function normalizePhase(phase?: string) {
+  const value = phase?.toLowerCase() ?? '';
+  if (value.includes('architect') || value.includes('critic') || value.includes('judge')) return 'deliberation';
+  if (value.includes('report')) return 'investigation';
+  if (value.includes('quality')) return 'quality-gate';
+  if (value.includes('repo') && value.includes('learn')) return 'repo-learning';
+  return pipeline.find((stage) => value.includes(stage.key))?.key ?? value;
+}
+
 function stageIndex(phase?: string) {
-  if (!phase) return -1;
-  const normalized = phase.toLowerCase();
-  if (normalized.includes('report')) return 1;
-  return pipeline.findIndex(([key]) => normalized.includes(key));
+  const normalized = normalizePhase(phase);
+  return pipeline.findIndex((stage) => stage.key === normalized);
 }
 
 function streamStateLabel(value?: Inference['streamState']) {
   if (value === 'thinking') return 'actively reasoning';
-  if (value === 'generating') return 'generating result';
-  return 'waiting for first chunk';
+  if (value === 'generating') return 'generating structured result';
+  return 'waiting for model activity';
 }
 
 function MetricCard({
   label,
   value,
   detail,
-  icon: Icon,
-  accent
+  icon: Icon
 }: {
   label: string;
   value: string | number;
   detail: string;
   icon: typeof Activity;
-  accent?: string;
 }) {
   return (
     <Card className="glass overflow-hidden">
@@ -200,7 +201,7 @@ function MetricCard({
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-            <div className={cn('metric-glow mt-2 truncate text-2xl font-semibold tracking-tight', accent)}>{value}</div>
+            <div className="metric-glow mt-2 truncate text-2xl font-semibold tracking-tight">{value}</div>
             <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>
           </div>
           <div className="rounded-xl border border-border bg-secondary/60 p-2.5">
@@ -215,7 +216,7 @@ function MetricCard({
 function ResourceBar({ label, value, detail }: { label: string; value?: number; detail?: string }) {
   const safe = Number.isFinite(value) ? Math.max(0, Math.min(100, value!)) : 0;
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-2">
       <div className="flex items-center justify-between gap-4 text-sm">
         <span className="text-muted-foreground">{label}</span>
         <span className="font-medium">{Number.isFinite(value) ? `${safe.toFixed(1)}%` : '—'}</span>
@@ -227,42 +228,44 @@ function ResourceBar({ label, value, detail }: { label: string; value?: number; 
 }
 
 function Pipeline({ phase, completed = [] }: { phase?: string; completed?: string[] }) {
-  const current = stageIndex(phase);
-  const completedSet = new Set(completed.map((item) => item.toLowerCase()));
-  const readOnlyReport = phase?.toLowerCase().includes('report');
+  const normalized = normalizePhase(phase);
+  const current = stageIndex(normalized);
+  const completedSet = new Set(completed.map(normalizePhase));
+  const readOnly = Boolean(phase?.toLowerCase().includes('report'));
+
   return (
-    <div>
-      {readOnlyReport ? (
-        <div className="mb-3 flex items-center gap-2 rounded-lg border border-cyan-400/15 bg-cyan-400/[.035] px-3 py-2 text-xs text-cyan-100">
+    <div className="space-y-3">
+      {readOnly ? (
+        <div className="flex items-center gap-2 rounded-lg border border-cyan-400/15 bg-cyan-400/[.035] px-3 py-2 text-xs text-cyan-100">
           <Radio className="h-3.5 w-3.5" />
-          Read-only research path: Investigation → Report → Complete. Implementation stages are intentionally skipped.
+          Read-only path: Investigation → local evidence/research → Report → Complete. Mutation stages are intentionally skipped.
         </div>
       ) : null}
-      <div className="grid gap-1.5 md:grid-cols-9">
-        {pipeline.map(([key, label], index) => {
-          const explicitlyDone = [...completedSet].some((item) => item.includes(key));
-          const done =
-            explicitlyDone ||
-            (!readOnlyReport && current >= 0 && index < current) ||
-            (key === 'complete' && phase === 'complete');
-          const active = !readOnlyReport && index === current && phase !== 'complete';
-          return (
-            <div key={key} className="relative flex min-w-0 items-center gap-2 md:block">
-              <div
-                className={cn(
-                  'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold transition-all md:mx-auto',
-                  done && 'border-emerald-400/40 bg-emerald-400/15 text-emerald-300',
-                  active && 'border-cyan-300/70 bg-cyan-300/15 text-cyan-200 shadow-[0_0_25px_rgba(34,211,238,.18)]',
-                  !done && !active && 'border-border bg-secondary/50 text-muted-foreground'
-                )}
-              >
-                {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : index + 1}
+      <div className="overflow-x-auto pb-2">
+        <div className="grid min-w-[1220px] grid-cols-14 gap-2">
+          {pipeline.map((stage, index) => {
+            const explicitlyDone = completedSet.has(stage.key);
+            const done = explicitlyDone || (!readOnly && current >= 0 && index < current) || (stage.key === 'complete' && normalized === 'complete');
+            const active = stage.key === normalized && normalized !== 'complete';
+            return (
+              <div key={stage.key} className="min-w-0 text-center">
+                <div
+                  className={cn(
+                    'mx-auto flex h-7 w-7 items-center justify-center rounded-full border text-[10px] font-bold transition-all',
+                    done && 'border-emerald-400/40 bg-emerald-400/15 text-emerald-300',
+                    active && 'border-cyan-300/70 bg-cyan-300/15 text-cyan-200 shadow-[0_0_25px_rgba(34,211,238,.18)]',
+                    !done && !active && 'border-border bg-secondary/50 text-muted-foreground'
+                  )}
+                >
+                  {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : index + 1}
+                </div>
+                <div className={cn('mt-2 truncate text-[11px]', active ? 'text-cyan-200' : done ? 'text-emerald-300' : 'text-muted-foreground')}>
+                  {stage.label}
+                </div>
               </div>
-              <div className={cn('truncate text-xs md:mt-2 md:text-center', active ? 'text-cyan-200' : done ? 'text-emerald-300' : 'text-muted-foreground')}>{label}</div>
-              {index < pipeline.length - 1 ? <ChevronRight className="hidden h-3 w-3 text-border md:absolute md:-right-2 md:top-2 md:block" /> : null}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -276,14 +279,12 @@ export function App() {
 
   useEffect(() => {
     let alive = true;
-
     const apply = (body: StatusPayload) => {
       if (!alive) return;
       setData(body);
       setError(null);
       setLastOkAt(new Date());
     };
-
     const snapshot = async () => {
       try {
         const response = await fetch('/api/status', { cache: 'no-store' });
@@ -291,46 +292,37 @@ export function App() {
         if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
         apply(body);
       } catch (nextError) {
-        if (!alive) return;
-        setError(nextError instanceof Error ? nextError.message : String(nextError));
+        if (alive) setError(nextError instanceof Error ? nextError.message : String(nextError));
       }
     };
 
     void snapshot();
     const events = new EventSource('/api/events');
-    const onStatus = (event: Event) => {
+    events.addEventListener('status', (event) => {
       try {
-        const body = JSON.parse((event as MessageEvent<string>).data) as StatusPayload;
-        apply(body);
+        apply(JSON.parse((event as MessageEvent<string>).data) as StatusPayload);
         setLiveTransport('sse');
       } catch (nextError) {
-        if (!alive) return;
-        setError(nextError instanceof Error ? nextError.message : String(nextError));
+        if (alive) setError(nextError instanceof Error ? nextError.message : String(nextError));
       }
-    };
-    const onStatusError = (event: Event) => {
+    });
+    events.addEventListener('status-error', (event) => {
       try {
-        const payload = JSON.parse((event as MessageEvent<string>).data) as { error?: string };
-        if (alive) setError(payload.error ?? 'Live status stream failed.');
+        const body = JSON.parse((event as MessageEvent<string>).data) as { error?: string };
+        if (alive) setError(body.error ?? 'Live status stream failed.');
       } catch {
         if (alive) setError('Live status stream failed.');
       }
-    };
-    events.addEventListener('status', onStatus);
-    events.addEventListener('status-error', onStatusError);
+    });
     events.onopen = () => alive && setLiveTransport('sse');
     events.onerror = () => {
       if (!alive) return;
       setLiveTransport('fallback');
-      // EventSource reconnects automatically. Keep a low-frequency HTTP fallback so
-      // the dashboard stays useful through proxies that buffer/close SSE.
       void snapshot();
     };
-
     const fallbackTimer = window.setInterval(() => {
       if (events.readyState !== EventSource.OPEN) void snapshot();
     }, 10_000);
-
     return () => {
       alive = false;
       events.close();
@@ -342,29 +334,18 @@ export function App() {
   const activeJob = scheduler?.active?.[0];
   const progress = activeJob?.progress;
   const currentInference = data?.inference?.current;
-  const recentInferences = data?.inference?.recent ?? [];
-  const telemetry = data?.recentTelemetry ?? [];
-  const cpu = data?.machine?.cpu;
-  const memory = data?.machine?.memory;
-  const gpu = data?.machine?.gpu;
-  const currentBudget = currentInference
-    ? data?.ollama?.stageBudgets?.[currentInference.stage]
-    : undefined;
-
   const phase = progress?.phase ?? currentInference?.stage ?? (activeJob ? 'workspace' : undefined);
-  const headline =
-    progress?.action ??
-    (currentInference
-      ? `Qwen is running ${currentInference.stage}`
-      : activeJob
-        ? 'Preparing remote workspace'
-        : 'Idle');
+  const normalizedPhase = normalizePhase(phase);
+  const currentBudget = currentInference ? data?.ollama?.stageBudgets?.[currentInference.stage] : undefined;
   const phaseProgress = useMemo(() => {
-    const index = stageIndex(phase);
+    const index = stageIndex(normalizedPhase);
     return index < 0 ? 0 : ((index + 1) / pipeline.length) * 100;
-  }, [phase]);
-
+  }, [normalizedPhase]);
   const online = Boolean(data?.ok && !error);
+  const gpu = data?.machine?.gpu;
+  const memory = data?.machine?.memory;
+  const cpu = data?.machine?.cpu;
+  const headline = progress?.action ?? (currentInference ? `Qwen is running ${currentInference.stage}` : activeJob ? 'Preparing workspace' : 'Idle');
 
   return (
     <div className="min-h-screen">
@@ -372,15 +353,15 @@ export function App() {
       <main className="relative mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
         <header className="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
           <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 shadow-[0_0_35px_rgba(34,211,238,.09)]">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10">
               <BrainCircuit className="h-6 w-6 text-cyan-300" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Local Coder</h1>
-                <Badge variant="outline" className="border-cyan-400/20 text-cyan-300">Control Plane</Badge>
+                <Badge variant="outline" className="border-cyan-400/20 text-cyan-300">Premium Agent Runtime</Badge>
               </div>
-              <p className="mt-1 text-sm text-muted-foreground">Mac → Meshnet → Windows → Ollama / Qwen · live engineering observability</p>
+              <p className="mt-1 text-sm text-muted-foreground">Impact → deliberation → evidence → plan → execution → validation → review · live via SSE</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -390,158 +371,86 @@ export function App() {
             </Badge>
             <Badge variant={liveTransport === 'sse' ? 'success' : 'secondary'} className="gap-2 px-3 py-1.5">
               <Radio className="h-3.5 w-3.5" />
-              {liveTransport === 'sse' ? 'SSE live' : liveTransport === 'fallback' ? 'HTTP fallback' : 'connecting stream'}
+              {liveTransport === 'sse' ? 'SSE live' : liveTransport === 'fallback' ? 'HTTP fallback' : 'connecting'}
             </Badge>
-            <Badge variant="secondary" className="gap-2 px-3 py-1.5"><Clock3 className="h-3.5 w-3.5" />{lastOkAt ? `updated ${lastOkAt.toLocaleTimeString()}` : 'connecting'}</Badge>
+            <Badge variant="secondary" className="gap-2 px-3 py-1.5"><Clock3 className="h-3.5 w-3.5" />{lastOkAt ? shortTime(lastOkAt.toISOString()) : '—'}</Badge>
           </div>
         </header>
 
-        {error ? (
-          <Card className="mb-5 border-rose-400/25 bg-rose-500/5">
-            <CardContent className="flex items-center gap-3 p-4 text-sm text-rose-200"><Network className="h-4 w-4" />{error}</CardContent>
-          </Card>
-        ) : null}
+        {error ? <div className="mb-5 rounded-xl border border-rose-400/20 bg-rose-500/[.05] px-4 py-3 text-sm text-rose-200">{error}</div> : null}
 
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard label="Worker" value={data?.hostname ?? '—'} detail={`${data?.platform ?? '—'} · v${data?.workerVersion ?? '—'}`} icon={ServerCog} />
-          <MetricCard label="Model" value={data?.model ?? '—'} detail={data?.ollama?.ok ? `Ollama healthy · ${data.ollama.numCtx ?? '—'} ctx` : 'Ollama unavailable'} icon={Sparkles} accent="text-cyan-100" />
-          <MetricCard label="Execution" value={`${scheduler?.activeJobs ?? 0} active`} detail={`${scheduler?.queuedJobs ?? 0} queued · concurrency ${scheduler?.maxConcurrentJobs ?? '—'}`} icon={Workflow} />
-          <MetricCard label="GPU" value={gpu ? `${gpu.utilizationPercent ?? 0}%` : '—'} detail={gpu ? `${gpu.name ?? 'NVIDIA'} · ${gpu.memoryUsedMiB ?? 0}/${gpu.memoryTotalMiB ?? 0} MiB` : 'nvidia-smi unavailable'} icon={Zap} accent="text-violet-200" />
-        </section>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard label="Agent state" value={activeJob ? normalizedPhase || 'running' : 'idle'} detail={headline} icon={Workflow} />
+          <MetricCard label="Scheduler" value={`${scheduler?.activeJobs ?? 0} / ${scheduler?.queuedJobs ?? 0}`} detail="active / queued jobs" icon={ServerCog} />
+          <MetricCard label="Model" value={currentInference?.model ?? data?.model ?? '—'} detail={currentInference ? `${streamStateLabel(currentInference.streamState)} · ${duration(currentInference.runningMs)}` : 'no active inference'} icon={BrainCircuit} />
+          <MetricCard label="Context" value={data?.ollama?.numCtx?.toLocaleString() ?? '—'} detail="configured model context" icon={MemoryStick} />
+        </div>
 
-        <section className="mt-4 grid gap-4 xl:grid-cols-[1.55fr_.85fr]">
-          <Card className="glass min-w-0 overflow-hidden border-cyan-400/10">
-            <CardHeader className="border-b border-border/70 pb-5">
-              <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant={activeJob ? 'success' : 'secondary'}>{activeJob ? activeJob.kind.toUpperCase() : 'IDLE'}</Badge>
-                    {phase ? <Badge variant="outline" className="border-cyan-400/20 text-cyan-300">{phase}</Badge> : null}
-                    {currentInference ? <Badge variant="warning">{streamStateLabel(currentInference.streamState)}</Badge> : null}
-                  </div>
-                  <CardTitle className="mt-3 text-xl sm:text-2xl">{headline}</CardTitle>
-                  <CardDescription className="mt-2 max-w-4xl text-sm leading-6">{progress?.detail ?? (activeJob ? 'The worker is executing the current local engineering job.' : 'No active engineering job. The worker is ready.')}</CardDescription>
-                </div>
-                <div className="shrink-0 text-left sm:text-right">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Elapsed</div>
-                  <div className="mt-1 font-mono text-xl font-semibold text-cyan-100">{duration(activeJob?.runningMs)}</div>
-                </div>
+        <Card className="glass mt-4">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base"><Sparkles className="h-4 w-4 text-cyan-300" />Agent lifecycle</CardTitle>
+            <CardDescription>{headline}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Pipeline phase={phase} completed={progress?.completedSteps} />
+            <Progress value={phaseProgress} />
+            {progress?.detail ? <p className="whitespace-pre-wrap text-sm leading-6 text-slate-300">{progress.detail}</p> : null}
+            {progress?.reasoningSummary ? (
+              <div className="rounded-xl border border-violet-400/15 bg-violet-400/[.035] p-4 text-sm leading-6 text-slate-300">
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-[.14em] text-violet-300">Operational reasoning summary</div>
+                {progress.reasoningSummary}
               </div>
-              <Progress className="mt-5 h-1.5" value={phaseProgress} />
+            ) : null}
+            {progress?.validation ? <pre className="overflow-auto rounded-xl border border-border bg-black/25 p-4 font-mono text-xs text-slate-300">{progress.validation}</pre> : null}
+          </CardContent>
+        </Card>
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-[1.2fr_.8fr]">
+          <Card className="glass">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><Activity className="h-4 w-4 text-cyan-300" />Model activity</CardTitle>
+              <CardDescription>Safe liveness signals only; hidden chain-of-thought content is never displayed.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6 pt-6">
-              <Pipeline phase={phase} completed={progress?.completedSteps} />
-
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="rounded-xl border border-border bg-secondary/25 p-4">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground"><TerminalSquare className="h-3.5 w-3.5" />Current action</div>
-                  <p className="mt-2 text-sm font-medium leading-6">{progress?.action ?? (currentInference ? `${currentInference.stage} inference` : activeJob ? 'Workspace / orchestration' : 'Waiting')}</p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/25 p-4">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground"><ListTree className="h-3.5 w-3.5" />Task</div>
-                  <p className="mt-2 break-words font-mono text-sm text-slate-200">{progress?.taskId ?? '—'}</p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/25 p-4">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground"><Gauge className="h-3.5 w-3.5" />Validation</div>
-                  <p className="mt-2 break-words font-mono text-sm text-slate-200">{progress?.validation ?? '—'}</p>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-violet-400/15 bg-violet-400/[.035] p-5">
-                <div className="flex items-center gap-2"><BrainCircuit className="h-4 w-4 text-violet-300" /><h3 className="text-sm font-semibold">Reasoning / decision summary</h3></div>
-                <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-300">{progress?.reasoningSummary ?? (currentInference ? `Qwen is currently ${currentInference.stage}. A concise decision summary appears here as soon as that stage produces a structured result.` : 'No active reasoning stage.')}</p>
-                <p className="mt-3 text-[11px] text-muted-foreground">Shows structured decisions and safe stream liveness, never hidden chain-of-thought text.</p>
-              </div>
-
-              {progress?.files?.length ? (
-                <div>
-                  <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground"><FileCode2 className="h-3.5 w-3.5" />Files in current task</div>
-                  <div className="flex flex-wrap gap-2">{progress.files.map((file) => <Badge key={file} variant="secondary" className="font-mono font-normal">{file}</Badge>)}</div>
-                </div>
-              ) : null}
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-4">
-            <Card className="glass">
-              <CardHeader className="pb-4"><CardTitle className="flex items-center gap-2 text-base"><MonitorCog className="h-4 w-4 text-cyan-300" />Windows execution host</CardTitle><CardDescription>{cpu?.model ?? 'Remote workstation telemetry'}</CardDescription></CardHeader>
-              <CardContent className="space-y-5">
-                <ResourceBar label="CPU" value={cpu?.usagePercent} detail={`${cpu?.logicalCores ?? '—'} logical cores`} />
-                <ResourceBar label="RAM" value={memory?.usedPercent} detail={`${bytes(memory?.usedBytes)} / ${bytes(memory?.totalBytes)}`} />
-                {gpu ? <ResourceBar label="GPU" value={gpu.utilizationPercent} detail={`${gpu.memoryUsedMiB ?? 0}/${gpu.memoryTotalMiB ?? 0} MiB VRAM · ${gpu.temperatureC ?? '—'}°C`} /> : null}
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <div className="rounded-xl border border-border bg-secondary/25 p-3"><MemoryStick className="h-4 w-4 text-violet-300" /><div className="mt-2 text-xs text-muted-foreground">Worker RSS</div><div className="mt-1 font-semibold">{bytes(data?.machine?.process?.rssBytes)}</div></div>
-                  <div className="rounded-xl border border-border bg-secondary/25 p-3"><HardDrive className="h-4 w-4 text-violet-300" /><div className="mt-2 text-xs text-muted-foreground">Uptime</div><div className="mt-1 font-semibold">{duration((data?.machine?.uptimeSeconds ?? 0) * 1000)}</div></div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="glass">
-              <CardHeader className="pb-4"><CardTitle className="flex items-center gap-2 text-base"><GitBranch className="h-4 w-4 text-cyan-300" />Connection</CardTitle></CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                <div className="flex justify-between gap-4"><span className="text-muted-foreground">Mac</span><span className="truncate font-mono text-xs">{data?.controlPlane?.hostname ?? '—'}</span></div>
-                <div className="flex justify-between gap-4"><span className="text-muted-foreground">Worker URL</span><span className="truncate font-mono text-xs">{data?.controlPlane?.workerUrl ?? '—'}</span></div>
-                <div className="flex justify-between gap-4"><span className="text-muted-foreground">Transport</span><span className="font-mono text-xs">{data?.controlPlane?.transport ?? liveTransport}</span></div>
-                <div className="flex justify-between gap-4"><span className="text-muted-foreground">Collected</span><span className="font-mono text-xs">{shortTime(data?.collectedAt)}</span></div>
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-
-        <section className="mt-4 grid gap-4 xl:grid-cols-2">
-          <Card className="glass min-w-0">
-            <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Cpu className="h-4 w-4 text-cyan-300" />Model activity</CardTitle><CardDescription>Live Qwen stream liveness, stage budgets and completed throughput</CardDescription></CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
               {currentInference ? (
-                <div className="mb-4 rounded-xl border border-cyan-400/20 bg-cyan-400/[.04] p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex flex-wrap items-center gap-2"><Badge variant="warning">LIVE</Badge><span className="font-semibold capitalize">{currentInference.stage}</span><Badge variant="outline">{streamStateLabel(currentInference.streamState)}</Badge></div>
-                    <span className="font-mono text-sm text-cyan-100">{duration(currentInference.runningMs)}</span>
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="warning">LIVE</Badge>
+                    <Badge variant="outline">{currentInference.stage}</Badge>
+                    <Badge variant="secondary">{streamStateLabel(currentInference.streamState)}</Badge>
                   </div>
-                  <div className="mt-2 text-xs text-muted-foreground">{currentInference.model}</div>
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                    <div className="rounded-lg border border-border bg-secondary/25 p-3"><div className="text-[10px] uppercase tracking-[.12em] text-muted-foreground">Stream chunks</div><div className="mt-1 font-mono text-sm">{currentInference.streamChunks ?? 0}</div></div>
-                    <div className="rounded-lg border border-border bg-secondary/25 p-3"><div className="text-[10px] uppercase tracking-[.12em] text-muted-foreground">Hidden reasoning activity</div><div className="mt-1 font-mono text-sm">{currentInference.thinkingChars ?? 0} chars</div></div>
-                    <div className="rounded-lg border border-border bg-secondary/25 p-3"><div className="text-[10px] uppercase tracking-[.12em] text-muted-foreground">Result output</div><div className="mt-1 font-mono text-sm">{currentInference.outputChars ?? 0} chars</div></div>
-                    <div className="rounded-lg border border-border bg-secondary/25 p-3"><div className="text-[10px] uppercase tracking-[.12em] text-muted-foreground">Last activity</div><div className="mt-1 font-mono text-sm">{currentInference.lastActivityAt ? `${compactDuration(currentInference.silentForMs)} ago` : 'waiting'}</div></div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <MetricCard label="Elapsed" value={duration(currentInference.runningMs)} detail={`started ${shortTime(currentInference.startedAt)}`} icon={Clock3} />
+                    <MetricCard label="Stream chunks" value={currentInference.streamChunks ?? 0} detail={`silent ${compactDuration(currentInference.silentForMs)}`} icon={Activity} />
+                    <MetricCard label="Reasoning activity" value={(currentInference.thinkingChars ?? 0).toLocaleString()} detail="hidden reasoning chars counted" icon={BrainCircuit} />
+                    <MetricCard label="Output" value={(currentInference.outputChars ?? 0).toLocaleString()} detail="structured output characters" icon={TerminalSquare} />
                   </div>
-                  {currentBudget ? (
-                    <div className="mt-3 text-xs text-muted-foreground">Stage SLA: {currentBudget.maxDurationMs ? duration(currentBudget.maxDurationMs) : 'global'} wall clock · {currentBudget.maxTokens ?? 'unbounded'} generated-token budget.</div>
-                  ) : null}
-                  <div className="mt-2 text-[11px] text-muted-foreground">Hidden reasoning content is never stored or shown; only activity counters are exposed.</div>
-                </div>
-              ) : null}
-              <div className="max-h-[340px] space-y-1 overflow-auto pr-1 scrollbar-thin">
-                {recentInferences.length ? recentInferences.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between gap-4 border-b border-border/60 py-3 last:border-0">
-                    <div className="min-w-0"><div className="flex items-center gap-2"><Badge variant={item.status === 'error' ? 'destructive' : 'secondary'}>{item.stage}</Badge><span className="truncate text-xs text-muted-foreground">{item.model}</span></div><div className="mt-1 text-xs text-muted-foreground">{(item.promptTokens ?? 0) + (item.completionTokens ?? 0)} tokens{item.tokensPerSecond ? ` · ${item.tokensPerSecond.toFixed(1)} tok/s` : ''}</div></div>
-                    <div className="shrink-0 text-right"><div className="font-mono text-sm">{duration(item.durationMs)}</div><div className="text-xs text-muted-foreground">{shortTime(item.finishedAt)}</div></div>
+                  <div className="rounded-xl border border-border bg-secondary/20 p-4 text-sm text-muted-foreground">
+                    Stage budget: {currentBudget?.maxDurationMs ? duration(currentBudget.maxDurationMs) : '—'} wall clock · {currentBudget?.maxTokens?.toLocaleString() ?? '—'} generated-token budget.
                   </div>
-                )) : <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No inference history yet.</div>}
-              </div>
+                </>
+              ) : (
+                <div className="flex min-h-40 items-center justify-center rounded-xl border border-dashed border-border text-sm text-muted-foreground">No active model inference.</div>
+              )}
             </CardContent>
           </Card>
 
-          <Card className="glass min-w-0">
-            <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Activity className="h-4 w-4 text-cyan-300" />Completed activity</CardTitle><CardDescription>Engineering and inference telemetry with actual local model throughput</CardDescription></CardHeader>
-            <CardContent>
-              <div className="max-h-[420px] space-y-1 overflow-auto pr-1 scrollbar-thin">
-                {telemetry.length ? telemetry.map((event, index) => {
-                  const status = String(event.status ?? 'unknown');
-                  const tokenCount = Number(event.promptTokens ?? 0) + Number(event.completionTokens ?? 0);
-                  const throughput = Number(event.tokensPerSecond ?? 0);
-                  return (
-                    <div key={`${String(event.timestamp)}-${index}`} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-border/60 py-3 last:border-0">
-                      <div className={cn('h-2 w-2 rounded-full', status === 'success' ? 'bg-emerald-400' : status === 'error' ? 'bg-rose-400' : 'bg-amber-400')} />
-                      <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-medium capitalize">{String(event.stage ?? event.kind ?? 'event')}</span><Badge variant="outline" className="text-[10px]">{status}</Badge></div><div className="mt-1 truncate text-xs text-muted-foreground">{String(event.model ?? '—')} · {tokenCount} tokens{throughput > 0 ? ` · ${throughput.toFixed(1)} tok/s` : ''} · {Number(event.changedFiles ?? 0)} files</div></div>
-                      <div className="text-right text-xs text-muted-foreground">{shortTime(String(event.timestamp ?? ''))}</div>
-                    </div>
-                  );
-                }) : <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No completed telemetry yet.</div>}
+          <Card className="glass">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><Gauge className="h-4 w-4 text-cyan-300" />Machine</CardTitle>
+              <CardDescription>{data?.hostname ?? 'Windows worker'} · {gpu?.name ?? 'GPU telemetry unavailable'}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <ResourceBar label="GPU" value={gpu?.utilizationPercent} detail={gpu ? `${gpu.memoryUsedMiB ?? 0} / ${gpu.memoryTotalMiB ?? 0} MiB · ${gpu.temperatureC ?? '—'}°C` : undefined} />
+              <ResourceBar label="Memory" value={memory?.usedPercent} detail={memory ? `${bytes(memory.usedBytes)} / ${bytes(memory.totalBytes)}` : undefined} />
+              <ResourceBar label="CPU" value={cpu?.usagePercent} detail={cpu ? `${cpu.logicalCores ?? '—'} logical cores` : undefined} />
+              <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground">
+                <div className="rounded-xl border border-border bg-secondary/20 p-3"><Cpu className="mb-2 h-4 w-4 text-cyan-300" />{cpu?.model ?? 'CPU'}</div>
+                <div className="rounded-xl border border-border bg-secondary/20 p-3"><HardDrive className="mb-2 h-4 w-4 text-cyan-300" />RSS {bytes(data?.machine?.process?.rssBytes)}</div>
               </div>
             </CardContent>
           </Card>
-        </section>
+        </div>
 
         <HistoryPanel />
       </main>
