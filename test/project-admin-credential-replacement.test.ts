@@ -18,7 +18,7 @@ class MemorySecretStore implements SecretStore {
   delete(id: string): boolean { return this.values.delete(id); }
 }
 
-test('credential replacement cannot move a Project-bound credential to another organization', () => {
+test('credential replacement preserves Project isolation and secret backend ownership', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-coder-admin-credential-'));
   const projects = new ProjectStore(path.join(root, 'projects.json'));
   const keychain = new MemorySecretStore();
@@ -57,6 +57,19 @@ test('credential replacement cannot move a Project-bound credential to another o
     /cannot be moved outside that organization/
   );
 
+  assert.throws(
+    () => admin.createCredential({
+      backend: 'environment',
+      id: 'shared-id',
+      providerId: 'anthropic',
+      label: 'Company A Env',
+      organizationId: 'company-a',
+      environmentVariable: 'COMPANY_A_ANTHROPIC_KEY'
+    }),
+    /remove it before changing secret backends/
+  );
+
   assert.equal(credentials.getProfile('shared-id')?.organizationId, 'company-a');
+  assert.equal(credentials.getProfile('shared-id')?.secret.backend, 'macos-keychain');
   assert.equal(credentials.resolve('shared-id'), 'original-secret');
 });
