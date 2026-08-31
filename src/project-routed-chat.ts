@@ -169,7 +169,7 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
       },
       confirmFallback: this.options.confirmFallback,
       authorizeAttempt: this.options.budget
-        ? ({ candidate }) => this.options.budget!.authorize(candidate, inference)
+        ? async ({ candidate }) => { await this.options.budget!.authorize(candidate, inference); }
         : undefined,
       onAttemptFailure: this.options.budget
         ? ({ candidate }) => this.options.budget!.releaseAttempt(candidate)
