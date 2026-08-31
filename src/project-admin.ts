@@ -418,6 +418,12 @@ export class ProjectAdminService {
   }
 
   private assertCredentialReplacementIsolation(input: CreateCredentialInput): void {
+    const existing = this.credentials.getProfile(input.id);
+    if (existing && existing.secret.backend !== input.backend) {
+      throw new Error(
+        `Credential ${input.id} already uses ${existing.secret.backend}; remove it before changing secret backends.`
+      );
+    }
     for (const project of this.projects.list()) {
       for (const [providerId, credentialId] of Object.entries(project.credentialProfileIds)) {
         if (credentialId !== input.id) continue;
