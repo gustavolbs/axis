@@ -44,6 +44,7 @@ if (-not (Test-IsAdministrator)) {
 }
 
 $node = Get-Command node -ErrorAction Stop
+$localCoderNode = Install-LocalCoderNodeRuntime -NodePath $node.Source
 if (-not (Test-Path $DashboardEntry)) {
   throw "Missing $DashboardEntry."
 }
@@ -63,7 +64,7 @@ if (-not $workerToken) {
 [Environment]::SetEnvironmentVariable("LOCAL_CODER_DASHBOARD_WORKER_URL", "http://127.0.0.1:7337", "User")
 
 $action = New-ScheduledTaskAction `
-  -Execute $node.Source `
+  -Execute $localCoderNode `
   -Argument ('"{0}" --no-open' -f $DashboardEntry) `
   -WorkingDirectory $RepoRoot
 
@@ -94,22 +95,21 @@ Register-ScheduledTask `
   -Principal $principal `
   -Description "Local Coder React dashboard hosted on the Windows execution plane" | Out-Null
 
-# Windows can create generic "Node.js JavaScript Runtime" inbound Block rules when
-# its network-access prompt is denied. Explicit Block wins over our Allow rule, so
-# repair only those Windows-generated local rules and refuse to override custom policy.
-# The resulting Allow rule is restricted to the dashboard Node executable, exact
-# Windows Meshnet address, exact Mac source address, and exact TCP port.
+# The dashboard uses a dedicated Node runtime, so generic firewall rules created for
+# the system-wide Node installation cannot affect it. If Windows ever creates a block
+# specifically for the dedicated runtime, repair only its standard local popup rule.
 Set-LocalCoderInboundFirewallRule `
   -DisplayName $FirewallRule `
-  -ExecutablePath $node.Source `
+  -ExecutablePath $localCoderNode `
   -Port $Port `
   -RemoteAddress $MacIp `
   -LocalAddress $ListenHost `
   -Profile Any
 
 Write-Host "Installed scheduled task '$TaskName'." -ForegroundColor Green
-Write-Host "Dashboard listens only on $ListenHost`:$Port and the firewall allows only Mac $MacIp to that Node executable/address/port on any Windows network profile."
-Write-Host "Conflicting Windows-generated Node inbound Block rules are repaired automatically; custom/managed Block policy causes installation to fail safely."
+Write-Host "Dashboard listens only on $ListenHost`:$Port and the firewall allows only Mac $MacIp to the dedicated Local Coder Node runtime/address/port on any Windows network profile."
+Write-Host "Dedicated Node runtime: $localCoderNode"
+Write-Host "System-wide Node firewall rules cannot affect this dashboard runtime."
 Write-Host ""
 Write-Host "Start it now with:"
 Write-Host "  Start-ScheduledTask -TaskName '$TaskName'"
