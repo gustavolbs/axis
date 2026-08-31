@@ -32,7 +32,7 @@ test('remote worker provider exposes only the configured worker model', async ()
   assert.equal(models[0]?.providerId, 'ollama');
   assert.equal(models[0]?.metadata?.remoteWorker, true);
   assert.equal(models[0]?.metadata?.configuredFastModel, true);
-  assert.equal(models[0]?.metadata?.configuredStrongModel, true);
+  assert.equal(models[0]?.metadata?.configuredStrongModel, undefined);
 });
 
 test('remote worker provider maps structured chat and usage through protocol v1', async () => {
@@ -105,6 +105,31 @@ test('remote worker provider refuses model switching not supported by protocol v
     }
   );
   assert.equal(chatCalls, 0);
+});
+
+test('remote worker provider rejects a response produced by a different model', async () => {
+  const provider = new RemoteWorkerInferenceProvider({
+    health: async () => health(),
+    chat: async (): Promise<OllamaGeneration> => ({
+      content: 'wrong model',
+      model: 'unexpected-model'
+    })
+  });
+  await provider.listModels();
+
+  await assert.rejects(
+    provider.invoke({
+      model: 'qwen3.8:27b',
+      systemPrompt: 'system',
+      userPrompt: 'user'
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ProviderError);
+      assert.equal(error.options.retryable, false);
+      assert.equal(error.options.code, 'remote_worker_model_mismatch');
+      return true;
+    }
+  );
 });
 
 test('remote worker transport unavailability becomes retryable provider failure', async () => {
