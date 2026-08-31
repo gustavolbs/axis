@@ -48,6 +48,7 @@ export interface BudgetWarning {
 }
 
 export interface BudgetAdmission {
+  attemptId: string;
   providerId: string;
   modelId: string;
   expectedCostUsd: number;
@@ -67,6 +68,12 @@ export interface ProjectBudgetSnapshot {
   daily: UsagePeriodSummary;
   monthly: UsagePeriodSummary;
   warnings: BudgetWarning[];
+}
+
+interface PendingBudgetAttempt {
+  candidateKey: string;
+  reservationId?: string;
+  pricing?: ModelPricing;
 }
 
 function limitsActive(project: ProjectDefinition): boolean {
@@ -142,7 +149,7 @@ function reservationLeaseMs(inference: Omit<InferenceRequest, 'model'>): number 
   return Math.max(60_000, Math.min(requested + 120_000, 7_200_000));
 }
 
-function pendingKey(candidate: Pick<RoutingCandidate, 'providerId' | 'modelId'>): string {
+function candidateKey(candidate: Pick<RoutingCandidate, 'providerId' | 'modelId'>): string {
   return `${candidate.providerId}\0${candidate.modelId}`;
 }
 
@@ -152,7 +159,7 @@ export class ProjectBudgetSession {
   private jobUnknownCostEvents = 0;
   private readonly warningsSeen: BudgetWarning[] = [];
   private readonly warningKeys = new Set<string>();
-  private readonly pendingReservations = new Map<string, string[]>();
+  private readonly pendingAttempts = new Map<string, PendingBudgetAttempt>();
 
   constructor(
     readonly project: ProjectDefinition,
@@ -198,8 +205,10 @@ export class ProjectBudgetSession {
     candidate: RoutingCandidate,
     inference: Omit<InferenceRequest, 'model'>
   ): Promise<BudgetAdmission> {
+    const attemptId = randomUUID();
     if (candidate.providerKind === 'local') {
       return {
+        attemptId,
         providerId: candidate.providerId,
         modelId: candidate.modelId,
         expectedCostUsd: 0,
@@ -209,39 +218,28 @@ export class ProjectBudgetSession {
     }
 
     const active = limitsActive(this.project);
-    const modelPricing = this.pricing.get(candidate.providerId, candidate.modelId);
-    if (!modelPricing) {
-      if (active) {
-        throw new BudgetGuardError(
-          'pricing-required',
-          this.project.id,
-          `Project ${this.project.id} has a cloud budget but no pricing for ${candidate.providerId}/${candidate.modelId}.`,
-          { providerId: candidate.providerId, modelId: candidate.modelId }
-        );
-      }
-      return {
-        providerId: candidate.providerId,
-        modelId: candidate.modelId,
-        expectedCostUsd: candidate.estimatedCostUsd ?? 0,
-        upperBoundCostUsd: candidate.estimatedCostUsd ?? 0,
-        warnings: []
-      };
-    }
-
-    const expected: RequestCostEstimate | undefined = estimateRequestCostUsd(inference, modelPricing);
-    const upper = upperBoundCost(inference, modelPricing);
-    if (active && upper === undefined) {
-      throw new BudgetGuardError(
-        'output-bound-required',
-        this.project.id,
-        `Budgeted cloud inference requires maxOutputTokens for ${candidate.providerId}/${candidate.modelId}.`,
-        { providerId: candidate.providerId, modelId: candidate.modelId }
-      );
-    }
-    const upperCostUsd = upper ?? expected?.estimatedCostUsd ?? 0;
-    const expectedCostUsd = expected?.estimatedCostUsd ?? candidate.estimatedCostUsd ?? upperCostUsd;
     if (!active) {
+      const modelPricing = this.pricing.get(candidate.providerId, candidate.modelId);
+      if (!modelPricing) {
+        return {
+          attemptId,
+          providerId: candidate.providerId,
+          modelId: candidate.modelId,
+          expectedCostUsd: candidate.estimatedCostUsd ?? 0,
+          upperBoundCostUsd: candidate.estimatedCostUsd ?? 0,
+          warnings: []
+        };
+      }
+      const expected: RequestCostEstimate | undefined = estimateRequestCostUsd(inference, modelPricing);
+      const upper = upperBoundCost(inference, modelPricing);
+      const upperCostUsd = upper ?? expected?.estimatedCostUsd ?? 0;
+      const expectedCostUsd = expected?.estimatedCostUsd ?? candidate.estimatedCostUsd ?? upperCostUsd;
+      // Preserve the exact price sheet used for this in-flight call. Admin pricing may
+      // legitimately change when no hard budget is active; settlement must not silently
+      // re-price a request after it has already been admitted.
+      this.rememberAttempt(attemptId, candidate, undefined, modelPricing);
       return {
+        attemptId,
         providerId: candidate.providerId,
         modelId: candidate.modelId,
         expectedCostUsd: roundUsd(expectedCostUsd),
@@ -251,6 +249,30 @@ export class ProjectBudgetSession {
     }
 
     return await this.ledger.withBudgetLock(async () => {
+      // Pricing is read only after acquiring the same lock used by the admin pricing API.
+      // That closes the read-price -> reserve race: a mutation can occur entirely before
+      // this admission or entirely after settlement, never between these two operations.
+      const modelPricing = this.pricing.get(candidate.providerId, candidate.modelId);
+      if (!modelPricing) {
+        throw new BudgetGuardError(
+          'pricing-required',
+          this.project.id,
+          `Project ${this.project.id} has a cloud budget but no pricing for ${candidate.providerId}/${candidate.modelId}.`,
+          { providerId: candidate.providerId, modelId: candidate.modelId }
+        );
+      }
+      const expected: RequestCostEstimate | undefined = estimateRequestCostUsd(inference, modelPricing);
+      const upper = upperBoundCost(inference, modelPricing);
+      if (upper === undefined) {
+        throw new BudgetGuardError(
+          'output-bound-required',
+          this.project.id,
+          `Budgeted cloud inference requires maxOutputTokens for ${candidate.providerId}/${candidate.modelId}.`,
+          { providerId: candidate.providerId, modelId: candidate.modelId }
+        );
+      }
+      const upperCostUsd = upper;
+      const expectedCostUsd = expected?.estimatedCostUsd ?? candidate.estimatedCostUsd ?? upperCostUsd;
       const warnings: BudgetWarning[] = [];
       const now = this.now();
       const reservations = this.ledger.listReservations(this.project.id, now);
@@ -357,8 +379,9 @@ export class ProjectBudgetSession {
         upperBoundCostUsd: roundUsd(upperCostUsd),
         timestamp: now.toISOString()
       });
-      this.rememberReservation(candidate, reservation.id);
+      this.rememberAttempt(attemptId, candidate, reservation.id, modelPricing);
       return {
+        attemptId,
         providerId: candidate.providerId,
         modelId: candidate.modelId,
         expectedCostUsd: roundUsd(expectedCostUsd),
@@ -369,19 +392,27 @@ export class ProjectBudgetSession {
     });
   }
 
-  releaseAttempt(candidate: Pick<RoutingCandidate, 'providerId' | 'modelId'>): void {
-    const id = this.takeReservation(candidate);
-    if (id) this.ledger.releaseReservation(id);
+  releaseAttempt(
+    attempt: Pick<BudgetAdmission, 'attemptId'> | Pick<RoutingCandidate, 'providerId' | 'modelId'>
+  ): void {
+    const attemptId = this.resolveAttemptId(attempt);
+    if (!attemptId) return;
+    const pending = this.pendingAttempts.get(attemptId);
+    if (pending?.reservationId) this.ledger.releaseReservation(pending.reservationId);
+    this.pendingAttempts.delete(attemptId);
   }
 
   record(
     stage: InferenceStage,
     candidate: Pick<RoutingCandidate, 'providerId' | 'providerKind' | 'modelId'>,
     result: InferenceResult,
-    fallbackUsed: boolean
+    fallbackUsed: boolean,
+    admission?: Pick<BudgetAdmission, 'attemptId'>
   ): UsageLedgerEvent {
+    const attemptId = admission?.attemptId ?? this.findPendingAttempt(candidate);
+    const pending = attemptId ? this.pendingAttempts.get(attemptId) : undefined;
     const modelPricing = candidate.providerKind === 'cloud'
-      ? this.pricing.get(candidate.providerId, candidate.modelId)
+      ? pending?.pricing ?? this.pricing.get(candidate.providerId, candidate.modelId)
       : undefined;
     const costUsd = candidate.providerKind === 'local'
       ? 0
@@ -403,8 +434,8 @@ export class ProjectBudgetSession {
       pricingVerifiedAt: modelPricing?.verifiedAt,
       fallbackUsed
     });
-    const reservationId = this.takeReservation(candidate);
-    if (reservationId) this.ledger.releaseReservation(reservationId);
+    if (pending?.reservationId) this.ledger.releaseReservation(pending.reservationId);
+    if (attemptId) this.pendingAttempts.delete(attemptId);
     if (costUsd === undefined && candidate.providerKind === 'cloud') this.jobUnknownCostEvents += 1;
     else this.jobKnownCostUsd = roundUsd(this.jobKnownCostUsd + (costUsd ?? 0));
     return event;
@@ -469,23 +500,32 @@ export class ProjectBudgetSession {
     }
   }
 
-  private rememberReservation(
+  private rememberAttempt(
+    attemptId: string,
     candidate: Pick<RoutingCandidate, 'providerId' | 'modelId'>,
-    id: string
+    reservationId: string | undefined,
+    pricing: ModelPricing | undefined
   ): void {
-    const key = pendingKey(candidate);
-    const queue = this.pendingReservations.get(key) ?? [];
-    queue.push(id);
-    this.pendingReservations.set(key, queue);
+    this.pendingAttempts.set(attemptId, {
+      candidateKey: candidateKey(candidate),
+      reservationId,
+      pricing: pricing ? structuredClone(pricing) : undefined
+    });
   }
 
-  private takeReservation(
+  private findPendingAttempt(
     candidate: Pick<RoutingCandidate, 'providerId' | 'modelId'>
   ): string | undefined {
-    const key = pendingKey(candidate);
-    const queue = this.pendingReservations.get(key);
-    const id = queue?.shift();
-    if (!queue?.length) this.pendingReservations.delete(key);
-    return id;
+    const key = candidateKey(candidate);
+    for (const [attemptId, pending] of this.pendingAttempts) {
+      if (pending.candidateKey === key) return attemptId;
+    }
+    return undefined;
+  }
+
+  private resolveAttemptId(
+    attempt: Pick<BudgetAdmission, 'attemptId'> | Pick<RoutingCandidate, 'providerId' | 'modelId'>
+  ): string | undefined {
+    return 'attemptId' in attempt ? attempt.attemptId : this.findPendingAttempt(attempt);
   }
 }
