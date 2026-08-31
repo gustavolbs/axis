@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { discoverWorkspace, searchWorkspace } from '../src/discovery.js';
+import { createDirectoryLink } from './fs-test-utils.js';
 
 async function withWorkspace(run: (workspace: string) => Promise<void>) {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-discovery-'));
@@ -60,7 +61,7 @@ test('does not follow directory symlinks during discovery', async () => {
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-discovery-outside-'));
     try {
       await fs.writeFile(path.join(outside, 'secret.ts'), 'secret needle\n');
-      await fs.symlink(outside, path.join(workspace, 'linked'));
+      await createDirectoryLink(outside, path.join(workspace, 'linked'));
 
       const result = await discoverWorkspace(workspace, { maxDepth: 4, maxEntries: 100 });
       assert.ok(!result.files.some((file) => file.startsWith('linked')));
