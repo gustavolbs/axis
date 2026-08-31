@@ -36,6 +36,7 @@ export interface LocalCoderConfig {
   executionMode: LocalCoderExecutionMode;
   remoteWorkerUrl?: string;
   remoteWorkerToken?: string;
+  /** Total control-plane envelope for queueing plus a complete remote job. */
   remoteWorkerTimeoutMs: number;
   remoteMaxDeltaBytes: number;
 
@@ -155,7 +156,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
     executionMode: parseExecutionMode(env.LOCAL_CODER_EXECUTION_MODE),
     remoteWorkerUrl: trimTrailingSlash(env.LOCAL_CODER_REMOTE_WORKER_URL),
     remoteWorkerToken: env.LOCAL_CODER_REMOTE_WORKER_TOKEN?.trim() || undefined,
-    remoteWorkerTimeoutMs: parsePositiveInt(env.LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS, 1_800_000),
+    // A remote local_engineer request spans queue wait plus multiple inference,
+    // implementation, validation and review phases. Keep this envelope well above
+    // the 30-minute per-inference safety cap so healthy work is not aborted mid-run.
+    remoteWorkerTimeoutMs: parsePositiveInt(env.LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS, 7_200_000),
     remoteMaxDeltaBytes: parsePositiveInt(env.LOCAL_CODER_REMOTE_MAX_DELTA_BYTES, 8_000_000),
 
     workerHost: env.LOCAL_CODER_WORKER_HOST?.trim() || '127.0.0.1',
