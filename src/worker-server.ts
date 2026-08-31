@@ -15,6 +15,7 @@ import { getMachineStatus } from './machine-status.js';
 import { OllamaClient } from './ollama.js';
 import { preparePromptForInference } from './planning-policy.js';
 import { currentProgressJobId } from './progress-context.js';
+import { executePremiumLocalEngineer } from './premium-engineer.js';
 import { executeLocalCodePlan } from './orchestrator.js';
 import { reportProgress } from './progress-context.js';
 import {
@@ -26,7 +27,6 @@ import {
   type RemoteTaskRequest,
   type RemoteWorkspaceSnapshot
 } from './remote-protocol.js';
-import { executeLocalEngineerWithRepoIntelligence } from './repo-intelligence.js';
 import { WorkerScheduler } from './worker-scheduler.js';
 import { WorkerHistoryStore } from './worker-history.js';
 import { withWorkerWorkspace } from './worker-workspace.js';
@@ -402,7 +402,7 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
           detail: request.input.goal,
           completedSteps: ['workspace']
         });
-        return await executeLocalEngineerWithRepoIntelligence(ollama, config, {
+        return await executePremiumLocalEngineer(ollama, config, {
           ...request.input,
           workspace,
           repoMemoryScopeKey: request.workspace.memoryScopeKey
