@@ -24,6 +24,7 @@
     "desktop:pack:mac": "npm run build && electron-builder --mac dmg zip --publish never",
     "test": "tsx --test test/**/*.test.ts",
     "check": "npm run build && npm test",
+    "smoke:cloud": "npm run build && node scripts/smoke-cloud-providers.mjs",
     "install:claude": "node scripts/install-claude-user.mjs",
     "install:claude:windows": "node scripts/install-claude-windows-remote.mjs",
     "install:claude:worker": "node scripts/install-claude-remote-worker.mjs",
