@@ -73,7 +73,56 @@ Unsigned DMG + ZIP:
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run desktop:pack:mac
 ```
 
-CI intentionally builds unsigned artifacts. Signing/notarization credentials must be supplied only by a release environment; they are never stored in this repository.
+Normal CI intentionally uses this unsigned configuration. Those artifacts prove packaging portability but are not distribution releases.
+
+## Signed and notarized distribution
+
+Distribution uses a separate `electron-builder.release.yml` and the manual **macOS Signed Release** GitHub Actions workflow.
+
+The release command is:
+
+```bash
+npm run desktop:release:mac
+```
+
+It fails before build/package unless all signing and notarization environment variables are present:
+
+```text
+CSC_LINK
+CSC_KEY_PASSWORD
+APPLE_ID
+APPLE_APP_SPECIFIC_PASSWORD
+APPLE_TEAM_ID
+```
+
+The wrapper never passes those secret values in process arguments; electron-builder receives them through inherited environment variables.
+
+The GitHub workflow maps repository secrets to those variables, builds with Developer ID signing plus Hardened Runtime, asks electron-builder to notarize, then independently verifies:
+
+```text
+codesign --verify --deep --strict
+Developer ID Application authority
+xcrun stapler validate
+spctl --assess --type execute
+```
+
+The generated DMG is mounted and the packaged `Local Coder.app` is verified again before artifacts are uploaded. SHA-256 checksums are generated for the DMG and ZIP.
+
+This separation is intentional: electron-builder may skip signing when no valid identity is available. A distribution workflow must therefore prove the resulting signature/ticket instead of treating successful packaging as successful release.
+
+Apple requirements verified 2026-08-31:
+
+- Developer ID: https://developer.apple.com/support/developer-id/
+- Notarization: https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution
+- Custom notarization workflow: https://developer.apple.com/documentation/security/customizing-the-notarization-workflow
+
+Electron-builder release references verified 2026-08-31:
+
+- code signing: https://www.electron.build/docs/features/code-signing/
+- macOS code signing: https://www.electron.build/docs/features/code-signing/code-signing-mac/
+- notarization: https://www.electron.build/docs/notarization/
+
+See `docs/INSTALLATION.md` and `docs/RELEASE_CHECKLIST.md` for operator instructions.
 
 ## Startup and recovery
 
