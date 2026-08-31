@@ -162,6 +162,14 @@ export class ProjectBudgetSession {
   ) {
     this.jobId = options.jobId ?? randomUUID();
     this.now = options.now ?? (() => new Date());
+    for (const event of this.ledger.list(this.project.id)) {
+      if (event.jobId !== this.jobId) continue;
+      if (event.providerKind === 'cloud' && event.costUsd === undefined) {
+        this.jobUnknownCostEvents += 1;
+      } else {
+        this.jobKnownCostUsd = roundUsd(this.jobKnownCostUsd + (event.costUsd ?? 0));
+      }
+    }
   }
 
   private readonly now: () => Date;
