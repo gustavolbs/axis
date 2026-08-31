@@ -169,18 +169,27 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
       },
       confirmFallback: this.options.confirmFallback,
       authorizeAttempt: this.options.budget
-        ? ({ candidate }) => { this.options.budget?.authorize(candidate, inference); }
+        ? ({ candidate }) => this.options.budget!.authorize(candidate, inference)
+        : undefined,
+      onAttemptFailure: this.options.budget
+        ? ({ candidate }) => this.options.budget!.releaseAttempt(candidate)
         : undefined
     });
 
     const selectedCandidate = candidates.find(
       (candidate) =>
-        candidate.providerId === result.result.providerId &&
-        candidate.modelId === result.result.model
+        candidate.providerId === result.routing.selected.providerId &&
+        candidate.modelId === result.routing.selected.modelId
     );
     if (!selectedCandidate) {
       throw new Error(
-        `Routed provider returned uncatalogued model ${result.result.providerId}/${result.result.model}.`
+        `Routed selection ${result.routing.selected.providerId}/${result.routing.selected.modelId} is missing from its candidate catalog.`
+      );
+    }
+    if (result.result.providerId !== selectedCandidate.providerId) {
+      this.options.budget?.releaseAttempt(selectedCandidate);
+      throw new Error(
+        `Routed provider identity mismatch: selected ${selectedCandidate.providerId}, returned ${result.result.providerId}.`
       );
     }
     this.options.budget?.record(stage, selectedCandidate, result.result, result.fallbackUsed);
