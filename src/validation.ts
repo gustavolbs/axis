@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { resolveSpawnInvocation } from './platform-command.js';
+import { reportProgress } from './progress-context.js';
 
 export interface ValidationCommand {
   command: string;
@@ -65,10 +66,18 @@ export async function runValidationCommand(
   assertValidationAllowed(validation, allowedCommands);
 
   const args = validation.args ?? [];
+  const display = `${validation.command} ${args.join(' ')}`.trim();
+  reportProgress({
+    phase: 'validation',
+    action: 'Running deterministic validation',
+    detail: display,
+    validation: display
+  });
+
   const invocation = resolveSpawnInvocation(validation.command, args);
   const startedAt = Date.now();
 
-  return await new Promise<ValidationResult>((resolve, reject) => {
+  const result = await new Promise<ValidationResult>((resolve, reject) => {
     const child = spawn(invocation.command, invocation.args, {
       cwd: workspace,
       shell: false,
@@ -80,11 +89,11 @@ export async function runValidationCommand(
     let settled = false;
     let timer: NodeJS.Timeout;
 
-    const finish = (result: ValidationResult) => {
+    const finish = (value: ValidationResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(result);
+      resolve(value);
     };
 
     child.stdout.on('data', (chunk) => {
@@ -122,6 +131,18 @@ export async function runValidationCommand(
       });
     }, timeoutMs);
   });
+
+  reportProgress({
+    phase: 'validation',
+    action: result.ok ? 'Validation passed' : 'Validation failed',
+    detail: `${display} · ${result.durationMs}ms${result.exitCode === null ? '' : ` · exit ${result.exitCode}`}`,
+    validation: display,
+    reasoningSummary: result.ok
+      ? 'The current deterministic check passed.'
+      : 'The current deterministic check failed; the local repair/execution loop will use this evidence.'
+  });
+
+  return result;
 }
 
 export async function runValidations(

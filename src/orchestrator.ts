@@ -2,6 +2,7 @@ import { createTwoFilesPatch } from 'diff';
 
 import { classifyTask, type TaskClassification, type TaskClassificationInput } from './classifier.js';
 import type { LocalCoderConfig } from './config.js';
+import type { ProgressReporter } from './engineering-progress.js';
 import {
   executeAgenticCodeTask,
   type AgenticExecutionResult
@@ -291,8 +292,6 @@ async function preflightPlan(
     blockers.push(`Task "${task.id}" must stay in Claude: ${task.classification.reasons.join(' ')}`);
   }
 
-  // Resolve/read every editable path before the first mutation so symlink escapes and
-  // file-size violations fail during preflight rather than halfway through the plan.
   await snapshotFiles(workspace, editableFiles, config);
 
   return { workspace, orderedTasks, editableFiles, preflight, blockers };
@@ -301,8 +300,15 @@ async function preflightPlan(
 export async function executeLocalCodePlan(
   ollama: LocalChatClient,
   config: LocalCoderConfig,
-  plan: LocalExecutionPlan
+  plan: LocalExecutionPlan,
+  progress?: ProgressReporter
 ): Promise<LocalExecutionPlanResult> {
+  progress?.({
+    phase: 'implementation',
+    action: 'Preflighting implementation plan',
+    detail: `Checking ${plan.tasks.length} planned task${plan.tasks.length === 1 ? '' : 's'} and editable-file boundaries.`
+  });
+
   const preflightResult = await preflightPlan(plan, config);
   const { workspace, orderedTasks, editableFiles, preflight, blockers } = preflightResult;
   const taskOrder = orderedTasks.map((task) => task.id);
@@ -310,6 +316,12 @@ export async function executeLocalCodePlan(
   let finalValidation: ValidationResult[] = [];
 
   if (blockers.length > 0) {
+    progress?.({
+      phase: 'implementation',
+      action: 'Implementation plan blocked',
+      detail: blockers.join(' '),
+      reasoningSummary: 'The deterministic routing preflight found work that should not be executed by the local coding model.'
+    });
     return {
       status: 'escalated',
       phase: 'preflight',
@@ -338,6 +350,12 @@ export async function executeLocalCodePlan(
     const delta = diffSnapshots(original, current);
 
     if (rollbackPlanOnFailure) await restoreSnapshots(workspace, original);
+    progress?.({
+      phase: phase === 'execution' ? 'implementation' : 'validation',
+      action: 'Local execution escalated',
+      detail: failedTaskId ? `Task ${failedTaskId} did not converge.` : 'Final validation failed.',
+      taskId: failedTaskId
+    });
 
     return {
       status: 'escalated',
@@ -358,8 +376,19 @@ export async function executeLocalCodePlan(
   };
 
   try {
-    for (const task of orderedTasks) {
+    for (let index = 0; index < orderedTasks.length; index += 1) {
+      const task = orderedTasks[index];
       const classification = preflight.find((entry) => entry.id === task.id)!.classification;
+      progress?.({
+        phase: 'implementation',
+        action: `Implementing task ${index + 1}/${orderedTasks.length}`,
+        detail: task.task,
+        taskId: task.id,
+        files: dedupe(task.editableFiles),
+        validation: task.validation?.map((item) => `${item.command} ${(item.args ?? []).join(' ')}`).join(' · ') || undefined,
+        reasoningSummary: `The planner selected task ${task.id} as the next bounded implementation step.`
+      });
+
       const execution = await executeAgenticCodeTask(ollama, config, {
         workspace,
         task: task.task,
@@ -384,7 +413,27 @@ export async function executeLocalCodePlan(
       taskResults.push({ id: task.id, classification, execution });
 
       if (execution.status !== 'success') return await finishEscalated('execution', task.id);
+      progress?.({
+        phase: 'implementation',
+        action: `Completed ${task.id}`,
+        detail: `${execution.changedFiles.length} file${execution.changedFiles.length === 1 ? '' : 's'} changed; ${execution.validation.length} validation check${execution.validation.length === 1 ? '' : 's'} executed.`,
+        taskId: task.id,
+        files: execution.changedFiles,
+        reasoningSummary: `Task ${task.id} completed locally and passed its bounded execution loop.`
+      });
     }
+
+    const validationLabel = (plan.finalValidation ?? [])
+      .map((item) => `${item.command} ${(item.args ?? []).join(' ')}`)
+      .join(' · ');
+    progress?.({
+      phase: 'validation',
+      action: 'Running final deterministic validation',
+      detail: validationLabel || 'No final validation commands were configured.',
+      validation: validationLabel || undefined,
+      taskId: undefined,
+      files: editableFiles
+    });
 
     finalValidation = await runValidations(
       workspace,
@@ -399,6 +448,13 @@ export async function executeLocalCodePlan(
 
     const current = await snapshotFiles(workspace, editableFiles, config);
     const delta = diffSnapshots(original, current);
+    progress?.({
+      phase: 'validation',
+      action: 'Implementation and validation completed',
+      detail: `${delta.changedFiles.length} file${delta.changedFiles.length === 1 ? '' : 's'} changed; all configured deterministic checks passed.`,
+      files: delta.changedFiles,
+      reasoningSummary: 'The implementation plan converged and deterministic validation passed.'
+    });
 
     return {
       status: 'success',

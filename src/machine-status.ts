@@ -81,6 +81,12 @@ export async function getMachineStatus(): Promise<Record<string, unknown>> {
   const freeMemory = os.freemem();
   const processMemory = process.memoryUsage();
   const cpus = os.cpus();
+  const processStatus = {
+    pid: process.pid,
+    rssBytes: processMemory.rss,
+    heapUsedBytes: processMemory.heapUsed,
+    uptimeSeconds: process.uptime()
+  };
 
   return {
     hostname: os.hostname(),
@@ -97,12 +103,8 @@ export async function getMachineStatus(): Promise<Record<string, unknown>> {
       usedBytes: Math.max(0, totalMemory - freeMemory),
       usedPercent: totalMemory > 0 ? Math.round(((totalMemory - freeMemory) / totalMemory) * 1000) / 10 : 0
     },
-    workerProcess: {
-      pid: process.pid,
-      rssBytes: processMemory.rss,
-      heapUsedBytes: processMemory.heapUsed,
-      uptimeSeconds: process.uptime()
-    },
+    process: processStatus,
+    workerProcess: processStatus,
     gpu: await queryNvidiaGpu()
   };
 }

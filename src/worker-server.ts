@@ -4,10 +4,16 @@ import os from 'node:os';
 
 import { loadConfig } from './config.js';
 import { executeAgenticCodeTask } from './executor.js';
-import { classifyInferenceStage, WorkerInferenceTracker } from './inference-status.js';
+import {
+  classifyInferenceStage,
+  progressAtInferenceStart,
+  progressFromInferenceResult,
+  WorkerInferenceTracker
+} from './inference-status.js';
 import { getMachineStatus } from './machine-status.js';
 import { OllamaClient } from './ollama.js';
 import { executeLocalCodePlan } from './orchestrator.js';
+import { reportProgress } from './progress-context.js';
 import {
   REMOTE_WORKER_PROTOCOL_VERSION,
   assertProtocolVersion,
@@ -21,7 +27,7 @@ import { executeLocalEngineerWithRepoIntelligence } from './repo-intelligence.js
 import { WorkerScheduler } from './worker-scheduler.js';
 import { withWorkerWorkspace } from './worker-workspace.js';
 
-const WORKER_VERSION = '0.11.1';
+const WORKER_VERSION = '0.12.0';
 const config = loadConfig();
 const ollama = new OllamaClient(config);
 const scheduler = new WorkerScheduler(config.workerMaxConcurrentJobs ?? 1);
@@ -29,19 +35,26 @@ const inferenceTracker = new WorkerInferenceTracker();
 
 const baseChat = ollama.chat.bind(ollama);
 ollama.chat = (async (...args: Parameters<OllamaClient['chat']>) => {
-  const [systemPrompt, , , runtime] = args;
+  const [systemPrompt, userPrompt, , runtime] = args;
   const stage = classifyInferenceStage(systemPrompt);
   const inferenceId = inferenceTracker.begin(stage, runtime?.model ?? config.model);
+  reportProgress(progressAtInferenceStart(stage, userPrompt));
   try {
     const generation = await baseChat(...args);
     inferenceTracker.complete(inferenceId, 'success', {
       promptTokens: generation.promptTokens,
       completionTokens: generation.completionTokens
     });
+    reportProgress(progressFromInferenceResult(stage, generation.content));
     return generation;
   } catch (error) {
-    inferenceTracker.complete(inferenceId, 'error', {
-      error: error instanceof Error ? error.message : String(error)
+    const message = error instanceof Error ? error.message : String(error);
+    inferenceTracker.complete(inferenceId, 'error', { error: message });
+    reportProgress({
+      phase: stage,
+      action: `Qwen ${stage} call failed`,
+      detail: message,
+      reasoningSummary: 'The current local inference failed before a usable structured result was produced.'
     });
     throw error;
   }
@@ -203,9 +216,10 @@ async function handleChat(body: unknown, response: ServerResponse): Promise<void
   }
 
   const request = body as unknown as RemoteChatRequest;
-  const generation = await scheduler.enqueue('chat', 'model-chat', () =>
-    ollama.chat(request.systemPrompt, request.userPrompt, request.format)
-  );
+  const generation = await scheduler.enqueue('chat', 'model-chat', (job) => {
+    job.update({ phase: 'other', action: 'Running delegated model chat' });
+    return ollama.chat(request.systemPrompt, request.userPrompt, request.format);
+  });
   json(response, 200, {
     protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
     generation
@@ -223,11 +237,18 @@ async function handleTask(body: unknown, response: ServerResponse): Promise<void
     throw new Error('input.editableFiles is required.');
   }
 
-  const output = await scheduler.enqueue('task', isolationKey(request.workspace), () =>
-    withWorkerWorkspace(request.workspace, config, async (workspace) =>
-      executeAgenticCodeTask(ollama, config, { ...request.input, workspace })
-    )
-  );
+  const output = await scheduler.enqueue('task', isolationKey(request.workspace), (job) => {
+    job.update({
+      phase: 'workspace',
+      action: 'Reconstructing remote workspace',
+      detail: request.workspace.repositoryUrl,
+      files: request.input.editableFiles
+    });
+    return withWorkerWorkspace(request.workspace, config, async (workspace) => {
+      job.update({ phase: 'implementation', action: 'Workspace ready; executing bounded code task', completedSteps: ['workspace'] });
+      return executeAgenticCodeTask(ollama, config, { ...request.input, workspace });
+    });
+  });
 
   json(response, 200, {
     protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
@@ -247,11 +268,13 @@ async function handlePlan(body: unknown, response: ServerResponse): Promise<void
     throw new Error('input.tasks is required.');
   }
 
-  const output = await scheduler.enqueue('plan', isolationKey(request.workspace), () =>
-    withWorkerWorkspace(request.workspace, config, async (workspace) =>
-      executeLocalCodePlan(ollama, config, { ...request.input, workspace })
-    )
-  );
+  const output = await scheduler.enqueue('plan', isolationKey(request.workspace), (job) => {
+    job.update({ phase: 'workspace', action: 'Reconstructing remote workspace', detail: request.workspace.repositoryUrl });
+    return withWorkerWorkspace(request.workspace, config, async (workspace) => {
+      job.update({ phase: 'implementation', action: 'Workspace ready; executing implementation plan', completedSteps: ['workspace'] });
+      return executeLocalCodePlan(ollama, config, { ...request.input, workspace }, job.update);
+    });
+  });
 
   json(response, 200, {
     protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
@@ -271,15 +294,27 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
     throw new Error('input.goal is required.');
   }
 
-  const output = await scheduler.enqueue('engineer', isolationKey(request.workspace), () =>
-    withWorkerWorkspace(request.workspace, config, async (workspace) =>
-      executeLocalEngineerWithRepoIntelligence(ollama, config, {
+  const output = await scheduler.enqueue('engineer', isolationKey(request.workspace), (job) => {
+    job.update({
+      phase: 'workspace',
+      action: 'Reconstructing repository worktree',
+      detail: request.workspace.repositoryUrl,
+      completedSteps: []
+    });
+    return withWorkerWorkspace(request.workspace, config, async (workspace) => {
+      job.update({
+        phase: 'investigation',
+        action: 'Workspace reconstructed; starting local engineer',
+        detail: request.input.goal,
+        completedSteps: ['workspace']
+      });
+      return executeLocalEngineerWithRepoIntelligence(ollama, config, {
         ...request.input,
         workspace,
         repoMemoryScopeKey: request.workspace.memoryScopeKey
-      })
-    )
-  );
+      });
+    });
+  });
 
   json(response, 200, {
     protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
