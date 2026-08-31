@@ -1,5 +1,5 @@
 import type { RoutingBlastRadius, RoutingUrgency } from './cognitive-router.js';
-import { classifyInferenceStage } from './inference-status.js';
+import { classifyInferenceStage, type InferenceStage } from './inference-status.js';
 import type {
   OllamaChatOptions,
   OllamaClient,
@@ -20,6 +20,10 @@ import {
 import type { ReasoningEffort } from './providers/types.js';
 
 export type LegacyAgentChatClient = Pick<OllamaClient, 'chat'>;
+export type ProjectRouteEvent = Pick<
+  RoutedInferenceResult,
+  'routing' | 'attempts' | 'fallbackUsed'
+> & { stage: InferenceStage };
 
 export interface ProjectRoutedChatOptions {
   policy?: RoutingPolicy;
@@ -28,7 +32,7 @@ export interface ProjectRoutedChatOptions {
   complexityScore?: number;
   blastRadius?: RoutingBlastRadius;
   confirmFallback?: FallbackConfirmation;
-  onRoute?: (result: Pick<RoutedInferenceResult, 'routing' | 'attempts' | 'fallbackUsed'>) => void;
+  onRoute?: (result: ProjectRouteEvent) => void;
 }
 
 function reasoningEffort(think: OllamaThinkingLevel | undefined): ReasoningEffort | undefined {
@@ -159,6 +163,7 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
     });
 
     this.options.onRoute?.({
+      stage,
       routing: result.routing,
       attempts: result.attempts,
       fallbackUsed: result.fallbackUsed

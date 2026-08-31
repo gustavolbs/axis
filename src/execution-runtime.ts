@@ -5,7 +5,6 @@ import {
   type AgenticExecutionResult
 } from './executor.js';
 import type {
-  LocalEngineerInput,
   LocalEngineerResult
 } from './local-engineer.js';
 import type { OllamaClient, OllamaGeneration } from './ollama.js';
@@ -15,6 +14,10 @@ import {
   type LocalExecutionPlanResult
 } from './orchestrator.js';
 import { executePremiumLocalAgent } from './premium-agent.js';
+import {
+  ProjectAwareEngineerBackend,
+  type ProjectEngineerInput
+} from './project-engineer-backend.js';
 import { RemoteWorkerClient, RemoteWorkerError } from './remote-worker-client.js';
 
 export interface ChatClient {
@@ -28,7 +31,7 @@ export interface ChatClient {
 export interface ExecutionBackend {
   executeTask(input: AgenticCodeTask): Promise<AgenticExecutionResult>;
   executePlan(input: LocalExecutionPlan): Promise<LocalExecutionPlanResult>;
-  executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult>;
+  executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult>;
 }
 
 export interface ExecutionRuntime {
@@ -52,8 +55,9 @@ class LocalExecutionBackend implements ExecutionBackend {
     return await executeLocalCodePlan(this.ollama, this.config, input);
   }
 
-  async executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult> {
-    return (await executePremiumLocalAgent(this.ollama, this.config, input)).result;
+  async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
+    const { projectId: _projectId, ...legacyInput } = input;
+    return (await executePremiumLocalAgent(this.ollama, this.config, legacyInput)).result;
   }
 }
 
@@ -101,14 +105,47 @@ class AutoExecutionBackend implements ExecutionBackend {
     }
   }
 
-  async executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult> {
+  async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
+    const { projectId: _projectId, ...legacyInput } = input;
     try {
-      return await this.remote.executeEngineer(input);
+      return await this.remote.executeEngineer(legacyInput);
     } catch (error) {
       if (!(error instanceof RemoteWorkerError) || !error.unavailable) throw error;
-      return await this.local.executeEngineer(input);
+      return await this.local.executeEngineer(legacyInput);
     }
   }
+}
+
+class ProjectAwareExecutionBackend implements ExecutionBackend {
+  private readonly engineer: ProjectAwareEngineerBackend;
+
+  constructor(
+    private readonly legacy: ExecutionBackend,
+    config: LocalCoderConfig,
+    ollama: OllamaClient
+  ) {
+    this.engineer = new ProjectAwareEngineerBackend(config, ollama, legacy);
+  }
+
+  async executeTask(input: AgenticCodeTask): Promise<AgenticExecutionResult> {
+    return await this.legacy.executeTask(input);
+  }
+
+  async executePlan(input: LocalExecutionPlan): Promise<LocalExecutionPlanResult> {
+    return await this.legacy.executePlan(input);
+  }
+
+  async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
+    return await this.engineer.executeEngineer(input);
+  }
+}
+
+function projectAware(
+  legacy: ExecutionBackend,
+  config: LocalCoderConfig,
+  ollama: OllamaClient
+): ExecutionBackend {
+  return new ProjectAwareExecutionBackend(legacy, config, ollama);
 }
 
 export function createExecutionRuntime(
@@ -121,7 +158,7 @@ export function createExecutionRuntime(
     return {
       mode: 'local',
       chat: ollama,
-      execution: localExecution,
+      execution: projectAware(localExecution, config, ollama),
       health: async () => ({
         executionMode: 'local',
         ollama: await ollama.health()
@@ -135,7 +172,7 @@ export function createExecutionRuntime(
     return {
       mode: 'remote',
       chat: remote,
-      execution: remote,
+      execution: projectAware(remote, config, ollama),
       health: async () => ({
         executionMode: 'remote',
         workerUrl: config.remoteWorkerUrl,
@@ -150,7 +187,7 @@ export function createExecutionRuntime(
   return {
     mode: 'auto',
     chat: autoChat,
-    execution: autoExecution,
+    execution: projectAware(autoExecution, config, ollama),
     health: async () => {
       try {
         return {
