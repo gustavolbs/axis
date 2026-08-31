@@ -1,0 +1,1 @@
+.legacy-call-list{display:grid;gap:7px}.legacy-call-list>p{margin:0 0 4px}.legacy-call{display:grid;grid-template-columns:10px 1fr;gap:7px;align-items:start;border:1px solid #202938;border-radius:9px;padding:8px;background:#0a0e14}.legacy-call strong,.legacy-call span{display:block}.legacy-call strong{font-size:9px}.legacy-call span{font-size:8px;color:#697486;margin-top:2px}
