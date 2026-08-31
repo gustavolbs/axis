@@ -153,6 +153,7 @@ export class ProjectBudgetSession {
   private readonly warningsSeen: BudgetWarning[] = [];
   private readonly warningKeys = new Set<string>();
   private readonly pendingReservations = new Map<string, string[]>();
+  private readonly pendingPricing = new Map<string, ModelPricing[]>();
 
   constructor(
     readonly project: ProjectDefinition,
@@ -209,38 +210,25 @@ export class ProjectBudgetSession {
     }
 
     const active = limitsActive(this.project);
-    const modelPricing = this.pricing.get(candidate.providerId, candidate.modelId);
-    if (!modelPricing) {
-      if (active) {
-        throw new BudgetGuardError(
-          'pricing-required',
-          this.project.id,
-          `Project ${this.project.id} has a cloud budget but no pricing for ${candidate.providerId}/${candidate.modelId}.`,
-          { providerId: candidate.providerId, modelId: candidate.modelId }
-        );
-      }
-      return {
-        providerId: candidate.providerId,
-        modelId: candidate.modelId,
-        expectedCostUsd: candidate.estimatedCostUsd ?? 0,
-        upperBoundCostUsd: candidate.estimatedCostUsd ?? 0,
-        warnings: []
-      };
-    }
-
-    const expected: RequestCostEstimate | undefined = estimateRequestCostUsd(inference, modelPricing);
-    const upper = upperBoundCost(inference, modelPricing);
-    if (active && upper === undefined) {
-      throw new BudgetGuardError(
-        'output-bound-required',
-        this.project.id,
-        `Budgeted cloud inference requires maxOutputTokens for ${candidate.providerId}/${candidate.modelId}.`,
-        { providerId: candidate.providerId, modelId: candidate.modelId }
-      );
-    }
-    const upperCostUsd = upper ?? expected?.estimatedCostUsd ?? 0;
-    const expectedCostUsd = expected?.estimatedCostUsd ?? candidate.estimatedCostUsd ?? upperCostUsd;
     if (!active) {
+      const modelPricing = this.pricing.get(candidate.providerId, candidate.modelId);
+      if (!modelPricing) {
+        return {
+          providerId: candidate.providerId,
+          modelId: candidate.modelId,
+          expectedCostUsd: candidate.estimatedCostUsd ?? 0,
+          upperBoundCostUsd: candidate.estimatedCostUsd ?? 0,
+          warnings: []
+        };
+      }
+      const expected: RequestCostEstimate | undefined = estimateRequestCostUsd(inference, modelPricing);
+      const upper = upperBoundCost(inference, modelPricing);
+      const upperCostUsd = upper ?? expected?.estimatedCostUsd ?? 0;
+      const expectedCostUsd = expected?.estimatedCostUsd ?? candidate.estimatedCostUsd ?? upperCostUsd;
+      // Preserve the exact price sheet used for this in-flight call. Admin pricing may
+      // legitimately change when no hard budget is active; settlement must not silently
+      // re-price a request after it has already been admitted.
+      this.rememberPricing(candidate, modelPricing);
       return {
         providerId: candidate.providerId,
         modelId: candidate.modelId,
@@ -251,6 +239,30 @@ export class ProjectBudgetSession {
     }
 
     return await this.ledger.withBudgetLock(async () => {
+      // Pricing is read only after acquiring the same lock used by the admin pricing API.
+      // That closes the read-price -> reserve race: a mutation can occur entirely before
+      // this admission or entirely after settlement, never between these two operations.
+      const modelPricing = this.pricing.get(candidate.providerId, candidate.modelId);
+      if (!modelPricing) {
+        throw new BudgetGuardError(
+          'pricing-required',
+          this.project.id,
+          `Project ${this.project.id} has a cloud budget but no pricing for ${candidate.providerId}/${candidate.modelId}.`,
+          { providerId: candidate.providerId, modelId: candidate.modelId }
+        );
+      }
+      const expected: RequestCostEstimate | undefined = estimateRequestCostUsd(inference, modelPricing);
+      const upper = upperBoundCost(inference, modelPricing);
+      if (upper === undefined) {
+        throw new BudgetGuardError(
+          'output-bound-required',
+          this.project.id,
+          `Budgeted cloud inference requires maxOutputTokens for ${candidate.providerId}/${candidate.modelId}.`,
+          { providerId: candidate.providerId, modelId: candidate.modelId }
+        );
+      }
+      const upperCostUsd = upper;
+      const expectedCostUsd = expected?.estimatedCostUsd ?? candidate.estimatedCostUsd ?? upperCostUsd;
       const warnings: BudgetWarning[] = [];
       const now = this.now();
       const reservations = this.ledger.listReservations(this.project.id, now);
@@ -358,6 +370,7 @@ export class ProjectBudgetSession {
         timestamp: now.toISOString()
       });
       this.rememberReservation(candidate, reservation.id);
+      this.rememberPricing(candidate, modelPricing);
       return {
         providerId: candidate.providerId,
         modelId: candidate.modelId,
@@ -372,6 +385,7 @@ export class ProjectBudgetSession {
   releaseAttempt(candidate: Pick<RoutingCandidate, 'providerId' | 'modelId'>): void {
     const id = this.takeReservation(candidate);
     if (id) this.ledger.releaseReservation(id);
+    this.takePricing(candidate);
   }
 
   record(
@@ -381,7 +395,7 @@ export class ProjectBudgetSession {
     fallbackUsed: boolean
   ): UsageLedgerEvent {
     const modelPricing = candidate.providerKind === 'cloud'
-      ? this.pricing.get(candidate.providerId, candidate.modelId)
+      ? this.takePricing(candidate) ?? this.pricing.get(candidate.providerId, candidate.modelId)
       : undefined;
     const costUsd = candidate.providerKind === 'local'
       ? 0
@@ -487,5 +501,25 @@ export class ProjectBudgetSession {
     const id = queue?.shift();
     if (!queue?.length) this.pendingReservations.delete(key);
     return id;
+  }
+
+  private rememberPricing(
+    candidate: Pick<RoutingCandidate, 'providerId' | 'modelId'>,
+    pricing: ModelPricing
+  ): void {
+    const key = pendingKey(candidate);
+    const queue = this.pendingPricing.get(key) ?? [];
+    queue.push(structuredClone(pricing));
+    this.pendingPricing.set(key, queue);
+  }
+
+  private takePricing(
+    candidate: Pick<RoutingCandidate, 'providerId' | 'modelId'>
+  ): ModelPricing | undefined {
+    const key = pendingKey(candidate);
+    const queue = this.pendingPricing.get(key);
+    const pricing = queue?.shift();
+    if (!queue?.length) this.pendingPricing.delete(key);
+    return pricing;
   }
 }
