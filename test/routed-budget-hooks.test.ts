@@ -63,6 +63,36 @@ function project() {
   };
 }
 
+function fastCloudCandidate() {
+  return {
+    providerId: 'anthropic',
+    modelId: 'cloud-fast',
+    providerKind: 'cloud' as const,
+    available: true,
+    capabilities,
+    queueDelayMs: 0,
+    p50LatencyMs: 10,
+    successRate: 0.99,
+    estimatedCostUsd: 0.01,
+    qualityScore: 90
+  };
+}
+
+function slowLocalCandidate() {
+  return {
+    providerId: 'ollama',
+    modelId: 'qwen-local',
+    providerKind: 'local' as const,
+    available: true,
+    capabilities,
+    queueDelayMs: 500_000,
+    p50LatencyMs: 500_000,
+    successRate: 0.99,
+    estimatedCostUsd: 0,
+    qualityScore: 90
+  };
+}
+
 test('authorized failed attempt is released before fallback admission and fallback becomes selected route', async () => {
   const lifecycle: string[] = [];
   const cloud = new TestProvider('anthropic', 'cloud', 'cloud-fast', async () => {
@@ -92,32 +122,7 @@ test('authorized failed attempt is released before fallback admission and fallba
       project: project(),
       stage: 'planning',
       policy: 'speed-first',
-      candidates: [
-        {
-          providerId: 'anthropic',
-          modelId: 'cloud-fast',
-          providerKind: 'cloud',
-          available: true,
-          capabilities,
-          queueDelayMs: 0,
-          p50LatencyMs: 10,
-          successRate: 0.99,
-          estimatedCostUsd: 0.01,
-          qualityScore: 90
-        },
-        {
-          providerId: 'ollama',
-          modelId: 'qwen-local',
-          providerKind: 'local',
-          available: true,
-          capabilities,
-          queueDelayMs: 500_000,
-          p50LatencyMs: 500_000,
-          successRate: 0.99,
-          estimatedCostUsd: 0,
-          qualityScore: 90
-        }
-      ]
+      candidates: [fastCloudCandidate(), slowLocalCandidate()]
     },
     authorizeAttempt: ({ candidate }) => {
       lifecycle.push(`authorize:${candidate.providerId}`);
@@ -138,6 +143,57 @@ test('authorized failed attempt is released before fallback admission and fallba
   assert.equal(result.routing.selected.providerId, 'ollama');
   assert.equal(result.routing.selected.modelId, 'qwen-local');
   assert.equal(result.result.content, 'local fallback');
+});
+
+test('auto routing falls back to local without invoking cloud when cloud admission is denied', async () => {
+  let cloudCalls = 0;
+  let localCalls = 0;
+  const cloud = new TestProvider('anthropic', 'cloud', 'cloud-fast', async (request) => {
+    cloudCalls += 1;
+    return {
+      providerId: 'anthropic',
+      model: request.model,
+      content: 'cloud',
+      latencyMs: 1,
+      usage: {}
+    };
+  });
+  const local = new TestProvider('ollama', 'local', 'qwen-local', async (request) => {
+    localCalls += 1;
+    return {
+      providerId: 'ollama',
+      model: request.model,
+      content: 'local after budget stop',
+      latencyMs: 2,
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+    };
+  });
+  const runtime = new RoutedInferenceRuntime(new ProviderRegistry([cloud, local]));
+
+  const result = await runtime.invoke({
+    inference: {
+      systemPrompt: 'system',
+      userPrompt: 'user',
+      stage: 'planning',
+      maxOutputTokens: 100
+    },
+    routing: {
+      project: project(),
+      stage: 'planning',
+      policy: 'speed-first',
+      candidates: [fastCloudCandidate(), slowLocalCandidate()]
+    },
+    authorizeAttempt: ({ candidate }) => {
+      if (candidate.providerKind === 'cloud') throw new Error('cloud budget exhausted');
+    }
+  });
+
+  assert.equal(cloudCalls, 0);
+  assert.equal(localCalls, 1);
+  assert.equal(result.fallbackUsed, true);
+  assert.equal(result.attempts[0]?.admissionDenied, true);
+  assert.equal(result.routing.selected.providerId, 'ollama');
+  assert.equal(result.result.content, 'local after budget stop');
 });
 
 test('admission rejection happens before any provider I/O', async () => {
@@ -168,15 +224,7 @@ test('admission rejection happens before any provider I/O', async () => {
           privacy: { cloudAllowed: true, allowedProviderIds: ['anthropic'] }
         },
         stage: 'planning',
-        candidates: [{
-          providerId: 'anthropic',
-          modelId: 'cloud-fast',
-          providerKind: 'cloud',
-          available: true,
-          capabilities,
-          queueDelayMs: 0,
-          p50LatencyMs: 1
-        }]
+        candidates: [fastCloudCandidate()]
       },
       authorizeAttempt: () => {
         throw new Error('budget denied');
