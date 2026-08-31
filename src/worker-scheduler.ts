@@ -2,12 +2,29 @@ import { createHash, randomUUID } from 'node:crypto';
 
 export type WorkerJobKind = 'chat' | 'task' | 'plan' | 'engineer';
 
+export interface WorkerJobProgress {
+  phase?: string;
+  action?: string;
+  detail?: string;
+  reasoningSummary?: string;
+  taskId?: string;
+  files?: string[];
+  validation?: string;
+  completedSteps?: string[];
+  updatedAt?: string;
+}
+
+export interface WorkerJobContext {
+  id: string;
+  update(progress: Partial<WorkerJobProgress>): void;
+}
+
 interface PendingJob<T> {
   id: string;
   kind: WorkerJobKind;
   isolationKey: string;
   enqueuedAt: number;
-  run: () => Promise<T>;
+  run: (context: WorkerJobContext) => Promise<T>;
   resolve: (value: T | PromiseLike<T>) => void;
   reject: (reason?: unknown) => void;
 }
@@ -17,6 +34,7 @@ interface ActiveJob {
   kind: WorkerJobKind;
   isolationKey: string;
   startedAt: number;
+  progress: WorkerJobProgress;
 }
 
 export interface WorkerSchedulerSnapshot {
@@ -28,6 +46,7 @@ export interface WorkerSchedulerSnapshot {
     kind: WorkerJobKind;
     isolationKey: string;
     runningMs: number;
+    progress: WorkerJobProgress;
   }>;
   queued: Array<{
     id: string;
@@ -39,6 +58,14 @@ export interface WorkerSchedulerSnapshot {
 
 function opaqueKey(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 16);
+}
+
+function cloneProgress(progress: WorkerJobProgress): WorkerJobProgress {
+  return {
+    ...progress,
+    files: progress.files ? [...progress.files] : undefined,
+    completedSteps: progress.completedSteps ? [...progress.completedSteps] : undefined
+  };
 }
 
 /**
@@ -60,7 +87,7 @@ export class WorkerScheduler {
   async enqueue<T>(
     kind: WorkerJobKind,
     isolationKeyInput: string,
-    run: () => Promise<T>
+    run: (context: WorkerJobContext) => Promise<T>
   ): Promise<T> {
     const isolationKey = opaqueKey(isolationKeyInput || 'global');
 
@@ -88,7 +115,8 @@ export class WorkerScheduler {
         id: job.id,
         kind: job.kind,
         isolationKey: job.isolationKey,
-        runningMs: Math.max(0, now - job.startedAt)
+        runningMs: Math.max(0, now - job.startedAt),
+        progress: cloneProgress(job.progress)
       })),
       queued: this.pending.slice(0, 20).map((job) => ({
         id: job.id,
@@ -96,6 +124,18 @@ export class WorkerScheduler {
         isolationKey: job.isolationKey,
         waitingMs: Math.max(0, now - job.enqueuedAt)
       }))
+    };
+  }
+
+  private updateProgress(id: string, patch: Partial<WorkerJobProgress>): void {
+    const job = this.active.get(id);
+    if (!job) return;
+    job.progress = {
+      ...job.progress,
+      ...patch,
+      files: patch.files ? [...patch.files] : job.progress.files,
+      completedSteps: patch.completedSteps ? [...patch.completedSteps] : job.progress.completedSteps,
+      updatedAt: new Date().toISOString()
     };
   }
 
@@ -111,12 +151,24 @@ export class WorkerScheduler {
         id: job.id,
         kind: job.kind,
         isolationKey: job.isolationKey,
-        startedAt: Date.now()
+        startedAt: Date.now(),
+        progress: {
+          phase: 'workspace',
+          action: 'Starting worker job',
+          detail: 'The request left the Mac control plane and is now executing on Windows.',
+          completedSteps: [],
+          updatedAt: new Date().toISOString()
+        }
       });
       this.activeIsolationKeys.add(job.isolationKey);
 
+      const context: WorkerJobContext = {
+        id: job.id,
+        update: (progress) => this.updateProgress(job.id, progress)
+      };
+
       void job
-        .run()
+        .run(context)
         .then(job.resolve, job.reject)
         .finally(() => {
           this.active.delete(job.id);
