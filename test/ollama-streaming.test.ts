@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { LocalCoderConfig } from '../src/config.js';
+import { readOllamaChatStream } from '../src/ollama-stream.js';
 import { OllamaClient } from '../src/ollama.js';
 import { preparePromptForInference } from '../src/planning-policy.js';
 
@@ -18,6 +19,10 @@ function config(directory: string): LocalCoderConfig {
     fastModelKeepAlive: '90s',
     strongModelKeepAlive: '30s',
     requestTimeoutMs: 5_000,
+    inferenceHeaderTimeoutMs: 1_000,
+    inferenceFirstChunkTimeoutMs: 1_000,
+    inferenceIdleTimeoutMs: 1_000,
+    inferenceMaxDurationMs: 5_000,
     validationTimeoutMs: 5_000,
     maxFileBytes: 100_000,
     maxContextBytes: 96_000,
@@ -41,6 +46,10 @@ function config(directory: string): LocalCoderConfig {
 
 function jsonResponse(value: unknown): Response {
   return new Response(JSON.stringify(value), { status: 200 });
+}
+
+function encodeLine(value: unknown): Uint8Array {
+  return new TextEncoder().encode(`${JSON.stringify(value)}\n`);
 }
 
 test('uses streaming Ollama chat and aggregates NDJSON chunks into one generation', async () => {
@@ -83,6 +92,102 @@ test('uses streaming Ollama chat and aggregates NDJSON chunks into one generatio
     globalThis.fetch = originalFetch;
     await fs.rm(directory, { recursive: true, force: true });
   }
+});
+
+test('treats thinking-only chunks as liveness without exposing them as answer content', async () => {
+  let firstTimer: ReturnType<typeof setTimeout> | undefined;
+  let secondTimer: ReturnType<typeof setTimeout> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      firstTimer = setTimeout(() => {
+        controller.enqueue(
+          encodeLine({
+            model: 'qwen3.8:27b',
+            message: { role: 'assistant', content: '', thinking: 'internal reasoning activity' },
+            done: false
+          })
+        );
+      }, 80);
+      secondTimer = setTimeout(() => {
+        controller.enqueue(
+          encodeLine({
+            model: 'qwen3.8:27b',
+            message: { role: 'assistant', content: '{"summary":"ok"}' },
+            done: true,
+            done_reason: 'stop'
+          })
+        );
+        controller.close();
+      }, 170);
+    },
+    cancel() {
+      if (firstTimer) clearTimeout(firstTimer);
+      if (secondTimer) clearTimeout(secondTimer);
+    }
+  });
+
+  const generation = await readOllamaChatStream(
+    new Response(stream),
+    'qwen3.8:27b',
+    { firstChunkTimeoutMs: 250, idleTimeoutMs: 150, maxDurationMs: 1_000 }
+  );
+
+  assert.equal(generation.content, '{"summary":"ok"}');
+  assert.equal(generation.content.includes('internal reasoning activity'), false);
+});
+
+test('fails a genuinely stalled stream after the configured inactivity window', async () => {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(
+        encodeLine({
+          model: 'qwen3.8:27b',
+          message: { role: 'assistant', content: '', thinking: 'still alive at first' },
+          done: false
+        })
+      );
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      readOllamaChatStream(new Response(stream), 'qwen3.8:27b', {
+        firstChunkTimeoutMs: 250,
+        idleTimeoutMs: 120,
+        maxDurationMs: 1_000
+      }),
+    /stalled: no stream activity/
+  );
+});
+
+test('enforces a hard cap even when chunks keep proving liveness', async () => {
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      timer = setInterval(() => {
+        controller.enqueue(
+          encodeLine({
+            model: 'qwen3.8:27b',
+            message: { role: 'assistant', content: '', thinking: 'active' },
+            done: false
+          })
+        );
+      }, 40);
+    },
+    cancel() {
+      if (timer) clearInterval(timer);
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      readOllamaChatStream(new Response(stream), 'qwen3.8:27b', {
+        firstChunkTimeoutMs: 200,
+        idleTimeoutMs: 150,
+        maxDurationMs: 220
+      }),
+    /hard safety cap/
+  );
 });
 
 test('bounds planning prompts while preserving the goal and validation tail', () => {
