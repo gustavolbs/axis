@@ -26,6 +26,17 @@ export interface OllamaStreamTimeoutPolicy {
   maxDurationMs: number;
 }
 
+export interface OllamaStreamProgress {
+  elapsedMs: number;
+  chunkCount: number;
+  thinkingChars: number;
+  outputChars: number;
+  state: 'thinking' | 'generating';
+  lastActivityAt: string;
+}
+
+export type OllamaStreamProgressReporter = (progress: OllamaStreamProgress) => void;
+
 const DEFAULT_TIMEOUT_POLICY: OllamaStreamTimeoutPolicy = {
   firstChunkTimeoutMs: 600_000,
   idleTimeoutMs: 300_000,
@@ -53,7 +64,8 @@ async function readWithTimeout(
 export async function readOllamaChatStream(
   response: Response,
   fallbackModel: string,
-  timeoutPolicy: OllamaStreamTimeoutPolicy = DEFAULT_TIMEOUT_POLICY
+  timeoutPolicy: OllamaStreamTimeoutPolicy = DEFAULT_TIMEOUT_POLICY,
+  onProgress?: OllamaStreamProgressReporter
 ): Promise<OllamaGeneration> {
   if (!response.body) throw new Error('Ollama returned a response without a body.');
 
@@ -67,13 +79,31 @@ export async function readOllamaChatStream(
   let buffer = '';
   let content = '';
   let finalChunk: OllamaChatChunk | undefined;
+  let chunkCount = 0;
+  let thinkingChars = 0;
+  let outputChars = 0;
 
   const consume = (line: string): void => {
     if (!line.trim()) return;
     const chunk = JSON.parse(line) as OllamaChatChunk;
     if (chunk.error) throw new Error('Ollama stream error: ' + chunk.error);
-    content += chunk.message?.content ?? '';
+
+    const output = chunk.message?.content ?? '';
+    const thinking = chunk.message?.thinking ?? '';
+    content += output;
+    outputChars += output.length;
+    thinkingChars += thinking.length;
+    chunkCount += 1;
     finalChunk = chunk;
+
+    onProgress?.({
+      elapsedMs: Math.max(0, Date.now() - startedAt),
+      chunkCount,
+      thinkingChars,
+      outputChars,
+      state: outputChars > 0 ? 'generating' : 'thinking',
+      lastActivityAt: new Date().toISOString()
+    });
   };
 
   try {
