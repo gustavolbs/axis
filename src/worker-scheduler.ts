@@ -1,18 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-export type WorkerJobKind = 'chat' | 'task' | 'plan' | 'engineer';
+import type { EngineeringProgress } from './engineering-progress.js';
 
-export interface WorkerJobProgress {
-  phase?: string;
-  action?: string;
-  detail?: string;
-  reasoningSummary?: string;
-  taskId?: string;
-  files?: string[];
-  validation?: string;
-  completedSteps?: string[];
-  updatedAt?: string;
-}
+export type WorkerJobKind = 'chat' | 'task' | 'plan' | 'engineer';
+export type WorkerJobProgress = EngineeringProgress;
 
 export interface WorkerJobContext {
   id: string;
