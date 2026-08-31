@@ -32,11 +32,13 @@ export interface LocalEngineerInput {
   constraints?: string[];
   language?: string;
   /**
-   * Guidance supplied by Claude after the local engineer explicitly asked for
-   * premium reasoning, external research, or a sensitive decision.
+   * Guidance supplied after the local engineer explicitly asked for premium reasoning,
+   * external research, or a material user decision.
    */
   claudeGuidance?: string;
   maxRepairRounds?: number;
+  /** Internal test-time-compute knob selected by the premium cognitive router. */
+  reviewPasses?: number;
 }
 
 export interface LocalEngineerPlanTask {
@@ -124,7 +126,6 @@ export interface LocalEngineerExecution {
 }
 
 type EngineerChatClient = Pick<OllamaClient, 'chat'>;
-
 type SnapshotMap = Map<string, WorkspaceFileSnapshot>;
 
 const investigationSchema = z.object({
@@ -281,22 +282,43 @@ If repository evidence is insufficient because current external library/provider
 Return only the required JSON.`;
 
 const PLANNER_SYSTEM_PROMPT = `You are the reasoning/planning stage of a local software-engineering agent.
-Use only the supplied repository evidence plus explicit Claude guidance.
+Use only the supplied repository evidence plus explicit Claude/user guidance.
 Reason from evidence, not assumptions. For bugs, distinguish observed behavior, plausible causes, evidence, and root cause. For features, identify existing architecture/contracts before proposing changes.
 Produce small dependency-ordered implementation tasks. Each task should normally touch 1-5 files and must list exact editable paths.
 Do not broaden scope merely to make implementation easier.
 Choose validation only from the supplied existing package scripts.
 Set outcome=needs-claude when a material decision remains ambiguous, external facts must be researched, a sensitive auth/credential/permission contract is unresolved, or evidence is too weak to implement safely.
-If Claude guidance is supplied, treat it as the resolved premium decision/evidence and continue locally when possible.
+If resolved guidance is supplied, treat it as the resolved premium decision/evidence and continue locally when possible.
 Return only the required JSON.`;
 
 const REVIEWER_SYSTEM_PROMPT = `You are an adversarial software-engineering reviewer. You did not author the code.
-Check the implementation against the original goal, the evidence-backed plan, constraints, changed files, and validation results.
+Check the implementation against the original goal, constraints, changed files, and deterministic validation evidence.
 Try to falsify correctness. Look for missing requirements, regressions, unsafe assumptions, broken contracts, incomplete error handling, and tests that fail to cover the changed behavior.
 Use repair when a bounded correction can be made within the already-approved editable-file set.
 Use needs-claude when correctness depends on unresolved product/security/architecture judgment or external research.
 Do not request cosmetic-only repairs unless they hide a correctness problem.
 Return only the required JSON.`;
+
+const REVIEW_PERSPECTIVES = [
+  {
+    id: 'correctness',
+    instruction:
+      'Perspective: requirements correctness. Check every stated goal/constraint, behavioral contract, error path and validation claim. The evidence-backed plan may be included as context, but do not assume it is correct.',
+    includePlanReasoning: true
+  },
+  {
+    id: 'regression',
+    instruction:
+      'Perspective: regression and edge cases. Review from the original requirement + diff + validation only. Focus on backwards compatibility, state transitions, concurrency/timing, boundary values, error handling and missing tests. Do not rely on the author/planner rationale.',
+    includePlanReasoning: false
+  },
+  {
+    id: 'architecture',
+    instruction:
+      'Perspective: architecture and maintenance. Review from the original requirement + diff + validation only. Look for boundary violations, duplicated abstractions, hidden coupling, lifecycle/resource leaks, public-contract drift and changes that fight existing repository structure. Do not rely on the author/planner rationale.',
+    includePlanReasoning: false
+  }
+] as const;
 
 const HARD_PREMIUM_PATTERNS: Array<{ tag: string; regex: RegExp }> = [
   {
@@ -351,8 +373,6 @@ async function structuredCall<T>(
       attempt === 1
         ? userPrompt
         : `${userPrompt}\n\nPrevious structured response was invalid. Return a schema-valid JSON object only.`;
-    // Transport/model failures are not schema failures. Retrying them can double a
-    // multi-minute timeout. Retry only after the model returned invalid structured content.
     const generation = await model.chat(systemPrompt, prompt, format, {
       model: config.model,
       numCtx: config.ollamaNumCtx ?? 16_384,
@@ -373,10 +393,7 @@ function capsuleText(capsule: ContextCapsule): string {
   const files = capsule.relevantFiles
     .map((file) => {
       const evidence = file.evidence
-        .map(
-          (item) =>
-            `${file.path}:${item.startLine}-${item.endLine}\n${item.content}`
-        )
+        .map((item) => `${file.path}:${item.startLine}-${item.endLine}\n${item.content}`)
         .join('\n\n');
       return `## ${file.path}\nscore=${file.score}; reasons=${file.reasons.join(', ')}\n${evidence}`;
     })
@@ -495,33 +512,25 @@ function validationCommands(
 
   const available = new Set(availableScripts);
   let selected = dedupe(requestedScripts).filter((script) => available.has(script)).slice(0, 4);
-
   if (selected.length === 0) {
     if (available.has('check')) selected = ['check'];
-    else {
-      selected = ['typecheck', 'test', 'lint', 'build'].filter((script) => available.has(script)).slice(0, 3);
-    }
+    else selected = ['typecheck', 'test', 'lint', 'build'].filter((script) => available.has(script)).slice(0, 3);
   }
-
   return selected.map((script) => ({ command, args: ['run', script] }));
 }
 
 function validatePlanPaths(workspace: string, plan: LocalEngineerPlanTask[]): void {
   const ids = new Set(plan.map((task) => task.id));
   const allEditable = new Set<string>();
-
   for (const task of plan) {
     for (const dependency of task.dependsOn) {
       if (!ids.has(dependency) || dependency === task.id) {
         throw new Error(`Invalid local engineer dependency ${dependency} for task ${task.id}.`);
       }
     }
-    for (const file of [...task.editableFiles, ...task.contextFiles]) {
-      resolveWorkspacePath(workspace, file);
-    }
+    for (const file of [...task.editableFiles, ...task.contextFiles]) resolveWorkspacePath(workspace, file);
     for (const file of task.editableFiles) allEditable.add(file);
   }
-
   if (allEditable.size > 30) {
     throw new Error(`Local engineer plan touches ${allEditable.size} editable files; maximum is 30.`);
   }
@@ -533,9 +542,7 @@ async function snapshotFiles(
   config: LocalCoderConfig
 ): Promise<SnapshotMap> {
   const snapshots: SnapshotMap = new Map();
-  for (const file of dedupe(files)) {
-    snapshots.set(file, await readWorkspaceFile(workspace, file, config.maxFileBytes));
-  }
+  for (const file of dedupe(files)) snapshots.set(file, await readWorkspaceFile(workspace, file, config.maxFileBytes));
   return snapshots;
 }
 
@@ -554,7 +561,6 @@ async function restoreSnapshots(workspace: string, snapshots: SnapshotMap): Prom
 function aggregateDiff(before: SnapshotMap, after: SnapshotMap): { changedFiles: string[]; diff: string } {
   const changedFiles: string[] = [];
   const patches: string[] = [];
-
   for (const [file, original] of before) {
     const current = after.get(file);
     if (!current || current.content === original.content) continue;
@@ -571,7 +577,6 @@ function aggregateDiff(before: SnapshotMap, after: SnapshotMap): { changedFiles:
       )
     );
   }
-
   return { changedFiles, diff: patches.join('\n') };
 }
 
@@ -583,8 +588,7 @@ function changesFromSnapshots(before: SnapshotMap, after: SnapshotMap): LocalEng
     changes.push({
       path: file,
       beforeSha256: sha256(original.content),
-      contentBase64:
-        current.content === null ? null : Buffer.from(current.content, 'utf8').toString('base64')
+      contentBase64: current.content === null ? null : Buffer.from(current.content, 'utf8').toString('base64')
     });
   }
   return changes;
@@ -596,14 +600,18 @@ function reviewPrompt(
   diff: string,
   validation: ValidationResult[],
   chunkIndex: number,
-  chunks: number
+  chunks: number,
+  perspective: (typeof REVIEW_PERSPECTIVES)[number]
 ): string {
   return [
+    `# REVIEW PERSPECTIVE\n${perspective.id}\n${perspective.instruction}`,
     `# ORIGINAL GOAL\n${input.goal}`,
     input.context ? `# USER/PROJECT CONTEXT\n${input.context}` : '',
-    input.claudeGuidance ? `# CLAUDE GUIDANCE\n${input.claudeGuidance}` : '',
-    `# PLAN ANALYSIS\n${plan.analysis}`,
-    `# PLAN DECISIONS\n${plan.decisions.map((item) => `- ${item}`).join('\n') || '[none]'}`,
+    input.claudeGuidance ? `# RESOLVED USER/PREMIUM GUIDANCE\n${input.claudeGuidance}` : '',
+    perspective.includePlanReasoning ? `# PLAN ANALYSIS\n${plan.analysis}` : '',
+    perspective.includePlanReasoning
+      ? `# PLAN DECISIONS\n${plan.decisions.map((item) => `- ${item}`).join('\n') || '[none]'}`
+      : `# EXPECTED SCOPE\n${plan.tasks.map((task) => `- ${task.id}: ${task.task}`).join('\n')}`,
     `# DIFF CHUNK\n${chunkIndex + 1}/${chunks}\n${diff}`,
     `# VALIDATION\n${validation
       .map((item) => `$ ${item.command} ${item.args.join(' ')}\nok=${String(item.ok)}\n${item.output.slice(-4000)}`)
@@ -652,18 +660,22 @@ async function reviewImplementation(
   }
 
   const reviews: Array<z.infer<typeof reviewSchema>> = [];
-  for (let index = 0; index < chunks.length; index += 1) {
-    const call = await structuredCall(
-      model,
-      config,
-      REVIEWER_SYSTEM_PROMPT,
-      reviewPrompt(input, plan, chunks[index], validation, index, chunks.length),
-      reviewFormat,
-      reviewSchema,
-      'high'
-    );
-    modelCalls.push(generationMeta('review', call.generation));
-    reviews.push(call.parsed);
+  const passCount = Math.max(1, Math.min(input.reviewPasses ?? 1, REVIEW_PERSPECTIVES.length));
+  for (let pass = 0; pass < passCount; pass += 1) {
+    const perspective = REVIEW_PERSPECTIVES[pass];
+    for (let index = 0; index < chunks.length; index += 1) {
+      const call = await structuredCall(
+        model,
+        config,
+        `${REVIEWER_SYSTEM_PROMPT}\n${perspective.instruction}`,
+        reviewPrompt(input, plan, chunks[index], validation, index, chunks.length, perspective),
+        reviewFormat,
+        reviewSchema,
+        'high'
+      );
+      modelCalls.push(generationMeta('review', call.generation));
+      reviews.push(call.parsed);
+    }
   }
 
   const allIssues = reviews.flatMap((review) => review.issues);
@@ -671,7 +683,7 @@ async function reviewImplementation(
   const needsClaude = reviews.some((review) => review.verdict === 'needs-claude');
   const needsRepair = reviews.some((review) => review.verdict === 'repair');
   const confidence = Math.min(...reviews.map((review) => review.confidence));
-  const summary = reviews.map((review) => review.summary).join(' | ');
+  const summary = reviews.map((review, index) => `[review ${index + 1}] ${review.summary}`).join(' | ');
 
   return {
     review: {
@@ -681,7 +693,7 @@ async function reviewImplementation(
       issues: allIssues,
       researchRequests
     },
-    repairTask: reviews.map((review) => review.repairTask).filter(Boolean).join('\n\n') || undefined,
+    repairTask: dedupe(reviews.map((review) => review.repairTask).filter((value): value is string => Boolean(value))).join('\n\n') || undefined,
     repairFiles: dedupe(reviews.flatMap((review) => review.repairFiles))
   };
 }
@@ -690,10 +702,7 @@ function compactEvidence(capsule: ContextCapsule, searchText: string): string[] 
   const cited = capsule.relevantFiles.flatMap((file) =>
     file.evidence.map((evidence) => `${file.path}:${evidence.startLine}-${evidence.endLine}`)
   );
-  const searchLines = searchText
-    .split(/\r?\n/)
-    .filter((line) => /:\d+\s/.test(line))
-    .slice(0, 12);
+  const searchLines = searchText.split(/\r?\n/).filter((line) => /:\d+\s/.test(line)).slice(0, 12);
   return dedupe([...cited, ...searchLines]).slice(0, 12);
 }
 
@@ -741,7 +750,7 @@ export async function executeLocalEngineer(
       'Premium reasoning is required before local implementation for this high-risk request.',
       escalation(
         'decision',
-        `High-risk categories require an explicit Claude decision before local execution: ${hardTags.join(', ')}.`,
+        `High-risk categories require an explicit premium decision before local execution: ${hardTags.join(', ')}.`,
         ['Resolve the risky behavior/contract and provide the bounded implementation decision.'],
         [],
         hardTags
@@ -766,12 +775,10 @@ export async function executeLocalEngineer(
     [
       `# GOAL\n${input.goal}`,
       input.context ? `# CONTEXT\n${input.context}` : '',
-      input.claudeGuidance ? `# CLAUDE GUIDANCE\n${input.claudeGuidance}` : '',
+      input.claudeGuidance ? `# RESOLVED GUIDANCE\n${input.claudeGuidance}` : '',
       `# REPOSITORY MAP\n${discoveryText(discovery)}`,
       `# INITIAL EVIDENCE\n${capsuleText(initialCapsule)}`
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
+    ].filter(Boolean).join('\n\n'),
     investigationFormat,
     investigationSchema,
     'high'
@@ -779,11 +786,7 @@ export async function executeLocalEngineer(
   modelCalls.push(generationMeta('investigation', investigationCall.generation));
 
   const investigation = investigationCall.parsed;
-  const searchEvidence = await collectSearchEvidence(
-    workspace,
-    investigation.searchQueries,
-    config
-  );
+  const searchEvidence = await collectSearchEvidence(workspace, investigation.searchQueries, config);
   const focusedCapsule = await prepareContextCapsule(index, config, {
     workspace,
     task: input.goal,
@@ -808,19 +811,15 @@ export async function executeLocalEngineer(
     [
       `# GOAL\n${input.goal}`,
       input.context ? `# USER/PROJECT CONTEXT\n${input.context}` : '',
-      input.constraints?.length
-        ? `# CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}`
-        : '',
+      input.constraints?.length ? `# CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}` : '',
       input.language ? `# LANGUAGE / STACK\n${input.language}` : '',
-      input.claudeGuidance ? `# CLAUDE GUIDANCE\n${input.claudeGuidance}` : '',
+      input.claudeGuidance ? `# RESOLVED GUIDANCE\n${input.claudeGuidance}` : '',
       `# INVESTIGATION INTENT\n${investigation.summary}`,
       `# SEARCH EVIDENCE\n${searchEvidence.text || '[none]'}`,
       `# RANKED FILE EVIDENCE\n${capsuleText(focusedCapsule)}`,
       `# VERIFIED FILE CONTENT\n${fullEvidence.text || '[none]'}`,
       `# ALLOWED VALIDATION SCRIPTS\n${focusedCapsule.validationCandidates.join(', ') || '[none]'}`
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
+    ].filter(Boolean).join('\n\n'),
     planningFormat,
     planningSchema,
     'medium'
@@ -850,10 +849,7 @@ export async function executeLocalEngineer(
         investigation: {
           searchQueries: investigation.searchQueries,
           evidenceFiles: fullEvidence.files,
-          researchRequests: dedupe([
-            ...investigation.researchRequests,
-            ...planned.researchRequests
-          ])
+          researchRequests: dedupe([...investigation.researchRequests, ...planned.researchRequests])
         },
         plan: {
           summary: planned.summary,
@@ -909,9 +905,7 @@ export async function executeLocalEngineer(
   const executionPlan: LocalExecutionPlan = {
     workspace,
     goal: input.goal,
-    context: [input.context, `Local planner analysis: ${plan.analysis}`, input.claudeGuidance]
-      .filter(Boolean)
-      .join('\n\n'),
+    context: [input.context, `Local planner analysis: ${plan.analysis}`, input.claudeGuidance].filter(Boolean).join('\n\n'),
     language: input.language,
     sharedContextFiles: fullEvidence.files.slice(0, 12),
     sharedConstraints: input.constraints,
@@ -967,7 +961,7 @@ export async function executeLocalEngineer(
         escalation: escalation(
           'execution-failure',
           `The local executor escalated during ${execution.phase}${execution.failedTaskId ? ` at ${execution.failedTaskId}` : ''}.`,
-          ['Use Claude to resolve the failed implementation point; then send the concrete fix back through local_engineer or the bounded local executor.'],
+          ['Resolve the failed implementation point; then send the concrete fix back through local_engineer or the bounded local executor.'],
           [],
           evidenceRefs
         ),
@@ -1040,7 +1034,7 @@ export async function executeLocalEngineer(
           escalation: escalation(
             'review-failure',
             'The local reviewer found a bounded issue, but the local repair failed validation.',
-            ['Use Claude to resolve the review/repair failure, then optionally resume local execution with claudeGuidance.'],
+            ['Resolve the review/repair failure, then optionally resume local execution with resolved guidance.'],
             reviewResult.review.researchRequests,
             evidenceRefs
           ),
