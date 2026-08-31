@@ -223,7 +223,14 @@ export class ProjectAwareEngineerBackend {
 
   async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
     const resolved = await this.resolveProject(input);
-    if (!resolved.project) return await this.legacy.executeEngineer(input);
+    if (!resolved.project) {
+      const {
+        projectId: _projectId,
+        budgetJobId: _budgetJobId,
+        ...legacyInput
+      } = input;
+      return await this.legacy.executeEngineer(legacyInput);
+    }
     const { project, workspace: projectWorkspace } = resolved;
 
     const budget = this.options.budgetSessionFactory?.(project, input.budgetJobId) ??
