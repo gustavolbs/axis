@@ -1,3 +1,4 @@
+import type { RoutingCandidate } from './cognitive-router.js';
 import type { InferenceStage } from './inference-status.js';
 import { CredentialManager } from './credential-store.js';
 import {
@@ -15,9 +16,9 @@ import { ProviderRegistry } from './providers/registry.js';
 import type {
   InferenceProvider,
   ModelDefinition,
-  ProviderCapabilities
+  ProviderCapabilities,
+  ProviderKind
 } from './providers/types.js';
-import type { RoutingCandidate } from './cognitive-router.js';
 
 export interface RoutingMetrics {
   queueDelayMs?: number;
@@ -58,10 +59,12 @@ const defaultCloudFactories: Record<string, CloudProviderFactory> = {
   openai: (apiKey) => new OpenAIInferenceProvider({ apiKey })
 };
 
-function allowed(project: ProjectDefinition, providerId: string): boolean {
-  if (!project.privacy.allowedProviderIds.includes(providerId)) return false;
-  if (providerId === 'ollama') return true;
-  return project.privacy.cloudAllowed;
+function allowed(
+  project: ProjectDefinition,
+  provider: { id: string; kind: ProviderKind }
+): boolean {
+  if (!project.privacy.allowedProviderIds.includes(provider.id)) return false;
+  return provider.kind === 'local' || project.privacy.cloudAllowed;
 }
 
 function mergeCapabilities(
@@ -103,21 +106,28 @@ export class ProjectProviderRuntime {
     assertProjectCredentialIsolation(project, profiles);
     const providers: InferenceProvider[] = [];
 
-    if (this.localProvider && allowed(project, this.localProvider.id)) {
+    if (this.localProvider && allowed(project, this.localProvider)) {
       const settings = this.settings.get(this.localProvider.id);
       if (settings?.enabled !== false) providers.push(this.localProvider);
     }
 
     for (const providerId of project.privacy.allowedProviderIds) {
-      if (providerId === this.localProvider?.id || !allowed(project, providerId)) continue;
+      if (providerId === this.localProvider?.id) continue;
+      const factory = this.factories[providerId];
+      if (!factory || !project.privacy.cloudAllowed) continue;
       const settings = this.settings.get(providerId);
       if (settings?.enabled === false) continue;
       const credentialId = project.credentialProfileIds[providerId];
-      const factory = this.factories[providerId];
-      if (!credentialId || !factory) continue;
+      if (!credentialId) continue;
       const secret = this.credentials.resolve(credentialId);
       if (!secret) continue;
-      providers.push(factory(secret));
+      const provider = factory(secret);
+      if (provider.id !== providerId || provider.kind !== 'cloud') {
+        throw new Error(
+          `Provider factory ${providerId} returned inconsistent provider identity/kind.`
+        );
+      }
+      if (allowed(project, provider)) providers.push(provider);
     }
 
     return new ProviderRegistry(providers);
@@ -152,15 +162,14 @@ export class ProjectProviderRuntime {
         const configuredFast = discovered.find(
           (model) => model.metadata?.configuredFastModel === true
         )?.id;
-        requestedIds = unique([
-          options.localModelHint,
-          providerSettings.defaultModelId,
-          configuredFast,
-          ...configuredModels
-        ]).slice(0, Math.max(1, configuredModels.length + 1));
+        // When the legacy executor selected fast/strong for this attempt, keep that exact
+        // local model as the only local candidate. Cloud can still beat it by policy.
+        requestedIds = options.localModelHint
+          ? [options.localModelHint]
+          : unique([providerSettings.defaultModelId, configuredFast, ...configuredModels]);
       } else {
         // Auto-routing never chooses an arbitrary cloud model just because `/models`
-        // returned it. The user/provider setup must select a default or enable profiles.
+        // returned it. Provider setup must select a default or explicitly enable profiles.
         requestedIds = unique([providerSettings.defaultModelId, ...configuredModels]);
       }
 
@@ -172,7 +181,7 @@ export class ProjectProviderRuntime {
           providerId: provider.id,
           modelId,
           providerKind: provider.kind,
-          available: discoveryOk && Boolean(model),
+          available: discoveryOk && Boolean(model) && profileEnabled(profile),
           capabilities: mergeCapabilities(provider, model),
           frontier: profile?.frontier === true,
           qualityScore: profile?.qualityScore,
