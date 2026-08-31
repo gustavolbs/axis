@@ -9,6 +9,7 @@ import type { ModelSelection } from './project-store.js';
 import { ProviderRegistry } from './providers/registry.js';
 import {
   ProviderError,
+  type InferenceProvider,
   type InferenceRequest,
   type InferenceResult
 } from './providers/types.js';
@@ -85,7 +86,10 @@ function orderedEligibleFallbacks(
     });
 }
 
-function costChange(from: RoutingCandidate, to: RoutingCandidate): 'none' | 'known-material' | 'unknown' {
+function costChange(
+  from: RoutingCandidate,
+  to: RoutingCandidate
+): 'none' | 'known-material' | 'unknown' {
   if (to.providerKind === 'local') return 'none';
   if (from.providerKind === 'local' && to.providerKind === 'cloud') return 'known-material';
 
@@ -94,9 +98,8 @@ function costChange(from: RoutingCandidate, to: RoutingCandidate): 'none' | 'kno
   if (
     typeof fromCost !== 'number' || !Number.isFinite(fromCost) || fromCost < 0 ||
     typeof toCost !== 'number' || !Number.isFinite(toCost) || toCost < 0
-  ) {
-    return 'unknown';
-  }
+  ) return 'unknown';
+
   const absoluteIncrease = toCost - fromCost;
   const relativeIncrease = fromCost === 0 ? (toCost > 0 ? Infinity : 1) : toCost / fromCost;
   return absoluteIncrease >= 0.05 && relativeIncrease > 1.25 ? 'known-material' : 'none';
@@ -110,15 +113,8 @@ async function ensureFallbackAllowed(
 ): Promise<void> {
   const change = costChange(from, to);
   if (change === 'none') return;
-  const request: FallbackConfirmationRequest = {
-    from,
-    to,
-    reason,
-    costChange: change
-  };
-  if (!confirm || !(await confirm(request))) {
-    throw new FallbackConfirmationRequired(request);
-  }
+  const request: FallbackConfirmationRequest = { from, to, reason, costChange: change };
+  if (!confirm || !(await confirm(request))) throw new FallbackConfirmationRequired(request);
 }
 
 function providerFailure(error: unknown): ProviderError | undefined {
@@ -133,6 +129,7 @@ export class RoutedInferenceRuntime {
   constructor(private readonly providers: ProviderRegistry) {}
 
   async invoke(input: RoutedInferenceInput): Promise<RoutedInferenceResult> {
+    this.assertCatalogMatchesRegistry(input.routing.candidates);
     const routing = routeCognitiveStage(input.routing);
     const selection = input.routing.modelSelection ?? input.routing.project.defaultModel;
     const candidates = input.routing.candidates;
@@ -146,7 +143,7 @@ export class RoutedInferenceRuntime {
     }
 
     const attempts: RoutedInferenceAttempt[] = [];
-    const primaryProvider = this.providers.get(primary.providerId);
+    const primaryProvider = this.providerFor(primary);
     try {
       const result = await primaryProvider.invoke({ ...input.inference, model: primary.modelId });
       attempts.push({ providerId: primary.providerId, modelId: primary.modelId, status: 'success' });
@@ -161,22 +158,19 @@ export class RoutedInferenceRuntime {
         retryable: providerError?.options.retryable,
         rateLimited: providerError?.options.rateLimited
       });
-      if (!providerError || (!providerError.options.retryable && !providerError.options.rateLimited)) {
-        throw error;
-      }
+      if (!providerError || (!providerError.options.retryable && !providerError.options.rateLimited)) throw error;
       if (isExplicit(selection)) throw error;
     }
 
     let previous = primary;
-    const fallbacks = orderedEligibleFallbacks(routing, candidates);
-    for (const fallback of fallbacks) {
+    for (const fallback of orderedEligibleFallbacks(routing, candidates)) {
       const prior = attempts.at(-1);
       const reason = prior?.rateLimited
         ? `${previous.providerId}/${previous.modelId} is rate-limited.`
         : `${previous.providerId}/${previous.modelId} is temporarily unavailable.`;
       await ensureFallbackAllowed(previous, fallback, input.confirmFallback, reason);
 
-      const provider = this.providers.get(fallback.providerId);
+      const provider = this.providerFor(fallback);
       try {
         const result = await provider.invoke({ ...input.inference, model: fallback.modelId });
         attempts.push({ providerId: fallback.providerId, modelId: fallback.modelId, status: 'success' });
@@ -202,9 +196,7 @@ export class RoutedInferenceRuntime {
           retryable: providerError?.options.retryable,
           rateLimited: providerError?.options.rateLimited
         });
-        if (!providerError || (!providerError.options.retryable && !providerError.options.rateLimited)) {
-          throw error;
-        }
+        if (!providerError || (!providerError.options.retryable && !providerError.options.rateLimited)) throw error;
         previous = fallback;
       }
     }
@@ -215,5 +207,20 @@ export class RoutedInferenceRuntime {
       `All eligible routed inference providers failed for stage ${input.inference.stage ?? 'other'}.`,
       { retryable: true, code: 'routing_fallback_exhausted' }
     );
+  }
+
+  private assertCatalogMatchesRegistry(candidates: RoutingCandidate[]): void {
+    for (const candidate of candidates) this.providerFor(candidate);
+  }
+
+  private providerFor(candidate: RoutingCandidate): InferenceProvider {
+    const provider = this.providers.get(candidate.providerId);
+    if (provider.kind !== candidate.providerKind) {
+      throw new RoutingConstraintError(
+        `Routing candidate ${candidate.providerId}/${candidate.modelId} declares ${candidate.providerKind} ` +
+        `compute but the registered provider is ${provider.kind}. Refusing to route with inconsistent privacy metadata.`
+      );
+    }
+    return provider;
   }
 }
