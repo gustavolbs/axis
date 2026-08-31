@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
 export type RoutingPolicy = 'auto' | 'local-first' | 'balanced' | 'speed-first' | 'deep' | 'frontier-only';
 export type ModelSelection = { mode: 'auto' } | { mode: 'explicit'; providerId: string; modelId: string };
@@ -169,10 +169,17 @@ function usd(value?: number): string {
   return `$${value.toFixed(2)}`;
 }
 
-function numberOrNull(value: string): number | null {
+function optionalPositive(value: string, label: string): number | null {
   if (!value.trim()) return null;
   const parsed = Number(value);
-  if (!Number.isFinite(parsed)) throw new Error(`Invalid number: ${value}`);
+  if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`${label} must be positive or blank.`);
+  return parsed;
+}
+
+function optionalNonNegative(value: string, label: string): number | undefined {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${label} must be non-negative.`);
   return parsed;
 }
 
@@ -205,10 +212,10 @@ function draftFromProject(project: AdminProject): ProjectDraft {
   };
 }
 
-function emptyCredential(): CredentialDraft {
+function emptyCredential(providerId = 'anthropic'): CredentialDraft {
   return {
     id: '',
-    providerId: 'anthropic',
+    providerId,
     label: '',
     organizationId: '',
     backend: 'macos-keychain',
@@ -217,9 +224,9 @@ function emptyCredential(): CredentialDraft {
   };
 }
 
-function emptyPricing(): PricingDraft {
+function emptyPricing(providerId = 'anthropic'): PricingDraft {
   return {
-    providerId: 'anthropic',
+    providerId,
     modelId: '',
     inputPerMillionUsd: '',
     outputPerMillionUsd: '',
@@ -245,6 +252,7 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
   const [notice, setNotice] = useState<string>();
 
   const active = projects.find((project) => project.id === activeId) ?? projects[0];
+  const cloudProviders = providers.filter((provider) => provider.kind === 'cloud');
 
   async function loadGlobal(preferredId?: string) {
     const [{ projects: nextProjects }, { providers: nextProviders }, { credentials: nextCredentials }] = await Promise.all([
@@ -255,9 +263,11 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
     setProjects(nextProjects);
     setProviders(nextProviders);
     setCredentials(nextCredentials);
+    if (nextProviders.some((provider) => provider.id === credentialDraft.providerId) === false && nextProviders[0]) {
+      setCredentialDraft((current) => ({ ...current, providerId: nextProviders.find((provider) => provider.kind === 'cloud')?.id ?? current.providerId }));
+    }
     const targetId = preferredId ?? activeId ?? nextProjects[0]?.id;
-    if (targetId && nextProjects.some((project) => project.id === targetId)) setActiveId(targetId);
-    else setActiveId(nextProjects[0]?.id);
+    setActiveId(targetId && nextProjects.some((project) => project.id === targetId) ? targetId : nextProjects[0]?.id);
   }
 
   async function loadProject(id: string) {
@@ -284,7 +294,6 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
     void loadProject(active.id).catch((next) => setError(next instanceof Error ? next.message : String(next)));
   }, [active?.id, active?.updatedAt]);
 
-  const cloudProviders = providers.filter((provider) => provider.kind === 'cloud');
   const modelOptions = useMemo(() => {
     const options: Array<{ value: string; label: string }> = [{ value: 'auto', label: 'Auto' }];
     for (const provider of catalog?.providers ?? []) {
@@ -322,43 +331,44 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
 
   async function saveProject() {
     if (!active || !draft) return;
-    const concurrency = Number(draft.concurrency);
-    if (!Number.isInteger(concurrency)) {
-      setError('Concurrency must be an integer.');
-      return;
+    try {
+      const concurrency = Number(draft.concurrency);
+      if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
+        throw new Error('Concurrency must be an integer between 1 and 32.');
+      }
+      if (draft.allowedProviderIds.length === 0) throw new Error('At least one provider must be allowed.');
+      const credentialProfileIds = Object.fromEntries(
+        Object.entries(draft.credentialProfileIds).filter(([, value]) => Boolean(value))
+      );
+      await mutate(
+        () => requestJson(`/api/projects/${encodeURIComponent(active.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            name: draft.name,
+            workspace: draft.workspace,
+            organizationId: draft.organizationId,
+            organizationName: draft.organizationName || undefined,
+            defaultRoutingPolicy: draft.defaultRoutingPolicy,
+            defaultModel: parseModelValue(draft.defaultModel),
+            privacy: { cloudAllowed: draft.cloudAllowed, allowedProviderIds: draft.allowedProviderIds },
+            credentialProfileIds,
+            budgets: {
+              monthlyUsd: optionalPositive(draft.monthlyUsd, 'Monthly budget'),
+              dailyUsd: optionalPositive(draft.dailyUsd, 'Daily budget'),
+              perJobUsd: optionalPositive(draft.perJobUsd, 'Per-job budget')
+            },
+            concurrency
+          })
+        }),
+        'Project settings saved.',
+        active.id
+      );
+    } catch (next) {
+      setError(next instanceof Error ? next.message : String(next));
     }
-    const credentialProfileIds = Object.fromEntries(
-      Object.entries(draft.credentialProfileIds).filter(([, value]) => Boolean(value))
-    );
-    await mutate(
-      () => requestJson(`/api/projects/${encodeURIComponent(active.id)}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          name: draft.name,
-          workspace: draft.workspace,
-          organizationId: draft.organizationId,
-          organizationName: draft.organizationName || undefined,
-          defaultRoutingPolicy: draft.defaultRoutingPolicy,
-          defaultModel: parseModelValue(draft.defaultModel),
-          privacy: {
-            cloudAllowed: draft.cloudAllowed,
-            allowedProviderIds: draft.allowedProviderIds
-          },
-          credentialProfileIds,
-          budgets: {
-            monthlyUsd: numberOrNull(draft.monthlyUsd),
-            dailyUsd: numberOrNull(draft.dailyUsd),
-            perJobUsd: numberOrNull(draft.perJobUsd)
-          },
-          concurrency
-        })
-      }),
-      'Project settings saved.',
-      active.id
-    );
   }
 
-  async function createProject(event: React.FormEvent<HTMLFormElement>) {
+  async function createProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const name = String(form.get('name') ?? '').trim();
@@ -395,24 +405,18 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
 
   async function removeProject() {
     if (!active || !window.confirm(`Delete Project “${active.name}”? This does not delete the repository.`)) return;
-    await mutate(
-      () => requestJson(`/api/projects/${encodeURIComponent(active.id)}`, { method: 'DELETE' }),
-      'Project removed.'
-    );
+    await mutate(() => requestJson(`/api/projects/${encodeURIComponent(active.id)}`, { method: 'DELETE' }), 'Project removed.');
   }
 
   async function saveProvider(provider: ProviderAdmin, patch: Record<string, unknown>) {
     await mutate(
-      () => requestJson(`/api/providers/${encodeURIComponent(provider.id)}`, {
-        method: 'PATCH',
-        body: JSON.stringify(patch)
-      }),
+      () => requestJson(`/api/providers/${encodeURIComponent(provider.id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
       `${provider.id} settings updated.`,
       active?.id
     );
   }
 
-  async function saveCredential(event: React.FormEvent<HTMLFormElement>) {
+  async function saveCredential(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const input = credentialDraft.backend === 'macos-keychain'
       ? {
@@ -433,19 +437,15 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
         };
     const result = await mutate(
       () => requestJson('/api/credentials', { method: 'POST', body: JSON.stringify(input) }),
-      'Credential metadata saved. Secret values remain outside the Project store.',
+      'Credential saved. Secret values remain outside Project metadata.',
       active?.id
     );
-    if (result) setCredentialDraft(emptyCredential());
+    if (result) setCredentialDraft(emptyCredential(cloudProviders[0]?.id));
   }
 
   async function removeCredential(id: string) {
     if (!window.confirm(`Delete credential profile “${id}”?`)) return;
-    await mutate(
-      () => requestJson(`/api/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-      'Credential removed.',
-      active?.id
-    );
+    await mutate(() => requestJson(`/api/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' }), 'Credential removed.', active?.id);
   }
 
   function editPricing(providerId: string, model: CatalogModel) {
@@ -460,40 +460,53 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
     });
   }
 
-  async function savePricing(event: React.FormEvent<HTMLFormElement>) {
+  async function savePricing(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const input = Number(pricingDraft.inputPerMillionUsd);
-    const output = Number(pricingDraft.outputPerMillionUsd);
-    if (!pricingDraft.providerId || !pricingDraft.modelId || !Number.isFinite(input) || !Number.isFinite(output)) {
-      setError('Provider, model, input price and output price are required.');
-      return;
+    try {
+      const input = optionalNonNegative(pricingDraft.inputPerMillionUsd, 'Input price');
+      const output = optionalNonNegative(pricingDraft.outputPerMillionUsd, 'Output price');
+      if (!pricingDraft.providerId || !pricingDraft.modelId || input === undefined || output === undefined) {
+        throw new Error('Provider, model, input price and output price are required.');
+      }
+      await mutate(
+        () => requestJson('/api/pricing', {
+          method: 'PUT',
+          body: JSON.stringify({
+            providerId: pricingDraft.providerId,
+            modelId: pricingDraft.modelId,
+            inputPerMillionUsd: input,
+            outputPerMillionUsd: output,
+            cacheReadPerMillionUsd: optionalNonNegative(pricingDraft.cacheReadPerMillionUsd, 'Cache read price'),
+            cacheWritePerMillionUsd: optionalNonNegative(pricingDraft.cacheWritePerMillionUsd, 'Cache write price'),
+            source: pricingDraft.source || undefined,
+            verifiedAt: new Date().toISOString()
+          })
+        }),
+        'Pricing saved. Budget admission will use this price sheet.',
+        active?.id
+      );
+    } catch (next) {
+      setError(next instanceof Error ? next.message : String(next));
     }
-    await mutate(
-      () => requestJson('/api/pricing', {
-        method: 'PUT',
-        body: JSON.stringify({
-          providerId: pricingDraft.providerId,
-          modelId: pricingDraft.modelId,
-          inputPerMillionUsd: input,
-          outputPerMillionUsd: output,
-          cacheReadPerMillionUsd: pricingDraft.cacheReadPerMillionUsd.trim() ? Number(pricingDraft.cacheReadPerMillionUsd) : undefined,
-          cacheWritePerMillionUsd: pricingDraft.cacheWritePerMillionUsd.trim() ? Number(pricingDraft.cacheWritePerMillionUsd) : undefined,
-          source: pricingDraft.source || undefined,
-          verifiedAt: new Date().toISOString()
-        })
-      }),
-      'Pricing saved. Budget admission will use this price sheet.',
+  }
+
+  async function removePricing() {
+    if (!pricingDraft.providerId || !pricingDraft.modelId) return;
+    const result = await mutate(
+      () => requestJson(`/api/pricing?providerId=${encodeURIComponent(pricingDraft.providerId)}&modelId=${encodeURIComponent(pricingDraft.modelId)}`, { method: 'DELETE' }),
+      'Pricing removed.',
       active?.id
     );
+    if (result) setPricingDraft(emptyPricing(cloudProviders[0]?.id));
   }
 
   function toggleAllowedProvider(providerId: string, checked: boolean) {
     if (!draft) return;
-    const next = checked
-      ? [...new Set([...draft.allowedProviderIds, providerId])]
-      : draft.allowedProviderIds.filter((id) => id !== providerId);
-    const cloudAllowed = next.some((id) => providers.find((provider) => provider.id === id)?.kind === 'cloud');
-    updateDraft({ allowedProviderIds: next, cloudAllowed: cloudAllowed || draft.cloudAllowed && checked });
+    updateDraft({
+      allowedProviderIds: checked
+        ? [...new Set([...draft.allowedProviderIds, providerId])]
+        : draft.allowedProviderIds.filter((id) => id !== providerId)
+    });
   }
 
   return <div className="admin-shell">
@@ -535,7 +548,7 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
           </section>
 
           <div className="cards four admin-metrics">
-            <section className="panel metric-card"><span>Today</span><strong>{usd(usage?.daily.knownCostUsd)}</strong><small>{usage?.daily.events ?? 0} inference events</small></section>
+            <section className="panel metric-card"><span>Today</span><strong>{usd(usage?.daily.knownCostUsd)}</strong><small>{usage?.daily.events ?? 0} events · {usage?.daily.unknownCostEvents ?? 0} unpriced</small></section>
             <section className="panel metric-card"><span>This month</span><strong>{usd(usage?.monthly.knownCostUsd)}</strong><small>{usage?.monthly.cloudEvents ?? 0} cloud calls</small></section>
             <section className="panel metric-card"><span>Reservations</span><strong>{usage?.activeReservations.count ?? 0}</strong><small>{usd(usage?.activeReservations.upperBoundUsd)} upper bound</small></section>
             <section className="panel metric-card"><span>Default model</span><strong className="metric-model">{active.defaultModel.mode === 'auto' ? 'Auto' : active.defaultModel.modelId}</strong><small>{active.defaultModel.mode === 'auto' ? active.defaultRoutingPolicy : active.defaultModel.providerId}</small></section>
@@ -547,13 +560,15 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
               <label>Name<input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} /></label>
               <label>Workspace<input value={draft.workspace} onChange={(event) => updateDraft({ workspace: event.target.value })} /></label>
               <label>Organization ID<input value={draft.organizationId} onChange={(event) => updateDraft({ organizationId: event.target.value })} /></label>
+              <label>Organization name<input value={draft.organizationName} onChange={(event) => updateDraft({ organizationName: event.target.value })} /></label>
               <label>Routing policy<select value={draft.defaultRoutingPolicy} onChange={(event) => updateDraft({ defaultRoutingPolicy: event.target.value as RoutingPolicy })}>{policies.map((policy) => <option key={policy}>{policy}</option>)}</select></label>
               <label>Default model<select value={draft.defaultModel} onChange={(event) => updateDraft({ defaultModel: event.target.value })}>{modelOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
               <label>Concurrency<input type="number" min="1" max="32" value={draft.concurrency} onChange={(event) => updateDraft({ concurrency: event.target.value })} /></label>
-              <label>Daily budget USD<input type="number" min="0" step="0.01" value={draft.dailyUsd} onChange={(event) => updateDraft({ dailyUsd: event.target.value })} placeholder="unlimited" /></label>
-              <label>Monthly budget USD<input type="number" min="0" step="0.01" value={draft.monthlyUsd} onChange={(event) => updateDraft({ monthlyUsd: event.target.value })} placeholder="unlimited" /></label>
-              <label>Per-job budget USD<input type="number" min="0" step="0.01" value={draft.perJobUsd} onChange={(event) => updateDraft({ perJobUsd: event.target.value })} placeholder="unlimited" /></label>
+              <label>Daily budget USD<input type="number" min="0.01" step="0.01" value={draft.dailyUsd} onChange={(event) => updateDraft({ dailyUsd: event.target.value })} placeholder="unlimited" /></label>
+              <label>Monthly budget USD<input type="number" min="0.01" step="0.01" value={draft.monthlyUsd} onChange={(event) => updateDraft({ monthlyUsd: event.target.value })} placeholder="unlimited" /></label>
+              <label>Per-job budget USD<input type="number" min="0.01" step="0.01" value={draft.perJobUsd} onChange={(event) => updateDraft({ perJobUsd: event.target.value })} placeholder="unlimited" /></label>
             </div>
+            <label className="check-row cloud-policy"><input type="checkbox" checked={draft.cloudAllowed} onChange={(event) => updateDraft({ cloudAllowed: event.target.checked })} /><span>Allow cloud inference<small>Hard Project privacy boundary. Provider allowlist and credentials still apply.</small></span></label>
             <div className="provider-allowlist">
               <strong>Allowed providers</strong>
               {providers.map((provider) => <label className="check-row" key={provider.id}><input type="checkbox" checked={draft.allowedProviderIds.includes(provider.id)} onChange={(event) => toggleAllowedProvider(provider.id, event.target.checked)} /><span>{provider.id}<small>{provider.kind}{provider.settings.enabled ? '' : ' · globally disabled'}</small></span></label>)}
@@ -565,19 +580,30 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
           </section>
 
           <section className="panel admin-section">
-            <div className="panel-heading"><div><span className="eyebrow">MODEL CATALOG</span><strong>Actual runtime availability</strong></div><span className="muted small">Discovery comes from the provider, not a hardcoded list.</span></div>
+            <div className="panel-heading"><div><span className="eyebrow">MODEL CATALOG</span><strong>Actual runtime availability</strong></div><span className="muted small">Cloud Auto uses only a provider default or explicitly configured model profile.</span></div>
             <div className="catalog-list">{(catalog?.providers ?? []).map((provider) => {
               const adminProvider = providers.find((item) => item.id === provider.id);
+              const defaultModelId = adminProvider?.settings.defaultModelId ?? '';
               return <div className="catalog-provider" key={provider.id}>
-                <div className="catalog-provider-head"><div><i className={`dot ${provider.ready ? 'good' : 'bad'}`} /><strong>{provider.id}</strong><span>{provider.kind}</span></div><div><label className="switch-label"><input type="checkbox" checked={adminProvider?.settings.enabled ?? provider.enabled} onChange={(event) => adminProvider && void saveProvider(adminProvider, { enabled: event.target.checked })} />enabled</label><span className={`status-pill ${provider.ready ? 'good' : 'warn'}`}>{provider.ready ? 'ready' : provider.reason ?? 'unavailable'}</span></div></div>
-                {provider.models.length === 0 ? <p className="muted small">No discovered/configured models.</p> : <div className="model-table">{provider.models.map((model) => <div className="model-row" key={model.id}>
-                  <div className="model-name"><strong>{model.displayName}</strong><span>{model.id}</span></div>
-                  <span className={`status-pill ${model.available ? 'good' : 'warn'}`}>{model.available ? 'available' : 'configured only'}</span>
-                  <label className="switch-label"><input type="checkbox" checked={model.routing.enabled !== false} onChange={(event) => adminProvider && void saveProvider(adminProvider, { models: { [model.id]: { ...model.routing, enabled: event.target.checked } } })} />route</label>
-                  <label className="switch-label"><input type="checkbox" checked={model.routing.frontier === true} onChange={(event) => adminProvider && void saveProvider(adminProvider, { models: { [model.id]: { ...model.routing, frontier: event.target.checked } } })} />frontier</label>
-                  <span className="model-price">{model.pricing ? `${usd(model.pricing.inputPerMillionUsd)} in / ${usd(model.pricing.outputPerMillionUsd)} out` : 'pricing missing'}</span>
-                  <button className="secondary small-button" onClick={() => editPricing(provider.id, model)}>Pricing</button>
-                </div>)}</div>}
+                <div className="catalog-provider-head">
+                  <div><i className={`dot ${provider.ready ? 'good' : 'bad'}`} /><strong>{provider.id}</strong><span>{provider.kind}</span></div>
+                  <div><label className="switch-label"><input type="checkbox" checked={adminProvider?.settings.enabled ?? provider.enabled} onChange={(event) => adminProvider && void saveProvider(adminProvider, { enabled: event.target.checked })} />enabled</label><span className={`status-pill ${provider.ready ? 'good' : 'warn'}`}>{provider.ready ? 'ready' : provider.reason ?? 'unavailable'}</span></div>
+                </div>
+                {adminProvider ? <label className="provider-default">Auto default<select value={defaultModelId} onChange={(event) => void saveProvider(adminProvider, { defaultModelId: event.target.value || null })}><option value="">None</option>{provider.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select></label> : null}
+                {provider.models.length === 0 ? <p className="muted small">No discovered/configured models.</p> : <div className="model-table">{provider.models.map((model) => {
+                  const configuredProfile = adminProvider?.settings.models[model.id];
+                  const autoRoutable = provider.kind === 'local'
+                    ? model.routing.enabled !== false
+                    : defaultModelId === model.id || Boolean(configuredProfile && configuredProfile.enabled !== false);
+                  return <div className="model-row" key={model.id}>
+                    <div className="model-name"><strong>{model.displayName}</strong><span>{model.id}</span></div>
+                    <span className={`status-pill ${model.available ? 'good' : 'warn'}`}>{model.available ? 'available' : 'configured only'}</span>
+                    <label className="switch-label"><input type="checkbox" checked={autoRoutable} onChange={(event) => adminProvider && void saveProvider(adminProvider, { models: { [model.id]: { ...(configuredProfile ?? model.routing), enabled: event.target.checked } } })} />route</label>
+                    <label className="switch-label"><input type="checkbox" checked={configuredProfile?.frontier === true} onChange={(event) => adminProvider && void saveProvider(adminProvider, { models: { [model.id]: { ...(configuredProfile ?? model.routing), frontier: event.target.checked } } })} />frontier</label>
+                    <span className="model-price">{model.pricing ? `${usd(model.pricing.inputPerMillionUsd)} in / ${usd(model.pricing.outputPerMillionUsd)} out` : 'pricing missing'}</span>
+                    <button className="secondary small-button" onClick={() => editPricing(provider.id, model)}>Pricing</button>
+                  </div>;
+                })}</div>}
               </div>;
             })}</div>
           </section>
@@ -592,7 +618,7 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
               <label>Cache read / 1M<input type="number" min="0" step="0.0001" value={pricingDraft.cacheReadPerMillionUsd} onChange={(event) => setPricingDraft((current) => ({ ...current, cacheReadPerMillionUsd: event.target.value }))} /></label>
               <label>Cache write / 1M<input type="number" min="0" step="0.0001" value={pricingDraft.cacheWritePerMillionUsd} onChange={(event) => setPricingDraft((current) => ({ ...current, cacheWritePerMillionUsd: event.target.value }))} /></label>
               <label className="grow-two">Source<input value={pricingDraft.source} onChange={(event) => setPricingDraft((current) => ({ ...current, source: event.target.value }))} placeholder="Provider pricing page / manual" /></label>
-              <button className="primary align-end" disabled={busy}>Save pricing</button>
+              <div className="pricing-actions"><button className="primary" disabled={busy}>Save pricing</button><button type="button" className="danger" disabled={busy || !pricingDraft.modelId} onClick={() => void removePricing()}>Remove</button></div>
             </form>
           </section>
         </>}
@@ -609,7 +635,7 @@ export function AdminPanel({ onRunProject }: { onRunProject: (project: AdminProj
         <label>Organization ID<input value={credentialDraft.organizationId} onChange={(event) => setCredentialDraft((current) => ({ ...current, organizationId: event.target.value }))} placeholder="must match Project" /></label>
         <label>Backend<select value={credentialDraft.backend} onChange={(event) => setCredentialDraft((current) => ({ ...current, backend: event.target.value as CredentialDraft['backend'] }))}><option value="macos-keychain">macOS Keychain</option><option value="environment">Environment</option></select></label>
         {credentialDraft.backend === 'macos-keychain' ? <label>Secret<input type="password" required value={credentialDraft.secret} onChange={(event) => setCredentialDraft((current) => ({ ...current, secret: event.target.value }))} autoComplete="new-password" /></label> : <label>Environment variable<input required value={credentialDraft.environmentVariable} onChange={(event) => setCredentialDraft((current) => ({ ...current, environmentVariable: event.target.value }))} placeholder="ANTHROPIC_API_KEY" /></label>}
-        <button className="primary align-end" disabled={busy}>Save credential</button>
+        <button className="primary align-end" disabled={busy || cloudProviders.length === 0}>Save credential</button>
       </form>
     </section>
   </div>;
