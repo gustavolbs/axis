@@ -15,18 +15,20 @@ function parseArgs(argv) {
     out: path.join(repoRoot, 'eval', 'results', `multi-provider-${Date.now()}.json`),
     variants: ['qwen', 'anthropic', 'openai', 'auto'],
     execute: false,
-    applyQualityProfiles: false
+    applyQualityProfiles: false,
+    reuseNodeModules: false
   };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === '--execute') args.execute = true;
     else if (value === '--apply-quality-profiles') args.applyQualityProfiles = true;
+    else if (value === '--reuse-node-modules') args.reuseNodeModules = true;
     else if (value === '--file') args.file = path.resolve(argv[++index]);
     else if (value === '--out') args.out = path.resolve(argv[++index]);
     else if (value === '--variants') {
       args.variants = argv[++index].split(',').map((item) => item.trim()).filter(Boolean);
     } else if (value === '--help') {
-      console.log('Usage: npm run eval:providers -- [--execute] [--variants qwen,anthropic,openai,auto] [--file cases.json] [--out report.json] [--apply-quality-profiles]');
+      console.log('Usage: npm run eval:providers -- [--execute] [--variants qwen,anthropic,openai,auto] [--file cases.json] [--out report.json] [--reuse-node-modules] [--apply-quality-profiles]');
       process.exit(0);
     } else {
       throw new Error(`Unknown argument: ${value}`);
@@ -42,7 +44,7 @@ function parseArgs(argv) {
   return args;
 }
 
-function readCases(file) {
+function readCases(file, { allowPlaceholders = false } = {}) {
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Eval case file must contain a non-empty array.');
   return parsed.map((item, index) => {
@@ -50,7 +52,7 @@ function readCases(file) {
     if (typeof item.id !== 'string' || !item.id.trim()) throw new Error(`Case ${index} requires id.`);
     if (typeof item.category !== 'string' || !item.category.trim()) throw new Error(`Case ${item.id} requires category.`);
     if (typeof item.workspace !== 'string' || !item.workspace.trim()) throw new Error(`Case ${item.id} requires workspace.`);
-    if (item.workspace.includes('REPLACE_WITH_REAL_WORKSPACE')) {
+    if (!allowPlaceholders && item.workspace.includes('REPLACE_WITH_REAL_WORKSPACE')) {
       throw new Error(`Case ${item.id} still uses REPLACE_WITH_REAL_WORKSPACE.`);
     }
     if (typeof item.goal !== 'string' || !item.goal.trim()) throw new Error(`Case ${item.id} requires goal.`);
@@ -93,21 +95,23 @@ function inspectWorkspace(workspace) {
   };
 }
 
-function createDisposableWorktree(info, root, label) {
+function createDisposableWorktree(info, root, label, { reuseNodeModules = false } = {}) {
   const worktreeRoot = path.join(root, `worktree-${label}-${randomUUID()}`);
   runGit(info.gitRoot, ['worktree', 'add', '--detach', worktreeRoot, info.headSha]);
-  const sourceNodeModules = path.join(info.gitRoot, 'node_modules');
-  const targetNodeModules = path.join(worktreeRoot, 'node_modules');
-  if (fs.existsSync(sourceNodeModules) && !fs.existsSync(targetNodeModules)) {
-    try {
-      fs.symlinkSync(
-        sourceNodeModules,
-        targetNodeModules,
-        process.platform === 'win32' ? 'junction' : 'dir'
-      );
-    } catch {
-      // Dependency reuse is an optimization. Validation will report missing dependencies
-      // rather than causing the harness to mutate/install into the source repository.
+  if (reuseNodeModules) {
+    const sourceNodeModules = path.join(info.gitRoot, 'node_modules');
+    const targetNodeModules = path.join(worktreeRoot, 'node_modules');
+    if (fs.existsSync(sourceNodeModules) && !fs.existsSync(targetNodeModules)) {
+      try {
+        fs.symlinkSync(
+          sourceNodeModules,
+          targetNodeModules,
+          process.platform === 'win32' ? 'junction' : 'dir'
+        );
+      } catch {
+        // Explicit dependency reuse is only an optimization. Validation can report missing
+        // dependencies without the harness installing or mutating the source repository.
+      }
     }
   }
   return {
@@ -341,10 +345,8 @@ function qualityRecommendations(records, providerConfig) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const cases = readCases(args.file);
-  const {
-    loadConfig
-  } = await import('../dist/config.js');
+  const cases = readCases(args.file, { allowPlaceholders: !args.execute });
+  const { loadConfig } = await import('../dist/config.js');
   const {
     CredentialManager,
     CredentialProfileStore
@@ -370,6 +372,7 @@ async function main() {
       sourceWorkspacesMustBeClean: true,
       executionUsesDetachedWorktrees: true,
       sourceRepositoriesAreNeverReset: true,
+      sourceNodeModulesReuse: args.reuseNodeModules ? 'explicitly enabled' : 'disabled',
       credentialsRemainEnvironmentBacked: true,
       modelIdsAreExplicitForCloud: true
     }
@@ -395,7 +398,9 @@ async function main() {
     for (const variant of args.variants) {
       for (const item of cases) {
         const info = workspaceInfo.get(item.workspace);
-        const disposable = createDisposableWorktree(info, runRoot, `${variant}-${item.id}`);
+        const disposable = createDisposableWorktree(info, runRoot, `${variant}-${item.id}`, {
+          reuseNodeModules: args.reuseNodeModules
+        });
         const stateRoot = path.join(runRoot, `state-${variant}-${item.id}-${randomUUID()}`);
         try {
           const organizationId = `eval-${variant}`;
@@ -570,6 +575,7 @@ async function main() {
       source: path.relative(process.cwd(), args.file) || args.file,
       variants: args.variants,
       sourceHeads: Object.fromEntries([...workspaceInfo.entries()].map(([workspace, info]) => [workspace, info.headSha])),
+      safety: plan.safety,
       summary: aggregate(records),
       qualityRecommendations: recommendations,
       qualityProfilesApplied: args.applyQualityProfiles,
