@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { buildClaudeRemoteWorkerConfig } from '../src/claude-remote-config.js';
 import { loadConfig, type LocalCoderConfig } from '../src/config.js';
 import { applyRemoteChanges, hashWorkspaceContent, prepareRemoteWorkspace } from '../src/remote-workspace.js';
 
@@ -171,45 +172,72 @@ test('remote result apply is compare-and-swap and refuses stale worker output', 
   }
 });
 
-test('Claude remote-worker installer preserves unrelated MCPs and defaults to Qwen3.8', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-remote-installer-'));
-  try {
-    const configPath = path.join(root, '.claude.json');
-    await fs.writeFile(
-      configPath,
-      `${JSON.stringify({ mcpServers: { existing: { type: 'stdio', command: 'existing' } } })}\n`
-    );
+test('Claude remote-worker config preserves unrelated MCPs and never embeds the worker token', () => {
+  const installed = buildClaudeRemoteWorkerConfig(
+    {
+      theme: 'system',
+      mcpServers: { existing: { type: 'stdio', command: 'existing' } }
+    },
+    {
+      serverPath: '/opt/local-coder/dist/index.js',
+      remoteWorkerUrl: 'http://192.168.1.50:7337',
+      credentialRef: 'remote-worker/default',
+      model: 'qwen3.8:27b'
+    }
+  ) as {
+    theme?: string;
+    mcpServers: Record<string, { env?: Record<string, string> }>;
+  };
 
-    await run(
-      process.execPath,
-      [
-        'scripts/install-claude-remote-worker.mjs',
-        '--host',
-        '192.168.1.50',
-        '--token',
-        'worker-secret'
-      ],
-      {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          LOCAL_CODER_CLAUDE_CONFIG_PATH: configPath
-        }
-      }
-    );
-
-    const installed = JSON.parse(await fs.readFile(configPath, 'utf8')) as {
-      mcpServers: Record<string, { env?: Record<string, string> }>;
-    };
-    assert.ok(installed.mcpServers.existing);
-    const env = installed.mcpServers['local-coder']?.env ?? {};
-    assert.equal(env.LOCAL_CODER_EXECUTION_MODE, 'remote');
-    assert.equal(env.LOCAL_CODER_REMOTE_WORKER_URL, 'http://192.168.1.50:7337');
-    assert.equal(env.LOCAL_CODER_REMOTE_WORKER_TOKEN, 'worker-secret');
-    assert.equal(env.LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS, '7200000');
-    assert.equal(env.LOCAL_CODER_MODEL, 'qwen3.8:27b');
-    assert.equal(env.LOCAL_CODER_NUM_CTX, '16384');
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  assert.equal(installed.theme, 'system');
+  assert.ok(installed.mcpServers.existing);
+  const env = installed.mcpServers['local-coder']?.env ?? {};
+  assert.equal(env.LOCAL_CODER_EXECUTION_MODE, 'remote');
+  assert.equal(env.LOCAL_CODER_REMOTE_WORKER_URL, 'http://192.168.1.50:7337');
+  assert.equal(env.LOCAL_CODER_REMOTE_WORKER_CREDENTIAL_REF, 'remote-worker/default');
+  assert.equal(env.LOCAL_CODER_REMOTE_WORKER_TOKEN, undefined);
+  assert.equal(env.LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS, '7200000');
+  assert.equal(env.LOCAL_CODER_MODEL, 'qwen3.8:27b');
+  assert.equal(env.LOCAL_CODER_NUM_CTX, '16384');
+  assert.equal(JSON.stringify(installed).includes('worker-secret'), false);
 });
+
+test(
+  'Claude remote-worker installer refuses plaintext fallback outside macOS',
+  { skip: process.platform === 'darwin' },
+  async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-remote-installer-'));
+    try {
+      const configPath = path.join(root, '.claude.json');
+      const original = `${JSON.stringify({ mcpServers: { existing: { type: 'stdio', command: 'existing' } } })}\n`;
+      await fs.writeFile(configPath, original);
+
+      await assert.rejects(
+        run(
+          process.execPath,
+          [
+            'scripts/install-claude-remote-worker.mjs',
+            '--host',
+            '192.168.1.50',
+            '--token',
+            'worker-secret'
+          ],
+          {
+            cwd: process.cwd(),
+            env: {
+              ...process.env,
+              LOCAL_CODER_CLAUDE_CONFIG_PATH: configPath,
+              LOCAL_CODER_CONTROL_PLANE_CONFIG_PATH: path.join(root, 'control-plane.json')
+            }
+          }
+        ),
+        /requires macOS Keychain/
+      );
+
+      assert.equal(await fs.readFile(configPath, 'utf8'), original);
+      await assert.rejects(fs.access(path.join(root, 'control-plane.json')));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }
+);
