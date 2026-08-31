@@ -201,7 +201,7 @@ test('project catalog combines actual provider discovery, routing settings and p
     defaultModelId: 'claude-cloud',
     models: { 'claude-cloud': { frontier: true, qualityScore: 97 } }
   });
-  f.admin.setPricing('anthropic', 'claude-cloud', {
+  await f.admin.setPricing('anthropic', 'claude-cloud', {
     inputPerMillionUsd: 3,
     outputPerMillionUsd: 15,
     source: 'provider-price-sheet',
