@@ -5,6 +5,10 @@ import type {
   LocalEngineerInput,
   LocalEngineerResult
 } from './local-engineer.js';
+import {
+  createControlPlaneLocalProvider,
+  localInferenceLabel
+} from './local-inference-provider.js';
 import type {
   OllamaChatOptions,
   OllamaClient,
@@ -31,15 +35,11 @@ import {
   projectIsolationKey,
   type ProjectDefinition
 } from './project-store.js';
-import { AutoLocalInferenceProvider } from './providers/auto-local-provider.js';
-import { OllamaInferenceProvider } from './providers/ollama-provider.js';
-import { RemoteWorkerInferenceProvider } from './providers/remote-worker-provider.js';
 import type {
   InferenceOutputFormat,
   InferenceProvider,
   ReasoningEffort
 } from './providers/types.js';
-import { RemoteWorkerClient } from './remote-worker-client.js';
 import type { RemoteWorkerHealth } from './remote-protocol.js';
 import { resolveWorkspace } from './workspace.js';
 
@@ -208,7 +208,7 @@ function trace(event: ProjectRouteEvent): ProjectRoutingTraceEntry {
 export class ProjectAwareEngineerBackend {
   private readonly projects: ProjectStore;
   private readonly agentExecutor: AgentExecutor;
-  private remoteClient?: RemoteChatClient;
+  private readonly remoteClient?: RemoteChatClient;
 
   constructor(
     private readonly config: LocalCoderConfig,
@@ -235,7 +235,11 @@ export class ProjectAwareEngineerBackend {
 
     const budget = this.options.budgetSessionFactory?.(project, input.budgetJobId) ??
       new ProjectBudgetSession(project, undefined, undefined, input.budgetJobId ? { jobId: input.budgetJobId } : {});
-    const localProvider = this.localProvider();
+    const localProvider = createControlPlaneLocalProvider(
+      this.config,
+      this.ollama,
+      this.remoteClient
+    );
     const providerRuntime = new ProjectProviderRuntime({
       ...(this.options.providerRuntime ?? {}),
       localProvider
@@ -271,7 +275,7 @@ export class ProjectAwareEngineerBackend {
       projectId: project.id,
       organizationId: project.organizationId,
       agentHost: 'control-plane',
-      localInference: this.localInferenceLabel(),
+      localInference: localInferenceLabel(this.config.executionMode),
       repoMemoryScopeKey: memoryScopeKey,
       routingTrace,
       budget: budget.snapshot()
@@ -314,24 +318,5 @@ export class ProjectAwareEngineerBackend {
       );
     }
     return { project: matches[0], workspace };
-  }
-
-  private localProvider(): InferenceProvider {
-    const mac = new OllamaInferenceProvider(this.ollama);
-    if (this.config.executionMode === 'local') return mac;
-    const remote = new RemoteWorkerInferenceProvider(this.getRemoteClient());
-    if (this.config.executionMode === 'remote') return remote;
-    return new AutoLocalInferenceProvider(remote, mac);
-  }
-
-  private getRemoteClient(): RemoteChatClient {
-    if (!this.remoteClient) this.remoteClient = new RemoteWorkerClient(this.config);
-    return this.remoteClient;
-  }
-
-  private localInferenceLabel(): ProjectExecutionMetadata['localInference'] {
-    if (this.config.executionMode === 'local') return 'mac-ollama';
-    if (this.config.executionMode === 'remote') return 'windows-worker';
-    return 'windows-worker-with-mac-fallback';
   }
 }
