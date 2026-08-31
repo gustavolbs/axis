@@ -7,7 +7,7 @@ import type {
   OllamaThinkingLevel
 } from './ollama.js';
 import type { OllamaStreamProgress } from './ollama-stream.js';
-import type { ProjectBudgetSession } from './project-budget.js';
+import type { BudgetAdmission, ProjectBudgetSession } from './project-budget.js';
 import type { ModelSelection, ProjectDefinition, RoutingPolicy } from './project-store.js';
 import {
   ProjectProviderRuntime,
@@ -85,6 +85,10 @@ function isStrictLegacyLocal(project: ProjectDefinition): boolean {
   );
 }
 
+function budgetCandidateKey(candidate: { providerId: string; modelId: string }): string {
+  return `${candidate.providerId}\0${candidate.modelId}`;
+}
+
 /**
  * Structural adapter for the current Agent Runtime. Existing stages can keep calling
  * `.chat(...)` while project-aware jobs route each call independently. A strictly
@@ -152,6 +156,7 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
     const candidates = this.options.budget
       ? this.options.budget.annotateCandidates(rawCandidates, inference)
       : rawCandidates;
+    const admissions = new Map<string, BudgetAdmission>();
     const routed = new RoutedInferenceRuntime(registry);
     const result = await routed.invoke({
       inference,
@@ -169,10 +174,18 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
       },
       confirmFallback: this.options.confirmFallback,
       authorizeAttempt: this.options.budget
-        ? async ({ candidate }) => { await this.options.budget!.authorize(candidate, inference); }
+        ? async ({ candidate }) => {
+            const admission = await this.options.budget!.authorize(candidate, inference);
+            admissions.set(budgetCandidateKey(candidate), admission);
+          }
         : undefined,
       onAttemptFailure: this.options.budget
-        ? ({ candidate }) => this.options.budget!.releaseAttempt(candidate)
+        ? ({ candidate }) => {
+            const key = budgetCandidateKey(candidate);
+            const admission = admissions.get(key);
+            if (admission) this.options.budget!.releaseAttempt(admission);
+            admissions.delete(key);
+          }
         : undefined
     });
 
@@ -186,13 +199,25 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
         `Routed selection ${result.routing.selected.providerId}/${result.routing.selected.modelId} is missing from its candidate catalog.`
       );
     }
+    const selectedAdmission = admissions.get(budgetCandidateKey(selectedCandidate));
+    if (this.options.budget && !selectedAdmission) {
+      throw new Error(
+        `Budget admission is missing for routed selection ${selectedCandidate.providerId}/${selectedCandidate.modelId}.`
+      );
+    }
     if (result.result.providerId !== selectedCandidate.providerId) {
-      this.options.budget?.releaseAttempt(selectedCandidate);
+      if (selectedAdmission) this.options.budget?.releaseAttempt(selectedAdmission);
       throw new Error(
         `Routed provider identity mismatch: selected ${selectedCandidate.providerId}, returned ${result.result.providerId}.`
       );
     }
-    this.options.budget?.record(stage, selectedCandidate, result.result, result.fallbackUsed);
+    this.options.budget?.record(
+      stage,
+      selectedCandidate,
+      result.result,
+      result.fallbackUsed,
+      selectedAdmission
+    );
 
     this.options.onRoute?.({
       stage,
