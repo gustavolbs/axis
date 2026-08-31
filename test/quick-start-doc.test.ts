@@ -12,7 +12,6 @@ for (const referencedPath of [
   'scripts/install-claude-remote-worker.mjs',
   'scripts/install-claude-routing-rule.mjs',
   'scripts/install-claude-token-saver.mjs',
-  'scripts/smoke-cloud-providers.mjs',
   'docs/INSTALLATION.md',
   'docs/WINDOWS_REMOTE_SETUP.md',
   'docs/NORDVPN_MESHNET.md',
@@ -27,14 +26,11 @@ for (const referencedPath of [
 test('quick start exposes the supported primary commands', () => {
   for (const command of [
     'npm run desktop',
-    'npm run console',
     'npm run install:claude:worker -- --host <WINDOWS_HOST>',
     'npm run install:routing',
-    'npm run install:claude-token-saver',
-    'npm run smoke:cloud -- --provider anthropic',
-    'npm run smoke:cloud -- --provider openai'
+    'npm run install:claude-token-saver'
   ]) {
-    assert.match(quickStart, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.equal(quickStart.includes(command), true, `missing command: ${command}`);
   }
 });
 
@@ -44,8 +40,14 @@ test('quick start does not instruct users to persist worker token in argv or con
   assert.match(quickStart, /unset LOCAL_CODER_WINDOWS_WORKER_TOKEN/);
 });
 
-test('quick start makes cloud opt-in after local-only validation', () => {
-  assert.match(quickStart, /Cloud allowed: OFF/);
+test('quick start keeps cloud opt-in after local-only validation', () => {
+  assert.match(quickStart, /Cloud allowed:\s+OFF/);
   assert.match(quickStart, /Allowed providers: ollama/);
-  assert.match(quickStart, /Isso é opcional\. Faça somente depois de o Local-only funcionar\./);
+  assert.match(quickStart, /somente depois.*Local-only funcionar/i);
+  assert.match(quickStart, /Faça o primeiro teste com cloud desligada/);
+});
+
+test('quick start routes paid smoke details to the dedicated guide', () => {
+  assert.match(quickStart, /docs\/CLOUD_SMOKE\.md/);
+  assert.doesNotMatch(quickStart, /export (?:ANTHROPIC_API_KEY|OPENAI_API_KEY)=/);
 });
