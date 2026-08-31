@@ -1,5 +1,10 @@
 import { spawn } from 'node:child_process';
 
+import {
+  OperationCancelledError,
+  currentCancellationSignal,
+  throwIfCancelled
+} from './cancellation.js';
 import { resolveSpawnInvocation } from './platform-command.js';
 import { reportProgress } from './progress-context.js';
 
@@ -63,6 +68,7 @@ export async function runValidationCommand(
   timeoutMs: number,
   outputLimit = 20_000
 ): Promise<ValidationResult> {
+  throwIfCancelled();
   assertValidationAllowed(validation, allowedCommands);
 
   const args = validation.args ?? [];
@@ -76,6 +82,7 @@ export async function runValidationCommand(
 
   const invocation = resolveSpawnInvocation(validation.command, args);
   const startedAt = Date.now();
+  const cancellation = currentCancellationSignal();
 
   const result = await new Promise<ValidationResult>((resolve, reject) => {
     const child = spawn(invocation.command, invocation.args, {
@@ -89,11 +96,26 @@ export async function runValidationCommand(
     let settled = false;
     let timer: NodeJS.Timeout;
 
+    const cleanup = () => {
+      clearTimeout(timer);
+      cancellation?.removeEventListener('abort', onAbort);
+    };
     const finish = (value: ValidationResult) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanup();
       resolve(value);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      child.kill('SIGTERM');
+      fail(new OperationCancelledError(`Validation cancelled: ${display}`));
     };
 
     child.stdout.on('data', (chunk) => {
@@ -102,12 +124,7 @@ export async function runValidationCommand(
     child.stderr.on('data', (chunk) => {
       output = appendBounded(output, chunk, outputLimit);
     });
-    child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
-    });
+    child.on('error', fail);
     child.on('close', (exitCode) => {
       finish({
         command: validation.command,
@@ -118,6 +135,11 @@ export async function runValidationCommand(
         durationMs: Date.now() - startedAt
       });
     });
+
+    if (cancellation) {
+      if (cancellation.aborted) onAbort();
+      else cancellation.addEventListener('abort', onAbort, { once: true });
+    }
 
     timer = setTimeout(() => {
       child.kill('SIGTERM');
@@ -132,6 +154,7 @@ export async function runValidationCommand(
     }, timeoutMs);
   });
 
+  throwIfCancelled();
   reportProgress({
     phase: 'validation',
     action: result.ok ? 'Validation passed' : 'Validation failed',
@@ -154,6 +177,7 @@ export async function runValidations(
   const results: ValidationResult[] = [];
 
   for (const validation of validations) {
+    throwIfCancelled();
     const result = await runValidationCommand(
       workspace,
       validation,
