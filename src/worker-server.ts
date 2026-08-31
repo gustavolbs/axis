@@ -4,6 +4,7 @@ import os from 'node:os';
 
 import { loadConfig } from './config.js';
 import { executeAgenticCodeTask } from './executor.js';
+import { getMachineStatus } from './machine-status.js';
 import { OllamaClient } from './ollama.js';
 import { executeLocalCodePlan } from './orchestrator.js';
 import {
@@ -19,7 +20,7 @@ import { executeLocalEngineerWithRepoIntelligence } from './repo-intelligence.js
 import { WorkerScheduler } from './worker-scheduler.js';
 import { withWorkerWorkspace } from './worker-workspace.js';
 
-const WORKER_VERSION = '0.10.0';
+const WORKER_VERSION = '0.11.0';
 const config = loadConfig();
 const ollama = new OllamaClient(config);
 const scheduler = new WorkerScheduler(config.workerMaxConcurrentJobs ?? 1);
@@ -102,6 +103,17 @@ function isolationKey(snapshot: RemoteWorkspaceSnapshot): string {
   return snapshot.isolationKey?.trim() || `${snapshot.repositoryUrl}|${snapshot.workspaceRelativePath}`;
 }
 
+function repoIntelligenceStatus(): Record<string, unknown> {
+  return {
+    enabled:
+      process.env.LOCAL_CODER_REPO_INTELLIGENCE_ENABLED === undefined ||
+      !['0', 'false', 'no', 'off'].includes(
+        process.env.LOCAL_CODER_REPO_INTELLIGENCE_ENABLED.trim().toLowerCase()
+      ),
+    storage: 'worker-local'
+  };
+}
+
 async function health(response: ServerResponse): Promise<void> {
   try {
     const ollamaHealth = await ollama.health();
@@ -114,14 +126,7 @@ async function health(response: ServerResponse): Promise<void> {
       model: config.model,
       bootstrap: config.workerBootstrap,
       scheduler: scheduler.snapshot(),
-      repoIntelligence: {
-        enabled:
-          process.env.LOCAL_CODER_REPO_INTELLIGENCE_ENABLED === undefined ||
-          !['0', 'false', 'no', 'off'].includes(
-            process.env.LOCAL_CODER_REPO_INTELLIGENCE_ENABLED.trim().toLowerCase()
-          ),
-        storage: 'worker-local'
-      },
+      repoIntelligence: repoIntelligenceStatus(),
       ollama: ollamaHealth
     });
   } catch (error) {
@@ -129,6 +134,37 @@ async function health(response: ServerResponse): Promise<void> {
       protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
       workerVersion: WORKER_VERSION,
       ok: false,
+      scheduler: scheduler.snapshot(),
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function status(response: ServerResponse): Promise<void> {
+  const startedAt = Date.now();
+  try {
+    const [ollamaHealth, machine] = await Promise.all([ollama.health(), getMachineStatus()]);
+    json(response, 200, {
+      protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+      workerVersion: WORKER_VERSION,
+      ok: true,
+      collectedAt: new Date().toISOString(),
+      collectionMs: Date.now() - startedAt,
+      hostname: os.hostname(),
+      platform: process.platform,
+      model: config.model,
+      bootstrap: config.workerBootstrap,
+      scheduler: scheduler.snapshot(),
+      repoIntelligence: repoIntelligenceStatus(),
+      ollama: ollamaHealth,
+      machine
+    });
+  } catch (error) {
+    json(response, 503, {
+      protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+      workerVersion: WORKER_VERSION,
+      ok: false,
+      collectedAt: new Date().toISOString(),
       scheduler: scheduler.snapshot(),
       error: error instanceof Error ? error.message : String(error)
     });
@@ -221,8 +257,6 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
     )
   );
 
-  // The local engineer discovers its editable set only after investigation/planning,
-  // so it owns dynamic before/after snapshots and returns its own bounded changes.
   json(response, 200, {
     protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
     result: output.result.result,
@@ -242,6 +276,10 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
 
   if (request.method === 'GET' && request.url === '/v1/health') {
     await health(response);
+    return;
+  }
+  if (request.method === 'GET' && request.url === '/v1/status') {
+    await status(response);
     return;
   }
 
