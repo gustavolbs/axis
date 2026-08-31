@@ -13,6 +13,7 @@ import {
   MemoryStick,
   MonitorCog,
   Network,
+  Radio,
   ServerCog,
   Sparkles,
   TerminalSquare,
@@ -59,8 +60,17 @@ type Inference = {
   status?: string;
   promptTokens?: number;
   completionTokens?: number;
+  tokensPerSecond?: number;
+  streamState?: 'waiting' | 'thinking' | 'generating';
+  streamChunks?: number;
+  thinkingChars?: number;
+  outputChars?: number;
+  lastActivityAt?: string;
+  silentForMs?: number;
   error?: string;
 };
+
+type StageBudget = { maxDurationMs?: number; maxTokens?: number };
 
 type StatusPayload = {
   ok: boolean;
@@ -85,6 +95,7 @@ type StatusPayload = {
     numCtx?: number;
     configuredModel?: string;
     availableModels?: string[];
+    stageBudgets?: Record<string, StageBudget>;
   };
   machine?: {
     uptimeSeconds?: number;
@@ -99,7 +110,12 @@ type StatusPayload = {
       temperatureC?: number;
     } | null;
   };
-  controlPlane?: { hostname?: string; platform?: string; workerUrl?: string };
+  controlPlane?: {
+    hostname?: string;
+    platform?: string;
+    workerUrl?: string;
+    transport?: string;
+  };
   recentTelemetry?: Array<Record<string, unknown>>;
 };
 
@@ -136,16 +152,33 @@ function duration(ms?: number) {
   return hours ? `${hours}h ${minutes}m` : `${minutes}m ${String(tail).padStart(2, '0')}s`;
 }
 
+function compactDuration(ms?: number) {
+  if (!Number.isFinite(ms)) return '—';
+  if (ms! < 1000) return `${Math.round(ms!)}ms`;
+  if (ms! < 60_000) return `${(ms! / 1000).toFixed(ms! < 10_000 ? 1 : 0)}s`;
+  return duration(ms);
+}
+
 function shortTime(value?: string) {
   if (!value) return '—';
-  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return new Date(value).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
 }
 
 function stageIndex(phase?: string) {
   if (!phase) return -1;
   const normalized = phase.toLowerCase();
-  const index = pipeline.findIndex(([key]) => normalized.includes(key));
-  return index;
+  if (normalized.includes('report')) return 1;
+  return pipeline.findIndex(([key]) => normalized.includes(key));
+}
+
+function streamStateLabel(value?: Inference['streamState']) {
+  if (value === 'thinking') return 'actively reasoning';
+  if (value === 'generating') return 'generating result';
+  return 'waiting for first chunk';
 }
 
 function MetricCard({
@@ -165,9 +198,9 @@ function MetricCard({
     <Card className="glass overflow-hidden">
       <CardContent className="p-5">
         <div className="flex items-start justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-            <div className={cn('metric-glow mt-2 text-2xl font-semibold tracking-tight', accent)}>{value}</div>
+            <div className={cn('metric-glow mt-2 truncate text-2xl font-semibold tracking-tight', accent)}>{value}</div>
             <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>
           </div>
           <div className="rounded-xl border border-border bg-secondary/60 p-2.5">
@@ -196,29 +229,41 @@ function ResourceBar({ label, value, detail }: { label: string; value?: number; 
 function Pipeline({ phase, completed = [] }: { phase?: string; completed?: string[] }) {
   const current = stageIndex(phase);
   const completedSet = new Set(completed.map((item) => item.toLowerCase()));
+  const readOnlyReport = phase?.toLowerCase().includes('report');
   return (
-    <div className="grid gap-1.5 md:grid-cols-9">
-      {pipeline.map(([key, label], index) => {
-        const explicitlyDone = [...completedSet].some((item) => item.includes(key));
-        const done = explicitlyDone || (current >= 0 && index < current) || key === 'complete' && phase === 'complete';
-        const active = index === current && phase !== 'complete';
-        return (
-          <div key={key} className="relative flex min-w-0 items-center gap-2 md:block">
-            <div
-              className={cn(
-                'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold transition-all md:mx-auto',
-                done && 'border-emerald-400/40 bg-emerald-400/15 text-emerald-300',
-                active && 'border-cyan-300/70 bg-cyan-300/15 text-cyan-200 shadow-[0_0_25px_rgba(34,211,238,.18)]',
-                !done && !active && 'border-border bg-secondary/50 text-muted-foreground'
-              )}
-            >
-              {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : index + 1}
+    <div>
+      {readOnlyReport ? (
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-cyan-400/15 bg-cyan-400/[.035] px-3 py-2 text-xs text-cyan-100">
+          <Radio className="h-3.5 w-3.5" />
+          Read-only research path: Investigation → Report → Complete. Implementation stages are intentionally skipped.
+        </div>
+      ) : null}
+      <div className="grid gap-1.5 md:grid-cols-9">
+        {pipeline.map(([key, label], index) => {
+          const explicitlyDone = [...completedSet].some((item) => item.includes(key));
+          const done =
+            explicitlyDone ||
+            (!readOnlyReport && current >= 0 && index < current) ||
+            (key === 'complete' && phase === 'complete');
+          const active = !readOnlyReport && index === current && phase !== 'complete';
+          return (
+            <div key={key} className="relative flex min-w-0 items-center gap-2 md:block">
+              <div
+                className={cn(
+                  'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold transition-all md:mx-auto',
+                  done && 'border-emerald-400/40 bg-emerald-400/15 text-emerald-300',
+                  active && 'border-cyan-300/70 bg-cyan-300/15 text-cyan-200 shadow-[0_0_25px_rgba(34,211,238,.18)]',
+                  !done && !active && 'border-border bg-secondary/50 text-muted-foreground'
+                )}
+              >
+                {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : index + 1}
+              </div>
+              <div className={cn('truncate text-xs md:mt-2 md:text-center', active ? 'text-cyan-200' : done ? 'text-emerald-300' : 'text-muted-foreground')}>{label}</div>
+              {index < pipeline.length - 1 ? <ChevronRight className="hidden h-3 w-3 text-border md:absolute md:-right-2 md:top-2 md:block" /> : null}
             </div>
-            <div className={cn('truncate text-xs md:mt-2 md:text-center', active ? 'text-cyan-200' : done ? 'text-emerald-300' : 'text-muted-foreground')}>{label}</div>
-            {index < pipeline.length - 1 ? <ChevronRight className="hidden h-3 w-3 text-border md:absolute md:-right-2 md:top-2 md:block" /> : null}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -227,28 +272,69 @@ export function App() {
   const [data, setData] = useState<StatusPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastOkAt, setLastOkAt] = useState<Date | null>(null);
+  const [liveTransport, setLiveTransport] = useState<'connecting' | 'sse' | 'fallback'>('connecting');
 
   useEffect(() => {
     let alive = true;
-    const poll = async () => {
+
+    const apply = (body: StatusPayload) => {
+      if (!alive) return;
+      setData(body);
+      setError(null);
+      setLastOkAt(new Date());
+    };
+
+    const snapshot = async () => {
       try {
         const response = await fetch('/api/status', { cache: 'no-store' });
         const body = (await response.json()) as StatusPayload & { error?: string };
         if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
-        if (!alive) return;
-        setData(body);
-        setError(null);
-        setLastOkAt(new Date());
+        apply(body);
       } catch (nextError) {
         if (!alive) return;
         setError(nextError instanceof Error ? nextError.message : String(nextError));
       }
     };
-    void poll();
-    const timer = window.setInterval(poll, 800);
+
+    void snapshot();
+    const events = new EventSource('/api/events');
+    const onStatus = (event: Event) => {
+      try {
+        const body = JSON.parse((event as MessageEvent<string>).data) as StatusPayload;
+        apply(body);
+        setLiveTransport('sse');
+      } catch (nextError) {
+        if (!alive) return;
+        setError(nextError instanceof Error ? nextError.message : String(nextError));
+      }
+    };
+    const onStatusError = (event: Event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent<string>).data) as { error?: string };
+        if (alive) setError(payload.error ?? 'Live status stream failed.');
+      } catch {
+        if (alive) setError('Live status stream failed.');
+      }
+    };
+    events.addEventListener('status', onStatus);
+    events.addEventListener('status-error', onStatusError);
+    events.onopen = () => alive && setLiveTransport('sse');
+    events.onerror = () => {
+      if (!alive) return;
+      setLiveTransport('fallback');
+      // EventSource reconnects automatically. Keep a low-frequency HTTP fallback so
+      // the dashboard stays useful through proxies that buffer/close SSE.
+      void snapshot();
+    };
+
+    const fallbackTimer = window.setInterval(() => {
+      if (events.readyState !== EventSource.OPEN) void snapshot();
+    }, 10_000);
+
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      events.close();
+      window.clearInterval(fallbackTimer);
     };
   }, []);
 
@@ -261,9 +347,18 @@ export function App() {
   const cpu = data?.machine?.cpu;
   const memory = data?.machine?.memory;
   const gpu = data?.machine?.gpu;
+  const currentBudget = currentInference
+    ? data?.ollama?.stageBudgets?.[currentInference.stage]
+    : undefined;
 
   const phase = progress?.phase ?? currentInference?.stage ?? (activeJob ? 'workspace' : undefined);
-  const headline = progress?.action ?? (currentInference ? `Qwen is running ${currentInference.stage}` : activeJob ? 'Preparing remote workspace' : 'Idle');
+  const headline =
+    progress?.action ??
+    (currentInference
+      ? `Qwen is running ${currentInference.stage}`
+      : activeJob
+        ? 'Preparing remote workspace'
+        : 'Idle');
   const phaseProgress = useMemo(() => {
     const index = stageIndex(phase);
     return index < 0 ? 0 : ((index + 1) / pipeline.length) * 100;
@@ -293,6 +388,10 @@ export function App() {
               <span className={cn('h-2 w-2 rounded-full', online ? 'pulse-dot bg-emerald-400' : 'bg-rose-400')} />
               {online ? 'Worker online' : 'Worker unavailable'}
             </Badge>
+            <Badge variant={liveTransport === 'sse' ? 'success' : 'secondary'} className="gap-2 px-3 py-1.5">
+              <Radio className="h-3.5 w-3.5" />
+              {liveTransport === 'sse' ? 'SSE live' : liveTransport === 'fallback' ? 'HTTP fallback' : 'connecting stream'}
+            </Badge>
             <Badge variant="secondary" className="gap-2 px-3 py-1.5"><Clock3 className="h-3.5 w-3.5" />{lastOkAt ? `updated ${lastOkAt.toLocaleTimeString()}` : 'connecting'}</Badge>
           </div>
         </header>
@@ -318,7 +417,7 @@ export function App() {
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant={activeJob ? 'success' : 'secondary'}>{activeJob ? activeJob.kind.toUpperCase() : 'IDLE'}</Badge>
                     {phase ? <Badge variant="outline" className="border-cyan-400/20 text-cyan-300">{phase}</Badge> : null}
-                    {currentInference ? <Badge variant="warning">model inference</Badge> : null}
+                    {currentInference ? <Badge variant="warning">{streamStateLabel(currentInference.streamState)}</Badge> : null}
                   </div>
                   <CardTitle className="mt-3 text-xl sm:text-2xl">{headline}</CardTitle>
                   <CardDescription className="mt-2 max-w-4xl text-sm leading-6">{progress?.detail ?? (activeJob ? 'The worker is executing the current local engineering job.' : 'No active engineering job. The worker is ready.')}</CardDescription>
@@ -351,7 +450,7 @@ export function App() {
               <div className="rounded-2xl border border-violet-400/15 bg-violet-400/[.035] p-5">
                 <div className="flex items-center gap-2"><BrainCircuit className="h-4 w-4 text-violet-300" /><h3 className="text-sm font-semibold">Reasoning / decision summary</h3></div>
                 <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-300">{progress?.reasoningSummary ?? (currentInference ? `Qwen is currently ${currentInference.stage}. A concise decision summary appears here as soon as that stage produces a structured result.` : 'No active reasoning stage.')}</p>
-                <p className="mt-3 text-[11px] text-muted-foreground">Shows structured decision summaries and exact execution state, not hidden chain-of-thought tokens.</p>
+                <p className="mt-3 text-[11px] text-muted-foreground">Shows structured decisions and safe stream liveness, never hidden chain-of-thought text.</p>
               </div>
 
               {progress?.files?.length ? (
@@ -382,6 +481,7 @@ export function App() {
               <CardContent className="space-y-3 text-sm">
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">Mac</span><span className="truncate font-mono text-xs">{data?.controlPlane?.hostname ?? '—'}</span></div>
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">Worker URL</span><span className="truncate font-mono text-xs">{data?.controlPlane?.workerUrl ?? '—'}</span></div>
+                <div className="flex justify-between gap-4"><span className="text-muted-foreground">Transport</span><span className="font-mono text-xs">{data?.controlPlane?.transport ?? liveTransport}</span></div>
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">Collected</span><span className="font-mono text-xs">{shortTime(data?.collectedAt)}</span></div>
               </CardContent>
             </Card>
@@ -390,18 +490,31 @@ export function App() {
 
         <section className="mt-4 grid gap-4 xl:grid-cols-2">
           <Card className="glass min-w-0">
-            <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Cpu className="h-4 w-4 text-cyan-300" />Model activity</CardTitle><CardDescription>Current and recently completed Qwen inference stages</CardDescription></CardHeader>
+            <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Cpu className="h-4 w-4 text-cyan-300" />Model activity</CardTitle><CardDescription>Live Qwen stream liveness, stage budgets and completed throughput</CardDescription></CardHeader>
             <CardContent>
               {currentInference ? (
                 <div className="mb-4 rounded-xl border border-cyan-400/20 bg-cyan-400/[.04] p-4">
-                  <div className="flex items-center justify-between gap-4"><div><Badge variant="warning">LIVE</Badge><span className="ml-2 font-semibold capitalize">{currentInference.stage}</span></div><span className="font-mono text-sm text-cyan-100">{duration(currentInference.runningMs)}</span></div>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex flex-wrap items-center gap-2"><Badge variant="warning">LIVE</Badge><span className="font-semibold capitalize">{currentInference.stage}</span><Badge variant="outline">{streamStateLabel(currentInference.streamState)}</Badge></div>
+                    <span className="font-mono text-sm text-cyan-100">{duration(currentInference.runningMs)}</span>
+                  </div>
                   <div className="mt-2 text-xs text-muted-foreground">{currentInference.model}</div>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-lg border border-border bg-secondary/25 p-3"><div className="text-[10px] uppercase tracking-[.12em] text-muted-foreground">Stream chunks</div><div className="mt-1 font-mono text-sm">{currentInference.streamChunks ?? 0}</div></div>
+                    <div className="rounded-lg border border-border bg-secondary/25 p-3"><div className="text-[10px] uppercase tracking-[.12em] text-muted-foreground">Hidden reasoning activity</div><div className="mt-1 font-mono text-sm">{currentInference.thinkingChars ?? 0} chars</div></div>
+                    <div className="rounded-lg border border-border bg-secondary/25 p-3"><div className="text-[10px] uppercase tracking-[.12em] text-muted-foreground">Result output</div><div className="mt-1 font-mono text-sm">{currentInference.outputChars ?? 0} chars</div></div>
+                    <div className="rounded-lg border border-border bg-secondary/25 p-3"><div className="text-[10px] uppercase tracking-[.12em] text-muted-foreground">Last activity</div><div className="mt-1 font-mono text-sm">{currentInference.lastActivityAt ? `${compactDuration(currentInference.silentForMs)} ago` : 'waiting'}</div></div>
+                  </div>
+                  {currentBudget ? (
+                    <div className="mt-3 text-xs text-muted-foreground">Stage SLA: {currentBudget.maxDurationMs ? duration(currentBudget.maxDurationMs) : 'global'} wall clock · {currentBudget.maxTokens ?? 'unbounded'} generated-token budget.</div>
+                  ) : null}
+                  <div className="mt-2 text-[11px] text-muted-foreground">Hidden reasoning content is never stored or shown; only activity counters are exposed.</div>
                 </div>
               ) : null}
               <div className="max-h-[340px] space-y-1 overflow-auto pr-1 scrollbar-thin">
                 {recentInferences.length ? recentInferences.map((item) => (
                   <div key={item.id} className="flex items-center justify-between gap-4 border-b border-border/60 py-3 last:border-0">
-                    <div className="min-w-0"><div className="flex items-center gap-2"><Badge variant={item.status === 'error' ? 'destructive' : 'secondary'}>{item.stage}</Badge><span className="truncate text-xs text-muted-foreground">{item.model}</span></div><div className="mt-1 text-xs text-muted-foreground">{(item.promptTokens ?? 0) + (item.completionTokens ?? 0)} tokens</div></div>
+                    <div className="min-w-0"><div className="flex items-center gap-2"><Badge variant={item.status === 'error' ? 'destructive' : 'secondary'}>{item.stage}</Badge><span className="truncate text-xs text-muted-foreground">{item.model}</span></div><div className="mt-1 text-xs text-muted-foreground">{(item.promptTokens ?? 0) + (item.completionTokens ?? 0)} tokens{item.tokensPerSecond ? ` · ${item.tokensPerSecond.toFixed(1)} tok/s` : ''}</div></div>
                     <div className="shrink-0 text-right"><div className="font-mono text-sm">{duration(item.durationMs)}</div><div className="text-xs text-muted-foreground">{shortTime(item.finishedAt)}</div></div>
                   </div>
                 )) : <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No inference history yet.</div>}
@@ -410,16 +523,17 @@ export function App() {
           </Card>
 
           <Card className="glass min-w-0">
-            <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Activity className="h-4 w-4 text-cyan-300" />Completed engineering activity</CardTitle><CardDescription>Mac control-plane telemetry for completed calls</CardDescription></CardHeader>
+            <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Activity className="h-4 w-4 text-cyan-300" />Completed activity</CardTitle><CardDescription>Engineering and inference telemetry with actual local model throughput</CardDescription></CardHeader>
             <CardContent>
               <div className="max-h-[420px] space-y-1 overflow-auto pr-1 scrollbar-thin">
                 {telemetry.length ? telemetry.map((event, index) => {
                   const status = String(event.status ?? 'unknown');
                   const tokenCount = Number(event.promptTokens ?? 0) + Number(event.completionTokens ?? 0);
+                  const throughput = Number(event.tokensPerSecond ?? 0);
                   return (
                     <div key={`${String(event.timestamp)}-${index}`} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-border/60 py-3 last:border-0">
                       <div className={cn('h-2 w-2 rounded-full', status === 'success' ? 'bg-emerald-400' : status === 'error' ? 'bg-rose-400' : 'bg-amber-400')} />
-                      <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-medium capitalize">{String(event.kind ?? 'event')}</span><Badge variant="outline" className="text-[10px]">{status}</Badge></div><div className="mt-1 truncate text-xs text-muted-foreground">{String(event.model ?? '—')} · {tokenCount} tokens · {Number(event.changedFiles ?? 0)} files</div></div>
+                      <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-medium capitalize">{String(event.stage ?? event.kind ?? 'event')}</span><Badge variant="outline" className="text-[10px]">{status}</Badge></div><div className="mt-1 truncate text-xs text-muted-foreground">{String(event.model ?? '—')} · {tokenCount} tokens{throughput > 0 ? ` · ${throughput.toFixed(1)} tok/s` : ''} · {Number(event.changedFiles ?? 0)} files</div></div>
                       <div className="text-right text-xs text-muted-foreground">{shortTime(String(event.timestamp ?? ''))}</div>
                     </div>
                   );
