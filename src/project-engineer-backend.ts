@@ -43,7 +43,11 @@ import { RemoteWorkerClient } from './remote-worker-client.js';
 import type { RemoteWorkerHealth } from './remote-protocol.js';
 import { resolveWorkspace } from './workspace.js';
 
-export type ProjectEngineerInput = LocalEngineerInput & { projectId?: string };
+export type ProjectEngineerInput = LocalEngineerInput & {
+  projectId?: string;
+  /** Internal host correlation id so resumed decision rounds share one per-job budget. */
+  budgetJobId?: string;
+};
 
 export interface LegacyEngineerExecutor {
   executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult>;
@@ -95,7 +99,7 @@ export interface ProjectEngineerBackendOptions {
   providerRuntime?: Omit<ProjectProviderRuntimeOptions, 'localProvider'>;
   remoteClient?: RemoteChatClient;
   agentExecutor?: AgentExecutor;
-  budgetSessionFactory?: (project: ProjectDefinition) => ProjectBudgetSession;
+  budgetSessionFactory?: (project: ProjectDefinition, jobId?: string) => ProjectBudgetSession;
 }
 
 function reasoningEffort(think: OllamaThinkingLevel | undefined): ReasoningEffort | undefined {
@@ -222,7 +226,8 @@ export class ProjectAwareEngineerBackend {
     if (!resolved.project) return await this.legacy.executeEngineer(input);
     const { project, workspace: projectWorkspace } = resolved;
 
-    const budget = this.options.budgetSessionFactory?.(project) ?? new ProjectBudgetSession(project);
+    const budget = this.options.budgetSessionFactory?.(project, input.budgetJobId) ??
+      new ProjectBudgetSession(project, undefined, undefined, input.budgetJobId ? { jobId: input.budgetJobId } : {});
     const localProvider = this.localProvider();
     const providerRuntime = new ProjectProviderRuntime({
       ...(this.options.providerRuntime ?? {}),
@@ -243,7 +248,11 @@ export class ProjectAwareEngineerBackend {
       }
     );
 
-    const { projectId: _projectId, ...agentInput } = input;
+    const {
+      projectId: _projectId,
+      budgetJobId: _budgetJobId,
+      ...agentInput
+    } = input;
     const memoryScopeKey = projectIsolationKey(project);
     const execution = await this.agentExecutor(routedChat, this.config, {
       ...agentInput,
