@@ -31,6 +31,14 @@ interface SearxResult {
   content?: string;
 }
 
+interface ListedTool {
+  name: string;
+  description?: string;
+  inputSchema?: {
+    properties?: Record<string, unknown>;
+  };
+}
+
 const MICROSOFT_RESEARCH_PATTERN = /\b(?:microsoft|m365|microsoft\s*365|office\s*365|outlook|teams|entra|azure|graph\s+api|microsoft\s+graph|sharepoint|onedrive|msal|power\s+platform|power\s+automate|windows|powershell|\.net|dotnet)\b/i;
 const LEARN_URL_PATTERN = /https:\/\/learn\.microsoft\.com\/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi;
 const MAX_EVIDENCE_PER_REQUEST = 14_000;
@@ -72,6 +80,34 @@ function microsoftEndpoint(config: LocalCoderConfig): URL {
   return endpoint;
 }
 
+function chooseTool(
+  tools: ListedTool[],
+  capability: 'search' | 'fetch'
+): ListedTool | undefined {
+  const preferred = capability === 'search' ? 'microsoft_docs_search' : 'microsoft_docs_fetch';
+  const exact = tools.find((tool) => tool.name === preferred);
+  if (exact) return exact;
+
+  return tools.find((tool) => {
+    const text = `${tool.name} ${tool.description ?? ''}`.toLowerCase();
+    if (capability === 'search') {
+      return text.includes('microsoft') && text.includes('doc') && text.includes('search');
+    }
+    return text.includes('microsoft') && text.includes('doc') && (text.includes('fetch') || text.includes('article'));
+  });
+}
+
+function argumentKey(tool: ListedTool, preferred: string, alternatives: string[]): string {
+  const properties = Object.keys(tool.inputSchema?.properties ?? {});
+  if (properties.includes(preferred)) return preferred;
+  const alternative = alternatives.find((candidate) => properties.includes(candidate));
+  if (alternative) return alternative;
+  if (properties.length === 1) return properties[0];
+  throw new Error(
+    `Microsoft Learn tool ${tool.name} no longer exposes a recognizable ${preferred} argument.`
+  );
+}
+
 async function microsoftLearnSearch(
   config: LocalCoderConfig,
   query: string
@@ -86,9 +122,19 @@ async function microsoftLearnSearch(
 
   try {
     await client.connect(transport);
+    // Learn MCP explicitly documents tool discovery as dynamic. Discover every
+    // session so provider evolution produces a bounded fallback rather than an
+    // opaque hard-coded tool-name failure.
+    const listed = await client.listTools();
+    const tools = (listed.tools ?? []) as ListedTool[];
+    const searchTool = chooseTool(tools, 'search');
+    if (!searchTool) {
+      throw new Error('Microsoft Learn MCP exposed no documentation search capability.');
+    }
+    const searchArg = argumentKey(searchTool, 'query', ['q', 'search']);
     const searched = await client.callTool({
-      name: 'microsoft_docs_search',
-      arguments: { query }
+      name: searchTool.name,
+      arguments: { [searchArg]: query }
     });
     const searchText = compact(extractToolText(searched), 8_000);
     const evidence: ResearchEvidence[] = [];
@@ -102,25 +148,29 @@ async function microsoftLearnSearch(
       });
     }
 
+    const fetchTool = chooseTool(tools, 'fetch');
     const urls = unique(searchText.match(LEARN_URL_PATTERN) ?? []).slice(0, 2);
-    for (const url of urls) {
-      try {
-        const fetched = await client.callTool({
-          name: 'microsoft_docs_fetch',
-          arguments: { url }
-        });
-        const body = compact(extractToolText(fetched), 6_000);
-        if (body) {
-          evidence.push({
-            provider: 'microsoft-learn',
-            query,
-            source: url,
-            content: body,
-            authoritative: true
+    if (fetchTool) {
+      const fetchArg = argumentKey(fetchTool, 'url', ['uri', 'href']);
+      for (const url of urls) {
+        try {
+          const fetched = await client.callTool({
+            name: fetchTool.name,
+            arguments: { [fetchArg]: url }
           });
+          const body = compact(extractToolText(fetched), 6_000);
+          if (body) {
+            evidence.push({
+              provider: 'microsoft-learn',
+              query,
+              source: url,
+              content: body,
+              authoritative: true
+            });
+          }
+        } catch {
+          // Search evidence is still useful if one document fetch fails.
         }
-      } catch {
-        // Search evidence is still useful if one document fetch fails.
       }
     }
     return evidence;
@@ -245,7 +295,7 @@ export class ResearchBroker {
       if (isMicrosoftResearchRequest(request) && this.config.microsoftLearnResearchEnabled !== false) {
         try {
           const search =
-            this.deps.microsoftSearch ?? ((query: string) => microsoftLearnSearch(this.config, query));
+            this.deps.microsoftSearch ?? ((researchQuery: string) => microsoftLearnSearch(this.config, researchQuery));
           found = await search(request);
         } catch {
           found = [];
@@ -254,10 +304,10 @@ export class ResearchBroker {
 
       if (found.length === 0 && this.config.searxngUrl) {
         try {
-          const query = isMicrosoftResearchRequest(request)
+          const searchQuery = isMicrosoftResearchRequest(request)
             ? `${request} site:learn.microsoft.com`
             : request;
-          found = await searxSearch(this.config, query, this.fetchImpl);
+          found = await searxSearch(this.config, searchQuery, this.fetchImpl);
         } catch {
           found = [];
         }
