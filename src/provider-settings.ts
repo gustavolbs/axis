@@ -15,6 +15,13 @@ export interface ProviderRuntimeSettings {
   models: Record<string, ModelRoutingProfile>;
 }
 
+export interface ProviderRuntimeSettingsPatch {
+  enabled?: boolean;
+  /** `null` clears the provider default and returns selection to Auto. */
+  defaultModelId?: string | null;
+  models?: Record<string, ModelRoutingProfile>;
+}
+
 interface ProviderSettingsFile {
   version: 1;
   providers: Record<string, ProviderRuntimeSettings>;
@@ -82,7 +89,7 @@ export class ProviderSettingsStore {
     return structuredClone(this.read().providers);
   }
 
-  update(providerId: string, patch: Partial<ProviderRuntimeSettings>): ProviderRuntimeSettings {
+  update(providerId: string, patch: ProviderRuntimeSettingsPatch): ProviderRuntimeSettings {
     const id = safeProviderId(providerId);
     const state = this.read();
     const current = state.providers[id] ?? { enabled: true, models: {} };
@@ -91,7 +98,12 @@ export class ProviderSettingsStore {
       : current.models;
     const next = normalizeSettings({
       enabled: patch.enabled ?? current.enabled,
-      defaultModelId: patch.defaultModelId === undefined ? current.defaultModelId : patch.defaultModelId,
+      defaultModelId:
+        patch.defaultModelId === undefined
+          ? current.defaultModelId
+          : patch.defaultModelId === null
+            ? undefined
+            : patch.defaultModelId,
       models: mergedModels
     });
     state.providers[id] = next;
