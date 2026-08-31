@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: hsl(222 47% 5%);
+  --color-foreground: hsl(210 40% 98%);
+  --color-card: hsl(222 35% 8% / 0.86);
+  --color-card-foreground: hsl(210 40% 98%);
+  --color-primary: hsl(190 95% 52%);
+  --color-primary-foreground: hsl(222 47% 5%);
+  --color-secondary: hsl(217 28% 15%);
+  --color-secondary-foreground: hsl(210 40% 96%);
+  --color-muted: hsl(217 25% 13%);
+  --color-muted-foreground: hsl(215 20% 65%);
+  --color-border: hsl(217 28% 19%);
+  --color-ring: hsl(190 95% 52%);
+}
+
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #06090f;
+}
+
+* { border-color: hsl(217 28% 19%); }
+html, body, #root { min-height: 100%; }
+body {
+  margin: 0;
+  min-width: 320px;
+  color: hsl(210 40% 98%);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(8, 145, 178, 0.14), transparent 32rem),
+    radial-gradient(circle at 92% 5%, rgba(99, 102, 241, 0.11), transparent 30rem),
+    linear-gradient(180deg, #070b12 0%, #05070c 100%);
+}
+
+::selection { background: rgba(34, 211, 238, .22); }
+
+.grid-glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: .16;
+  mask-image: linear-gradient(to bottom, black, transparent 75%);
+  background-image:
+    linear-gradient(rgba(148,163,184,.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148,163,184,.07) 1px, transparent 1px);
+  background-size: 42px 42px;
+}
+
+.glass {
+  background: linear-gradient(180deg, rgba(16, 24, 39, .78), rgba(8, 13, 23, .88));
+  backdrop-filter: blur(18px);
+  box-shadow: 0 20px 70px rgba(0,0,0,.24), inset 0 1px rgba(255,255,255,.025);
+}
+
+.metric-glow { text-shadow: 0 0 26px rgba(34, 211, 238, .18); }
+.pulse-dot { box-shadow: 0 0 0 0 rgba(52, 211, 153, .5); animation: pulse 2s infinite; }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, .45); }
+  70% { box-shadow: 0 0 0 8px rgba(52, 211, 153, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+}
+
+.scrollbar-thin { scrollbar-width: thin; scrollbar-color: #334155 transparent; }
