@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -40,6 +41,24 @@ test('signed macOS release workflow is manual and fail-closed', () => {
   assert.doesNotMatch(workflow, /set -x/);
 });
 
+test('local release command also refuses unsigned or unnotarized packaging', () => {
+  const releaseScriptPath = path.join(root, 'scripts/release-macos.mjs');
+  const releaseScript = read('scripts/release-macos.mjs');
+  const check = spawnSync(process.execPath, ['--check', releaseScriptPath], { encoding: 'utf8' });
+
+  assert.equal(check.status, 0, check.stderr || check.stdout);
+  assert.match(releaseScript, /process\.platform !== 'darwin'/);
+  assert.match(releaseScript, /CSC_LINK/);
+  assert.match(releaseScript, /CSC_KEY_PASSWORD/);
+  assert.match(releaseScript, /APPLE_ID/);
+  assert.match(releaseScript, /APPLE_APP_SPECIFIC_PASSWORD/);
+  assert.match(releaseScript, /APPLE_TEAM_ID/);
+  assert.match(releaseScript, /Missing required signing\/notarization environment variables/);
+  assert.match(releaseScript, /shell: false/);
+  assert.match(releaseScript, /electron-builder\.release\.yml/);
+  assert.doesNotMatch(releaseScript, /process\.env\.(?:CSC_LINK|CSC_KEY_PASSWORD|APPLE_ID|APPLE_APP_SPECIFIC_PASSWORD|APPLE_TEAM_ID)/);
+});
+
 test('distribution config requires hardened runtime and notarization', () => {
   const releaseConfig = read('electron-builder.release.yml');
   const devConfig = read('electron-builder.yml');
@@ -49,10 +68,7 @@ test('distribution config requires hardened runtime and notarization', () => {
   assert.match(releaseConfig, /notarize:\s*true/);
   assert.match(releaseConfig, /gatekeeperAssess:\s*false/);
   assert.doesNotMatch(devConfig, /notarize:\s*true/);
-  assert.equal(
-    pkg.scripts?.['desktop:release:mac'],
-    'npm run build && electron-builder --config electron-builder.release.yml --mac dmg zip --publish never'
-  );
+  assert.equal(pkg.scripts?.['desktop:release:mac'], 'node scripts/release-macos.mjs');
 });
 
 test('ordinary CI remains unsigned and separate from distribution', () => {
