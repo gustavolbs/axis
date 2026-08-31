@@ -7,7 +7,8 @@ param(
 
   [int]$Port = 7447,
   [string]$TaskName = "Local Coder Dashboard",
-  [switch]$Remove
+  [switch]$Remove,
+  [switch]$NoStart
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,8 +28,12 @@ function Test-IsAdministrator {
 if ($Remove) {
   $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   if ($existing) {
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     Write-Host "Removed scheduled task '$TaskName'." -ForegroundColor Green
+  }
+  if (Test-Path $DashboardEntry) {
+    Stop-LocalCoderListenerForInstall -Port $Port -EntryPath $DashboardEntry
   }
 
   $rule = Get-NetFirewallRule -DisplayName $FirewallRule -ErrorAction SilentlyContinue
@@ -40,7 +45,7 @@ if ($Remove) {
 }
 
 if (-not (Test-IsAdministrator)) {
-  throw "Run PowerShell as Administrator so the installer can repair and validate restricted Windows Firewall rules."
+  throw "Run PowerShell as Administrator so the installer can replace stale listeners and verify restricted Windows Firewall rules."
 }
 
 $node = Get-Command node -ErrorAction Stop
@@ -63,6 +68,18 @@ if (-not $workerToken) {
 [Environment]::SetEnvironmentVariable("LOCAL_CODER_DASHBOARD_PORT", [string]$Port, "User")
 [Environment]::SetEnvironmentVariable("LOCAL_CODER_DASHBOARD_WORKER_URL", "http://127.0.0.1:7337", "User")
 
+$existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($existing) {
+  Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 500
+  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+}
+
+# A manually started or older dashboard may survive task replacement and keep 7447
+# bound to the system-wide node.exe. Stop it only when the command line proves that
+# it is this Local Coder dashboard; refuse to kill unrelated port owners.
+Stop-LocalCoderListenerForInstall -Port $Port -EntryPath $DashboardEntry
+
 $action = New-ScheduledTaskAction `
   -Execute $localCoderNode `
   -Argument ('"{0}" --no-open' -f $DashboardEntry) `
@@ -82,11 +99,6 @@ $principal = New-ScheduledTaskPrincipal `
   -LogonType Interactive `
   -RunLevel Limited
 
-$existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($existing) {
-  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-}
-
 Register-ScheduledTask `
   -TaskName $TaskName `
   -Action $action `
@@ -95,9 +107,9 @@ Register-ScheduledTask `
   -Principal $principal `
   -Description "Local Coder React dashboard hosted on the Windows execution plane" | Out-Null
 
-# The dashboard uses a dedicated Node runtime, so generic firewall rules created for
-# the system-wide Node installation cannot affect it. If Windows ever creates a block
-# specifically for the dedicated runtime, repair only its standard local popup rule.
+# The dashboard uses a dedicated Node runtime and an exact Mac/address/port firewall
+# rule. Windows-generated Node blocks are checked before and again after the listener
+# is real, because Windows may create an application rule on first bind.
 Set-LocalCoderInboundFirewallRule `
   -DisplayName $FirewallRule `
   -ExecutablePath $localCoderNode `
@@ -107,12 +119,18 @@ Set-LocalCoderInboundFirewallRule `
   -Profile Any
 
 Write-Host "Installed scheduled task '$TaskName'." -ForegroundColor Green
-Write-Host "Dashboard listens only on $ListenHost`:$Port and the firewall allows only Mac $MacIp to the dedicated Local Coder Node runtime/address/port on any Windows network profile."
 Write-Host "Dedicated Node runtime: $localCoderNode"
-Write-Host "System-wide Node firewall rules cannot affect this dashboard runtime."
-Write-Host ""
-Write-Host "Start it now with:"
-Write-Host "  Start-ScheduledTask -TaskName '$TaskName'"
-Write-Host ""
-Write-Host "Open from the Mac:"
-Write-Host "  http://$ListenHost`:$Port"
+
+if (-not $NoStart) {
+  Start-ScheduledTask -TaskName $TaskName
+  $listener = Wait-LocalCoderListener `
+    -Port $Port `
+    -ExecutablePath $localCoderNode `
+    -EntryPath $DashboardEntry
+  Write-Host "Verified dashboard listener TCP $Port -> PID $($listener.ProcessId) -> $($listener.ExecutablePath)" -ForegroundColor Green
+  Write-Host "A second firewall conflict check ran after the real listener was established."
+} else {
+  Write-Host "Task was installed but not started because -NoStart was supplied."
+}
+
+Write-Host "Dashboard URL from the Mac: http://$ListenHost`:$Port"
