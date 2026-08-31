@@ -71,8 +71,7 @@ export class RemoteWorkerInferenceProvider implements InferenceProvider {
         remoteWorker: true,
         workerVersion: health.workerVersion,
         hostname: health.hostname,
-        configuredFastModel: true,
-        configuredStrongModel: true
+        configuredFastModel: true
       }
     }];
   }
@@ -128,6 +127,13 @@ export class RemoteWorkerInferenceProvider implements InferenceProvider {
         request.userPrompt,
         request.output?.type === 'json_schema' ? request.output.schema : undefined
       );
+      if (generation.model !== request.model) {
+        throw new ProviderError(
+          this.id,
+          `Remote worker returned model ${generation.model}; expected ${request.model}.`,
+          { retryable: false, code: 'remote_worker_model_mismatch' }
+        );
+      }
       request.onProgress?.({
         providerId: this.id,
         model: generation.model,
