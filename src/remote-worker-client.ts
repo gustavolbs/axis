@@ -1,3 +1,9 @@
+import {
+  OperationCancelledError,
+  callerCancelled,
+  requestAbortSignal,
+  throwIfCancelled
+} from './cancellation.js';
 import type { LocalCoderConfig } from './config.js';
 import type { AgenticCodeTask, AgenticExecutionResult } from './executor.js';
 import type { LocalEngineerInput, LocalEngineerResult } from './local-engineer.js';
@@ -60,11 +66,13 @@ export class RemoteWorkerClient {
   }
 
   async executeTask(input: AgenticCodeTask): Promise<AgenticExecutionResult> {
+    throwIfCancelled();
     const snapshot = await prepareRemoteWorkspace(
       input.workspace,
       input.editableFiles,
       this.config
     );
+    throwIfCancelled();
     const { workspace: _workspace, ...remoteInput } = input;
     const response = await this.request<RemoteTaskResponse>('/v1/execute-task', {
       protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
@@ -72,6 +80,7 @@ export class RemoteWorkerClient {
       input: remoteInput
     });
     assertProtocolVersion(response.protocolVersion);
+    throwIfCancelled();
 
     if (response.result.rolledBack && response.changes.length > 0) {
       throw new Error('Remote worker returned file changes for a rolled-back task.');
@@ -83,10 +92,12 @@ export class RemoteWorkerClient {
   }
 
   async executePlan(input: LocalExecutionPlan): Promise<LocalExecutionPlanResult> {
+    throwIfCancelled();
     const editableFiles = [
       ...new Set(input.tasks.flatMap((task) => task.editableFiles))
     ];
     const snapshot = await prepareRemoteWorkspace(input.workspace, editableFiles, this.config);
+    throwIfCancelled();
     const { workspace: _workspace, ...remoteInput } = input;
     const response = await this.request<RemotePlanResponse>('/v1/execute-plan', {
       protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
@@ -94,6 +105,7 @@ export class RemoteWorkerClient {
       input: remoteInput
     });
     assertProtocolVersion(response.protocolVersion);
+    throwIfCancelled();
 
     if (response.result.rolledBack && response.changes.length > 0) {
       throw new Error('Remote worker returned file changes for a rolled-back plan.');
@@ -108,10 +120,12 @@ export class RemoteWorkerClient {
   }
 
   async executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult> {
+    throwIfCancelled();
     // The editable set is intentionally unknown at submission time. The remote local
     // engineer discovers it after evidence-backed investigation/planning and returns
     // dynamic before-hash guarded changes of its own.
     const snapshot = await prepareRemoteWorkspace(input.workspace, [], this.config);
+    throwIfCancelled();
     const { workspace: _workspace, ...remoteInput } = input;
     const response = await this.request<RemoteEngineerResponse>('/v1/engineer', {
       protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
@@ -119,6 +133,7 @@ export class RemoteWorkerClient {
       input: remoteInput
     });
     assertProtocolVersion(response.protocolVersion);
+    throwIfCancelled();
 
     if (response.result.status !== 'success' && response.changes.length > 0) {
       throw new Error('Remote local engineer returned changes for a non-success result.');
@@ -143,6 +158,8 @@ export class RemoteWorkerClient {
     body?: Record<string, unknown>,
     method: 'GET' | 'POST' = 'POST'
   ): Promise<T> {
+    throwIfCancelled();
+    const abort = requestAbortSignal(this.config.remoteWorkerTimeoutMs);
     let response: Response;
 
     try {
@@ -153,17 +170,22 @@ export class RemoteWorkerClient {
           ...(body ? { 'content-type': 'application/json' } : {})
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
-        signal: AbortSignal.timeout(this.config.remoteWorkerTimeoutMs)
+        signal: abort.signal
       });
     } catch (error) {
+      if (callerCancelled(abort.callerSignals)) {
+        throw new OperationCancelledError('Remote worker request cancelled.');
+      }
       const message = error instanceof Error ? error.message : String(error);
       throw new RemoteWorkerError(
         `Could not reach remote local-coder worker at ${this.baseUrl}. ${message}`,
         true
       );
     }
+    throwIfCancelled();
 
     const raw = await response.text();
+    throwIfCancelled();
     let payload: unknown;
     try {
       payload = raw ? (JSON.parse(raw) as unknown) : {};
