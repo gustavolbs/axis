@@ -32,10 +32,7 @@ export interface RoutingCandidate {
 }
 
 export interface CognitiveRoutingRequest {
-  project: Pick<
-    ProjectDefinition,
-    'id' | 'defaultRoutingPolicy' | 'defaultModel' | 'privacy'
-  >;
+  project: Pick<ProjectDefinition, 'id' | 'defaultRoutingPolicy' | 'defaultModel' | 'privacy'>;
   stage: InferenceStage;
   candidates: RoutingCandidate[];
   policy?: RoutingPolicy;
@@ -60,11 +57,7 @@ export interface ConsideredRoutingCandidate {
 export interface CognitiveRoutingDecision {
   requestedPolicy: RoutingPolicy;
   effectivePolicy: Exclude<RoutingPolicy, 'auto'>;
-  selected: {
-    providerId: string;
-    modelId: string;
-    providerKind: ProviderKind;
-  };
+  selected: { providerId: string; modelId: string; providerKind: ProviderKind };
   reasons: string[];
   considered: ConsideredRoutingCandidate[];
 }
@@ -85,16 +78,34 @@ function finiteNonNegative(value: number | undefined): number | undefined {
 }
 
 function normalizeSuccessRate(value: number | undefined): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value)
-    ? clamp(value, 0, 1)
-    : undefined;
+  return typeof value === 'number' && Number.isFinite(value) ? clamp(value, 0, 1) : undefined;
 }
 
-function effectivePolicy(request: CognitiveRoutingRequest, requested: RoutingPolicy): Exclude<RoutingPolicy, 'auto'> {
+function effectivePolicy(
+  request: CognitiveRoutingRequest,
+  requested: RoutingPolicy
+): Exclude<RoutingPolicy, 'auto'> {
   if (requested !== 'auto') return requested;
   if (request.urgency === 'urgent') return 'speed-first';
   if ((request.complexityScore ?? 0) >= 70 || request.blastRadius === 'critical') return 'deep';
   return 'balanced';
+}
+
+function candidateKey(candidate: Pick<RoutingCandidate, 'providerId' | 'modelId'>): string {
+  return `${candidate.providerId}\0${candidate.modelId}`;
+}
+
+function assertUniqueCandidates(candidates: RoutingCandidate[]): void {
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const key = candidateKey(candidate);
+    if (seen.has(key)) {
+      throw new RoutingConstraintError(
+        `Duplicate routing candidate: ${candidate.providerId}/${candidate.modelId}.`
+      );
+    }
+    seen.add(key);
+  }
 }
 
 function exclusionReason(
@@ -102,19 +113,25 @@ function exclusionReason(
   candidate: RoutingCandidate,
   policy: Exclude<RoutingPolicy, 'auto'>
 ): string | undefined {
+  if (!candidate.providerId.trim() || !candidate.modelId.trim()) return 'provider/model id is empty';
   if (!candidate.available) return 'model/provider is unavailable';
 
   try {
-    assertProjectProviderAllowed(request.project as ProjectDefinition, candidate.providerId, candidate.providerKind);
+    assertProjectProviderAllowed(
+      request.project as ProjectDefinition,
+      candidate.providerId,
+      candidate.providerKind
+    );
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
 
-  if (request.requireReasoning && candidate.capabilities?.reasoning === false) {
-    return 'stage requires reasoning support';
+  // Capability-constrained stages fail closed. "Unknown" is not equivalent to support.
+  if (request.requireReasoning && candidate.capabilities?.reasoning !== true) {
+    return 'stage requires positively known reasoning support';
   }
-  if (request.requireStructuredOutput && candidate.capabilities?.structuredOutput === false) {
-    return 'stage requires structured-output support';
+  if (request.requireStructuredOutput && candidate.capabilities?.structuredOutput !== true) {
+    return 'stage requires positively known structured-output support';
   }
   if (policy === 'frontier-only' && candidate.frontier !== true) {
     return 'frontier-only policy excludes non-frontier models';
@@ -125,14 +142,10 @@ function exclusionReason(
 function quality(candidate: RoutingCandidate): number {
   const explicit = finiteNonNegative(candidate.qualityScore);
   if (explicit !== undefined) return clamp(explicit, 0, 100);
-
   const success = normalizeSuccessRate(candidate.successRate);
-  if (success !== undefined && (candidate.historicalSamples ?? 0) >= 3) {
-    return success * 100;
-  }
+  if (success !== undefined && (candidate.historicalSamples ?? 0) >= 3) return success * 100;
 
-  // Priors are deliberately broad and provider-agnostic. Historical/eval data should
-  // replace them as soon as enough samples exist.
+  // Provider-agnostic cold-start priors. Eval/history data replaces these once available.
   if (candidate.frontier) return 86;
   return candidate.providerKind === 'cloud' ? 72 : 60;
 }
@@ -141,15 +154,13 @@ function speed(candidate: RoutingCandidate): number {
   const queue = finiteNonNegative(candidate.queueDelayMs) ?? 0;
   const latency = finiteNonNegative(candidate.p50LatencyMs);
   const expectedMs = queue + (latency ?? (candidate.providerKind === 'cloud' ? 240_000 : 900_000));
-  // 100 at immediate response, approaches 0 around 30 minutes and beyond.
-  return clamp(100 - (expectedMs / 18_000), 0, 100);
+  return clamp(100 - expectedMs / 18_000, 0, 100);
 }
 
 function cost(candidate: RoutingCandidate): number {
   if (candidate.providerKind === 'local') return 100;
   const estimate = finiteNonNegative(candidate.estimatedCostUsd);
   if (estimate === undefined) return 45;
-  // Stage costs below $0.10 are effectively cheap; scores taper to 0 around $2.10.
   return clamp(100 - Math.max(0, estimate - 0.1) * 50, 0, 100);
 }
 
@@ -182,7 +193,7 @@ function scoreCandidate(
     case 'deep':
       score = qualityScore * 0.68 + speedScore * 0.12 + costScore * 0.08;
       score += candidate.frontier ? 14 : 0;
-      score += request.requireReasoning && candidate.capabilities?.reasoning !== false ? 5 : 0;
+      score += request.requireReasoning && candidate.capabilities?.reasoning === true ? 5 : 0;
       break;
     case 'frontier-only':
       score = qualityScore * 0.70 + speedScore * 0.18 + costScore * 0.12;
@@ -249,14 +260,15 @@ function exactSelection(
     ],
     considered: request.candidates.map((item) => {
       const isSelected = item === candidate;
-      const reason = isSelected ? undefined : 'not selected because the user/project chose an explicit model';
       return {
         providerId: item.providerId,
         modelId: item.modelId,
         providerKind: item.providerKind,
         eligible: isSelected,
         score: isSelected ? scoreCandidate(request, policy, item) : undefined,
-        exclusionReason: reason,
+        exclusionReason: isSelected
+          ? undefined
+          : 'not selected because the user/project chose an explicit model',
         signals: signalSummary(item)
       };
     })
@@ -267,6 +279,7 @@ export function routeCognitiveStage(request: CognitiveRoutingRequest): Cognitive
   if (request.candidates.length === 0) {
     throw new RoutingConstraintError('No inference candidates are available to the cognitive router.');
   }
+  assertUniqueCandidates(request.candidates);
 
   const requestedPolicy = request.policy ?? request.project.defaultRoutingPolicy;
   const policy = effectivePolicy(request, requestedPolicy);
