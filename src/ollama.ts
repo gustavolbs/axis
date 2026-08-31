@@ -1,6 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { readOllamaChatStream } from './ollama-stream.js';
+import { preparePromptForInference } from './planning-policy.js';
+
 import type { LocalCoderConfig } from './config.js';
 
 interface OllamaTagsResponse {
@@ -134,6 +137,11 @@ export class OllamaClient {
             ? this.config.strongModelKeepAlive ?? '30s'
             : this.config.fastModelKeepAlive ?? '90s');
         const think = normalizeThinkingForModel(model, runtime.think);
+        const preparedPrompt = preparePromptForInference(
+          systemPrompt,
+          userPrompt,
+          runtime.numCtx ?? this.config.ollamaNumCtx ?? 16_384
+        );
 
         // The lock is shared by every local-coder MCP process. Once held, inspect Ollama's
         // actual loaded-model state so a second Claude Code session cannot leave the other
@@ -145,11 +153,11 @@ export class OllamaClient {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             model,
-            stream: false,
+            stream: true,
             keep_alive: keepAlive,
             messages: [
               { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
+              { role: 'user', content: preparedPrompt.userPrompt }
             ],
             ...(format ? { format } : {}),
             ...(think !== undefined ? { think } : {}),
@@ -160,22 +168,9 @@ export class OllamaClient {
           })
         });
 
-        const payload = (await response.json()) as OllamaChatResponse;
-        const content = payload.message?.content?.trim();
-
-        if (!content) {
-          throw new Error('Ollama returned an empty assistant message.');
-        }
-
-        const generation: OllamaGeneration = {
-          content,
-          model: payload.model ?? model,
-          doneReason: payload.done_reason,
-          totalDurationNs: payload.total_duration,
-          promptTokens: payload.prompt_eval_count,
-          completionTokens: payload.eval_count
-        };
-
+        // stream:true makes Ollama send HTTP headers immediately, avoiding the ~300s
+        // headers timeout that can occur when a long non-streaming inference holds them.
+        const generation = await readOllamaChatStream(response, model);
         await this.recordInference(generation);
         return generation;
       })

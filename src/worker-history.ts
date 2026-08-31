@@ -11,6 +11,7 @@ export type WorkerHistoryEventType =
   | 'progress'
   | 'model-input'
   | 'model-output'
+  | 'result'
   | 'error'
   | 'job-finish';
 

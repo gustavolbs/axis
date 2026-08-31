@@ -173,7 +173,9 @@ test('investigates, plans, codes and adversarially reviews a bounded goal locall
         call.system.includes('adversarial software-engineering reviewer')
     );
     assert.equal(reasoningCalls.length, 3);
-    assert.ok(reasoningCalls.every((call) => call.runtime.think === 'high'));
+    assert.equal(reasoningCalls[0]?.runtime.think, 'high');
+    assert.equal(reasoningCalls[1]?.runtime.think, 'medium');
+    assert.equal(reasoningCalls[2]?.runtime.think, 'high');
   });
 });
 
@@ -250,5 +252,25 @@ test('rolls implementation back when adversarial local review requires Claude', 
       await fs.readFile(path.join(workspace, 'src/value.ts'), 'utf8'),
       'export const value = 1;\n'
     );
+  });
+});
+
+
+test('does not retry a transport failure as invalid structured output', async () => {
+  await withWorkspace(async (workspace, stateRoot) => {
+    let calls = 0;
+    const model = {
+      async chat(): Promise<OllamaGeneration> {
+        calls += 1;
+        if (calls === 1) return generation(investigation());
+        throw new Error('transport timeout');
+      }
+    };
+
+    await assert.rejects(
+      () => executeLocalEngineer(model as never, config(stateRoot), { workspace, goal: 'Make one safe improvement.' }),
+      /transport timeout/
+    );
+    assert.equal(calls, 2, 'investigation plus exactly one planning attempt');
   });
 });

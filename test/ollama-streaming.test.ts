@@ -5,7 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { LocalCoderConfig } from '../src/config.js';
-import { OllamaClient, preparePromptForInference } from '../src/ollama.js';
+import { OllamaClient } from '../src/ollama.js';
+import { preparePromptForInference } from '../src/planning-policy.js';
 
 function config(directory: string): LocalCoderConfig {
   return {

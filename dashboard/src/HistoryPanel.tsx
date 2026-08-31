@@ -43,7 +43,7 @@ type ProgressValue = {
 
 type HistoryEvent = {
   timestamp: string;
-  type: 'job-start' | 'request' | 'progress' | 'model-input' | 'model-output' | 'error' | 'job-finish';
+  type: 'job-start' | 'request' | 'progress' | 'model-input' | 'model-output' | 'result' | 'error' | 'job-finish';
   title?: string;
   stage?: string;
   model?: string;

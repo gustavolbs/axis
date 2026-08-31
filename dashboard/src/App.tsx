@@ -24,6 +24,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { HistoryPanel } from '@/HistoryPanel';
 import { cn } from '@/lib/utils';
 
 type JobProgress = {
@@ -427,6 +428,8 @@ export function App() {
             </CardContent>
           </Card>
         </section>
+
+        <HistoryPanel />
       </main>
     </div>
   );
