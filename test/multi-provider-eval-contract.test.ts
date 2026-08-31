@@ -12,6 +12,18 @@ test('comparative eval uses disposable worktrees and never resets the source rep
   assert.doesNotMatch(script, /clean', '-[a-z]*f/i);
 });
 
+test('source node_modules reuse is disabled by default and requires an explicit flag', () => {
+  assert.match(script, /reuseNodeModules: false/);
+  assert.match(script, /--reuse-node-modules/);
+  assert.match(script, /if \(reuseNodeModules\)/);
+  assert.match(script, /sourceNodeModulesReuse: args\.reuseNodeModules \? 'explicitly enabled' : 'disabled'/);
+});
+
+test('example workspace placeholders are allowed only for non-executing dry runs', () => {
+  assert.match(script, /readCases\(args\.file, \{ allowPlaceholders: !args\.execute \}\)/);
+  assert.match(script, /!allowPlaceholders && item\.workspace\.includes\('REPLACE_WITH_REAL_WORKSPACE'\)/);
+});
+
 test('cloud eval models are explicit configuration rather than hardcoded provider model ids', () => {
   assert.match(script, /LOCAL_CODER_EVAL_ANTHROPIC_MODEL/);
   assert.match(script, /LOCAL_CODER_EVAL_OPENAI_MODEL/);
