@@ -36,6 +36,14 @@ export interface LocalCoderConfig {
   reviewMaxTokens?: number;
   reportMaxTokens?: number;
   repoLearningMaxTokens?: number;
+  /** Local-first external research. Microsoft Learn works without tenant credentials. */
+  researchEnabled?: boolean;
+  microsoftLearnResearchEnabled?: boolean;
+  microsoftLearnMcpUrl?: string;
+  /** Optional self-hosted SearXNG base URL for non-Microsoft web discovery. */
+  searxngUrl?: string;
+  researchTimeoutMs?: number;
+  researchMaxResults?: number;
   validationTimeoutMs: number;
   maxFileBytes: number;
   maxContextBytes: number;
@@ -188,6 +196,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
     repoLearningMaxTokens: parsePositiveInt(
       env.LOCAL_CODER_REPO_LEARNING_MAX_TOKENS,
       2_048
+    ),
+    researchEnabled: parseBoolean(env.LOCAL_CODER_RESEARCH_ENABLED, true),
+    microsoftLearnResearchEnabled: parseBoolean(
+      env.LOCAL_CODER_MICROSOFT_LEARN_RESEARCH_ENABLED,
+      true
+    ),
+    microsoftLearnMcpUrl:
+      env.LOCAL_CODER_MICROSOFT_LEARN_MCP_URL?.trim() ||
+      'https://learn.microsoft.com/api/mcp?maxTokenBudget=2400',
+    searxngUrl: trimTrailingSlash(env.LOCAL_CODER_SEARXNG_URL),
+    researchTimeoutMs: parsePositiveInt(env.LOCAL_CODER_RESEARCH_TIMEOUT_MS, 45_000),
+    researchMaxResults: Math.min(
+      12,
+      parsePositiveInt(env.LOCAL_CODER_RESEARCH_MAX_RESULTS, 6)
     ),
     validationTimeoutMs: parsePositiveInt(env.LOCAL_CODER_VALIDATION_TIMEOUT_MS, 180_000),
     maxFileBytes: parsePositiveInt(env.LOCAL_CODER_MAX_FILE_BYTES, 120_000),
