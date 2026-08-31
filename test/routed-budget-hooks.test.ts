@@ -196,6 +196,55 @@ test('auto routing falls back to local without invoking cloud when cloud admissi
   assert.equal(result.result.content, 'local after budget stop');
 });
 
+test('explicit cloud selection stays fail-closed when cloud admission is denied', async () => {
+  let cloudCalls = 0;
+  let localCalls = 0;
+  const cloud = new TestProvider('anthropic', 'cloud', 'cloud-fast', async (request) => {
+    cloudCalls += 1;
+    return {
+      providerId: 'anthropic',
+      model: request.model,
+      content: 'cloud',
+      latencyMs: 1,
+      usage: {}
+    };
+  });
+  const local = new TestProvider('ollama', 'local', 'qwen-local', async (request) => {
+    localCalls += 1;
+    return {
+      providerId: 'ollama',
+      model: request.model,
+      content: 'local',
+      latencyMs: 1,
+      usage: {}
+    };
+  });
+  const runtime = new RoutedInferenceRuntime(new ProviderRegistry([cloud, local]));
+
+  await assert.rejects(
+    runtime.invoke({
+      inference: {
+        systemPrompt: 'system',
+        userPrompt: 'user',
+        stage: 'planning',
+        maxOutputTokens: 100
+      },
+      routing: {
+        project: project(),
+        stage: 'planning',
+        modelSelection: { mode: 'explicit', providerId: 'anthropic', modelId: 'cloud-fast' },
+        candidates: [fastCloudCandidate(), slowLocalCandidate()]
+      },
+      authorizeAttempt: ({ candidate }) => {
+        if (candidate.providerKind === 'cloud') throw new Error('explicit cloud budget denied');
+      }
+    }),
+    /explicit cloud budget denied/
+  );
+  assert.equal(cloudCalls, 0);
+  assert.equal(localCalls, 0);
+});
+
 test('admission rejection happens before any provider I/O', async () => {
   let providerCalls = 0;
   const cloud = new TestProvider('anthropic', 'cloud', 'cloud-fast', async (request) => {
