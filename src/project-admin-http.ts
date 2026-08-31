@@ -448,7 +448,7 @@ export async function handleProjectAdminRequest(
   if (request.method === 'PUT' && url.pathname === '/api/pricing') {
     const input = pricingInput(await readJson(request));
     sendJson(response, 200, {
-      pricing: admin.setPricing(input.providerId, input.modelId, input.pricing)
+      pricing: await admin.setPricing(input.providerId, input.modelId, input.pricing)
     });
     return true;
   }
@@ -456,7 +456,7 @@ export async function handleProjectAdminRequest(
     const providerId = url.searchParams.get('providerId');
     const modelId = url.searchParams.get('modelId');
     if (!providerId || !modelId) throw new Error('providerId and modelId query parameters are required.');
-    sendJson(response, 200, { removed: admin.removePricing(providerId, modelId) });
+    sendJson(response, 200, { removed: await admin.removePricing(providerId, modelId) });
     return true;
   }
 
