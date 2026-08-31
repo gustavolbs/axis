@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
@@ -232,12 +234,17 @@ function renderUserDecisionGuidance(
   return ['# USER DECISIONS (authoritative)', ...selected].join('\n');
 }
 
+type BudgetCorrelatedEngineerInput = LocalEngineerInput & { budgetJobId?: string };
+
 async function executeWithDirectDecisions(
   execution: Pick<ExecutionBackend, 'executeEngineer'>,
   initialInput: LocalEngineerInput,
   context: unknown
 ): Promise<LocalEngineerResult> {
-  let input = initialInput;
+  let input: BudgetCorrelatedEngineerInput = {
+    ...initialInput,
+    budgetJobId: randomUUID()
+  };
   let result = await execution.executeEngineer(input);
   const mcpReq = (context as ElicitationContext | undefined)?.mcpReq;
 
