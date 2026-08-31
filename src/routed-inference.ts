@@ -45,6 +45,14 @@ export type AttemptAuthorizer = (
   request: AttemptAuthorizationRequest
 ) => void | Promise<void>;
 
+export interface AttemptFailureRequest extends AttemptAuthorizationRequest {
+  error: unknown;
+}
+
+export type AttemptFailureHandler = (
+  request: AttemptFailureRequest
+) => void | Promise<void>;
+
 export interface RoutedInferenceInput {
   inference: Omit<InferenceRequest, 'model'>;
   routing: CognitiveRoutingRequest;
@@ -55,6 +63,8 @@ export interface RoutedInferenceInput {
   confirmFallback?: FallbackConfirmation;
   /** Hard admission hook (budgets, quotas, policy extensions) run before provider I/O. */
   authorizeAttempt?: AttemptAuthorizer;
+  /** Cleanup hook for reservations/leases when an authorized provider attempt fails. */
+  onAttemptFailure?: AttemptFailureHandler;
 }
 
 export interface RoutedInferenceResult {
@@ -176,6 +186,12 @@ export class RoutedInferenceRuntime {
         retryable: providerError?.options.retryable,
         rateLimited: providerError?.options.rateLimited
       });
+      await input.onAttemptFailure?.({
+        candidate: primary,
+        inference: input.inference,
+        fallback: false,
+        error
+      });
       if (!providerError || (!providerError.options.retryable && !providerError.options.rateLimited)) throw error;
       if (isExplicit(selection)) throw error;
     }
@@ -224,6 +240,13 @@ export class RoutedInferenceRuntime {
           error: error instanceof Error ? error.message : String(error),
           retryable: providerError?.options.retryable,
           rateLimited: providerError?.options.rateLimited
+        });
+        await input.onAttemptFailure?.({
+          candidate: fallback,
+          inference: input.inference,
+          fallback: true,
+          reason,
+          error
         });
         if (!providerError || (!providerError.options.retryable && !providerError.options.rateLimited)) throw error;
         previous = fallback;
