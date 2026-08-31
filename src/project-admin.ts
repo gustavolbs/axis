@@ -238,6 +238,7 @@ export class ProjectAdminService {
   }
 
   createCredential(input: CreateCredentialInput): CredentialView {
+    this.assertCredentialReplacementIsolation(input);
     const profile = input.backend === 'macos-keychain'
       ? this.credentials.addOrReplaceKeychainCredential({
           id: input.id,
@@ -414,6 +415,24 @@ export class ProjectAdminService {
       defaultModel: project.defaultModel,
       providers
     };
+  }
+
+  private assertCredentialReplacementIsolation(input: CreateCredentialInput): void {
+    for (const project of this.projects.list()) {
+      for (const [providerId, credentialId] of Object.entries(project.credentialProfileIds)) {
+        if (credentialId !== input.id) continue;
+        if (providerId !== input.providerId) {
+          throw new Error(
+            `Credential ${input.id} is bound to provider ${providerId} by Project ${project.id}; it cannot be reassigned to ${input.providerId}.`
+          );
+        }
+        if (input.organizationId !== project.organizationId) {
+          throw new Error(
+            `Credential ${input.id} is referenced by Project ${project.id} in organization ${project.organizationId}; it cannot be moved outside that organization.`
+          );
+        }
+      }
+    }
   }
 
   private assertCredentialBindings(
