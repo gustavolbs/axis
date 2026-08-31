@@ -30,6 +30,8 @@ $ErrorActionPreference = "Stop"
 $WorkerFirewallRule = "Local Coder - Worker from Mac"
 $OllamaFirewallRule = "Local Coder - Ollama from Mac"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$FirewallHelpers = Join-Path $PSScriptRoot "windows-firewall.ps1"
+. $FirewallHelpers
 
 function Assert-Command {
   param([string]$Name)
@@ -118,13 +120,15 @@ if ($Mode -eq "OllamaOnly") {
 Assert-Command "node"
 Assert-Command "npm"
 Assert-Command "git"
+$node = Get-Command node -ErrorAction Stop
 
 if (-not $WorkerToken) {
   $WorkerToken = New-WorkerToken
 }
 
 # In full worker mode Ollama stays loopback-only. Only the authenticated worker is
-# exposed to the LAN/Meshnet, and Windows Firewall further restricts that port to the Mac.
+# exposed to LAN/Meshnet. The firewall rule is restricted by exact Mac address,
+# exact TCP port, and the Node executable used by this installation.
 Set-UserEnvironmentVariable "OLLAMA_HOST" "127.0.0.1:$OllamaPort"
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_HOST" "0.0.0.0"
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_PORT" "$WorkerPort"
@@ -153,7 +157,15 @@ Set-UserEnvironmentVariable "LOCAL_CODER_INFERENCE_MAX_DURATION_MS" "1800000"
 Set-UserEnvironmentVariable "LOCAL_CODER_VALIDATION_TIMEOUT_MS" "600000"
 Set-UserEnvironmentVariable "LOCAL_CODER_REPO_INTELLIGENCE_ENABLED" $(if ($DisableRepoIntelligence) { "false" } else { "true" })
 
-Replace-FirewallRule -DisplayName $WorkerFirewallRule -Port $WorkerPort -RemoteAddress $MacIp
+# Windows can create generic "Node.js JavaScript Runtime" inbound Block rules when
+# its network-access prompt is denied. Explicit Block wins over our Allow rule, so
+# repair only those Windows-generated local rules and refuse to override custom policy.
+Set-LocalCoderInboundFirewallRule `
+  -DisplayName $WorkerFirewallRule `
+  -ExecutablePath $node.Source `
+  -Port $WorkerPort `
+  -RemoteAddress $MacIp `
+  -Profile Any
 
 $oldOllamaRule = Get-NetFirewallRule -DisplayName $OllamaFirewallRule -ErrorAction SilentlyContinue
 if ($oldOllamaRule) {
@@ -196,7 +208,8 @@ Write-Host "WORKER TOKEN - copy this once to the Mac installer:" -ForegroundColo
 Write-Host $WorkerToken -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Ollama remains loopback-only in Worker mode; port $OllamaPort is not opened to the LAN."
-Write-Host "The worker port $WorkerPort accepts only the supplied Mac IP on Private network profiles."
+Write-Host "The worker port $WorkerPort accepts only the supplied Mac IP and the configured Node executable on any Windows network profile."
+Write-Host "Conflicting Windows-generated Node inbound Block rules are repaired automatically; custom/managed Block policy causes setup to fail safely."
 Write-Host ""
 Write-Host "If Ollama was previously configured for LAN access, quit it from the system tray and restart it now."
 Write-Host ""
