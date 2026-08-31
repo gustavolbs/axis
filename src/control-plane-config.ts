@@ -3,9 +3,16 @@ import os from 'node:os';
 import path from 'node:path';
 
 export interface ControlPlaneConfigFile {
+  version?: 1 | 2;
   executionMode?: 'remote' | 'auto' | 'local';
   remoteWorkerUrl?: string;
+  /**
+   * Legacy v0.14 field. Read-only compatibility: new writers must use
+   * `remoteWorkerCredentialRef` instead of persisting bearer tokens here.
+   */
   remoteWorkerToken?: string;
+  /** Secret id stored in macOS Keychain. */
+  remoteWorkerCredentialRef?: string;
   model?: string;
   updatedAt?: string;
 }
@@ -36,12 +43,44 @@ export function readControlPlaneConfig(): ControlPlaneConfigFile | undefined {
     value.executionMode === 'remote' || value.executionMode === 'auto' || value.executionMode === 'local'
       ? value.executionMode
       : undefined;
+  const version = value.version === 2 ? 2 : value.version === 1 ? 1 : undefined;
   return {
+    version,
     executionMode,
     remoteWorkerUrl: typeof value.remoteWorkerUrl === 'string' ? value.remoteWorkerUrl.trim() : undefined,
     remoteWorkerToken:
       typeof value.remoteWorkerToken === 'string' ? value.remoteWorkerToken.trim() : undefined,
+    remoteWorkerCredentialRef:
+      typeof value.remoteWorkerCredentialRef === 'string'
+        ? value.remoteWorkerCredentialRef.trim()
+        : undefined,
     model: typeof value.model === 'string' ? value.model.trim() : undefined,
     updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : undefined
   };
+}
+
+/**
+ * Writes only non-secret control-plane configuration. Legacy inline bearer tokens are
+ * intentionally excluded even if a caller passes an object read from a v1 installation.
+ */
+export function writeControlPlaneConfig(config: ControlPlaneConfigFile): void {
+  const file = controlPlaneConfigPath();
+  const safe: ControlPlaneConfigFile = {
+    version: 2,
+    executionMode: config.executionMode,
+    remoteWorkerUrl: config.remoteWorkerUrl?.trim() || undefined,
+    remoteWorkerCredentialRef: config.remoteWorkerCredentialRef?.trim() || undefined,
+    model: config.model?.trim() || undefined,
+    updatedAt: new Date().toISOString()
+  };
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(temp, `${JSON.stringify(safe, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  try {
+    fs.renameSync(temp, file);
+    try { fs.chmodSync(file, 0o600); } catch { /* best effort on non-POSIX */ }
+  } catch (error) {
+    try { fs.unlinkSync(temp); } catch { /* best effort */ }
+    throw error;
+  }
 }
