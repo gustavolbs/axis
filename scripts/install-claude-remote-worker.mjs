@@ -17,6 +17,7 @@ const projectRoot = path.resolve(import.meta.dirname, '..');
 const serverPath = path.join(projectRoot, 'dist', 'index.js');
 const secretStorePath = path.join(projectRoot, 'dist', 'secret-store.js');
 const controlPlaneConfigModulePath = path.join(projectRoot, 'dist', 'control-plane-config.js');
+const claudeRemoteConfigPath = path.join(projectRoot, 'dist', 'claude-remote-config.js');
 const claudeConfigPath =
   process.env.LOCAL_CODER_CLAUDE_CONFIG_PATH ?? path.join(os.homedir(), '.claude.json');
 const controlPlaneConfigPath =
@@ -35,7 +36,12 @@ if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
   console.error(`Invalid worker port: ${port}`);
   process.exit(1);
 }
-for (const required of [serverPath, secretStorePath, controlPlaneConfigModulePath]) {
+for (const required of [
+  serverPath,
+  secretStorePath,
+  controlPlaneConfigModulePath,
+  claudeRemoteConfigPath
+]) {
   if (!fs.existsSync(required)) {
     console.error(`Missing ${required}. Run "npm run build" first.`);
     process.exit(1);
@@ -65,11 +71,15 @@ if (fs.existsSync(claudeConfigPath)) {
   console.error(`Backup created: ${backupPath}`);
 }
 
-const [{ MacOSKeychainSecretStore, remoteWorkerSecretId }, { writeControlPlaneConfig }] =
-  await Promise.all([
-    import(pathToFileURL(secretStorePath).href),
-    import(pathToFileURL(controlPlaneConfigModulePath).href)
-  ]);
+const [
+  { MacOSKeychainSecretStore, remoteWorkerSecretId },
+  { writeControlPlaneConfig },
+  { buildClaudeRemoteWorkerConfig }
+] = await Promise.all([
+  import(pathToFileURL(secretStorePath).href),
+  import(pathToFileURL(controlPlaneConfigModulePath).href),
+  import(pathToFileURL(claudeRemoteConfigPath).href)
+]);
 
 const keychain = new MacOSKeychainSecretStore();
 if (!keychain.isAvailable()) {
@@ -91,31 +101,12 @@ writeControlPlaneConfig({
   model
 });
 
-config.mcpServers ??= {};
-config.mcpServers['local-coder'] = {
-  type: 'stdio',
-  command: process.execPath,
-  args: [serverPath],
-  env: {
-    LOCAL_CODER_EXECUTION_MODE: 'remote',
-    LOCAL_CODER_REMOTE_WORKER_URL: remoteWorkerUrl,
-    LOCAL_CODER_REMOTE_WORKER_CREDENTIAL_REF: credentialRef,
-    LOCAL_CODER_REMOTE_WORKER_TIMEOUT_MS: '7200000',
-    LOCAL_CODER_REMOTE_MAX_DELTA_BYTES: '8000000',
-    LOCAL_CODER_ADAPTIVE_MODELS: 'false',
-    LOCAL_CODER_MODEL: model,
-    LOCAL_CODER_FAST_MODEL: model,
-    LOCAL_CODER_STRONG_MODEL: model,
-    LOCAL_CODER_NUM_CTX: '16384',
-    LOCAL_CODER_MAX_CONTEXT_BYTES: '96000',
-    LOCAL_CODER_TIMEOUT_MS: '600000',
-    LOCAL_CODER_COGNITIVE_MODE: 'adaptive',
-    LOCAL_CODER_MAX_DELIBERATION_PASSES: '3',
-    LOCAL_CODER_QUALITY_GATE_MIN_SCORE: '80',
-    LOCAL_CODER_RESEARCH_ENABLED: 'true',
-    LOCAL_CODER_MICROSOFT_LEARN_RESEARCH_ENABLED: 'true'
-  }
-};
+config = buildClaudeRemoteWorkerConfig(config, {
+  serverPath,
+  remoteWorkerUrl,
+  credentialRef,
+  model
+});
 
 fs.mkdirSync(path.dirname(claudeConfigPath), { recursive: true });
 fs.writeFileSync(claudeConfigPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
