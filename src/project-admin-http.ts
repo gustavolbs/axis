@@ -53,16 +53,28 @@ async function readJson(
   return parsed as Record<string, unknown>;
 }
 
+function isLoopbackIpv4(value: string): boolean {
+  const parts = value.split('.');
+  if (parts.length !== 4 || parts[0] !== '127') return false;
+  return parts.every((part) => {
+    if (!/^\d{1,3}$/.test(part)) return false;
+    const octet = Number(part);
+    return octet >= 0 && octet <= 255;
+  });
+}
+
 function isLoopbackHost(value: string | undefined): boolean {
   if (!value) return false;
   const host = value.toLowerCase().replace(/^\[|\]$/g, '');
-  return host === 'localhost' || host === '::1' || host.startsWith('127.');
+  return host === 'localhost' || host === '::1' || isLoopbackIpv4(host);
 }
 
 function isLoopbackAddress(value: string | undefined): boolean {
   if (!value) return false;
   const address = value.toLowerCase();
-  return address === '::1' || address.startsWith('127.') || address.startsWith('::ffff:127.');
+  if (address === '::1') return true;
+  const ipv4 = address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address;
+  return isLoopbackIpv4(ipv4);
 }
 
 function requestAllowed(request: IncomingMessage): boolean {
