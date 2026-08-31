@@ -14,7 +14,16 @@ export interface LocalCoderConfig {
   ollamaNumCtx?: number;
   fastModelKeepAlive?: string;
   strongModelKeepAlive?: string;
+  /** Timeout for short/non-streaming Ollama control requests. */
   requestTimeoutMs: number;
+  /** Maximum wait for Ollama to return streaming response headers. */
+  inferenceHeaderTimeoutMs?: number;
+  /** Generous initial window before the first streaming chunk is observed. */
+  inferenceFirstChunkTimeoutMs?: number;
+  /** Maximum silence between streaming chunks once inference has started. */
+  inferenceIdleTimeoutMs?: number;
+  /** Hard per-inference safety cap even when the stream remains active. */
+  inferenceMaxDurationMs?: number;
   validationTimeoutMs: number;
   maxFileBytes: number;
   maxContextBytes: number;
@@ -115,6 +124,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
     fastModelKeepAlive: env.LOCAL_CODER_FAST_KEEP_ALIVE ?? '90s',
     strongModelKeepAlive: env.LOCAL_CODER_STRONG_KEEP_ALIVE ?? '30s',
     requestTimeoutMs: parsePositiveInt(env.LOCAL_CODER_TIMEOUT_MS, 180_000),
+    // Streaming inference uses liveness-aware timeouts instead of a single absolute
+    // request timeout. The initial windows are deliberately generous for a cold 27B
+    // model on a workstation; once chunks arrive, only prolonged silence is fatal.
+    inferenceHeaderTimeoutMs: parsePositiveInt(
+      env.LOCAL_CODER_INFERENCE_HEADER_TIMEOUT_MS,
+      180_000
+    ),
+    inferenceFirstChunkTimeoutMs: parsePositiveInt(
+      env.LOCAL_CODER_INFERENCE_FIRST_CHUNK_TIMEOUT_MS,
+      600_000
+    ),
+    inferenceIdleTimeoutMs: parsePositiveInt(
+      env.LOCAL_CODER_INFERENCE_IDLE_TIMEOUT_MS,
+      300_000
+    ),
+    inferenceMaxDurationMs: parsePositiveInt(
+      env.LOCAL_CODER_INFERENCE_MAX_DURATION_MS,
+      1_800_000
+    ),
     validationTimeoutMs: parsePositiveInt(env.LOCAL_CODER_VALIDATION_TIMEOUT_MS, 180_000),
     maxFileBytes: parsePositiveInt(env.LOCAL_CODER_MAX_FILE_BYTES, 120_000),
     maxContextBytes: parsePositiveInt(env.LOCAL_CODER_MAX_CONTEXT_BYTES, 96_000),
