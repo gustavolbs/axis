@@ -24,9 +24,11 @@ test('signed macOS release workflow is manual and fail-closed', () => {
     'APPLE_TEAM_ID'
   ]) {
     assert.match(workflow, new RegExp(`secrets\\.${secret}`));
-    assert.match(workflow, new RegExp(`Required release secret is missing: \\${name}`));
   }
 
+  assert.match(workflow, /for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID/);
+  assert.match(workflow, /Required release secret is missing:/);
+  assert.match(workflow, /if \[ "\$missing" -ne 0 \]; then\s+exit 1/);
   assert.match(workflow, /npm run desktop:release:mac/);
   assert.match(workflow, /codesign --verify --deep --strict/);
   assert.match(workflow, /Authority=Developer ID Application/);
