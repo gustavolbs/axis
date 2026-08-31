@@ -143,7 +143,13 @@ Set-UserEnvironmentVariable "LOCAL_CODER_STRONG_MODEL" $Model
 # worker: focused repo-intelligence/evidence capsules are cheaper and leave RAM for builds.
 Set-UserEnvironmentVariable "LOCAL_CODER_NUM_CTX" "16384"
 Set-UserEnvironmentVariable "LOCAL_CODER_MAX_CONTEXT_BYTES" "96000"
+# Short Ollama control calls retain the legacy timeout. Long model inference uses
+# separate liveness-aware streaming limits so active reasoning is not killed at 10m.
 Set-UserEnvironmentVariable "LOCAL_CODER_TIMEOUT_MS" "600000"
+Set-UserEnvironmentVariable "LOCAL_CODER_INFERENCE_HEADER_TIMEOUT_MS" "180000"
+Set-UserEnvironmentVariable "LOCAL_CODER_INFERENCE_FIRST_CHUNK_TIMEOUT_MS" "600000"
+Set-UserEnvironmentVariable "LOCAL_CODER_INFERENCE_IDLE_TIMEOUT_MS" "300000"
+Set-UserEnvironmentVariable "LOCAL_CODER_INFERENCE_MAX_DURATION_MS" "1800000"
 Set-UserEnvironmentVariable "LOCAL_CODER_VALIDATION_TIMEOUT_MS" "600000"
 Set-UserEnvironmentVariable "LOCAL_CODER_REPO_INTELLIGENCE_ENABLED" $(if ($DisableRepoIntelligence) { "false" } else { "true" })
 
@@ -172,6 +178,7 @@ Write-Host "Windows execution worker configured." -ForegroundColor Green
 Write-Host "Worker URL: http://<WINDOWS_IP_OR_MESHNET_NAME>:$WorkerPort"
 Write-Host "Model: $Model"
 Write-Host "Context: 16384 (focused default; do not raise just because the model supports more)"
+Write-Host "Inference timeouts: headers 3m; first chunk 10m; stream idle 5m; hard cap 30m"
 Write-Host "Allowed Git hosts: $AllowedGitHosts"
 Write-Host "Bootstrap mode: $Bootstrap"
 Write-Host "Heavy job concurrency: $MaxConcurrentJobs"
