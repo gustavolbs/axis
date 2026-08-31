@@ -1,0 +1,107 @@
+name: macOS Signed Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit SHA to package
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-signed-release
+  cancel-in-progress: false
+
+jobs:
+  signed-release:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout requested ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Require signing and notarization secrets
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Required release secret is missing: ${name}"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build, sign, and notarize
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run desktop:release:mac
+
+      - name: Verify Developer ID signature and notarization ticket
+        run: |
+          set -euo pipefail
+          app="$(find release -maxdepth 3 -type d -name 'Local Coder.app' -print -quit)"
+          dmg="$(find release -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          zip="$(find release -maxdepth 1 -type f -name '*.zip' -print -quit)"
+
+          test -n "$app"
+          test -n "$dmg"
+          test -n "$zip"
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv --verbose=4 "$app" 2>&1 | grep -F 'Authority=Developer ID Application'
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+
+          mount="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$mount" -quiet >/dev/null 2>&1 || true
+            rmdir "$mount" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount" -quiet
+          packaged_app="$mount/Local Coder.app"
+          test -d "$packaged_app"
+          codesign --verify --deep --strict --verbose=2 "$packaged_app"
+          xcrun stapler validate "$packaged_app"
+          spctl --assess --type execute --verbose=4 "$packaged_app"
+          hdiutil detach "$mount" -quiet
+          trap - EXIT
+          rmdir "$mount"
+
+          shasum -a 256 "$dmg" "$zip" > release/SHA256SUMS.txt
+
+      - name: Upload verified signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-coder-macos-signed-notarized
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
