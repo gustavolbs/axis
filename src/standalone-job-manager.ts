@@ -373,7 +373,8 @@ export class StandaloneJobManager {
       });
     } catch (error) {
       if (controller.signal.aborted || isCancellationError(error)) {
-        if (job.status !== 'cancelled') {
+        const alreadyCancelled = job.events.at(-1)?.type === 'cancelled';
+        if (!alreadyCancelled) {
           job.status = 'cancelled';
           job.error = undefined;
           job.decisionRequest = undefined;
