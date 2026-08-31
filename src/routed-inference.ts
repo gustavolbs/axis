@@ -202,6 +202,11 @@ export class RoutedInferenceRuntime {
           result,
           routing: {
             ...routing,
+            selected: {
+              providerId: fallback.providerId,
+              modelId: fallback.modelId,
+              providerKind: fallback.providerKind
+            },
             reasons: [
               ...routing.reasons,
               `Fallback selected ${fallback.providerId}/${fallback.modelId}: ${reason}`
