@@ -1,0 +1,55 @@
+name: Cloud Provider Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider to validate
+        required: true
+        type: choice
+        options:
+          - anthropic
+          - openai
+          - all
+      anthropic_model:
+        description: Exact Anthropic model ID discovered by the provider API
+        required: false
+        type: string
+      openai_model:
+        description: Exact OpenAI model ID discovered by the provider API
+        required: false
+        type: string
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Anthropic live smoke
+        if: ${{ inputs.provider == 'anthropic' || inputs.provider == 'all' }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LOCAL_CODER_SMOKE_ANTHROPIC_MODEL: ${{ inputs.anthropic_model }}
+        run: node scripts/smoke-cloud-providers.mjs --provider anthropic
+
+      - name: OpenAI live smoke
+        if: ${{ inputs.provider == 'openai' || inputs.provider == 'all' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LOCAL_CODER_SMOKE_OPENAI_MODEL: ${{ inputs.openai_model }}
+        run: node scripts/smoke-cloud-providers.mjs --provider openai
