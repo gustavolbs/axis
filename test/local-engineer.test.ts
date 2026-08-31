@@ -51,17 +51,17 @@ function generation(content: string): OllamaGeneration {
 }
 
 class FakeModel {
-  readonly calls: Array<{ system: string; runtime: OllamaChatOptions }> = [];
+  readonly calls: Array<{ system: string; user: string; runtime: OllamaChatOptions }> = [];
 
   constructor(private readonly responses: string[]) {}
 
   async chat(
     system: string,
-    _user: string,
+    user: string,
     _format?: 'json' | Record<string, unknown>,
     runtime: OllamaChatOptions = {}
   ): Promise<OllamaGeneration> {
-    this.calls.push({ system, runtime });
+    this.calls.push({ system, user, runtime });
     const content = this.responses.shift();
     if (content === undefined) throw new Error('Unexpected fake model call.');
     return generation(content);
@@ -102,10 +102,10 @@ function readyPlan() {
   });
 }
 
-function editProposal() {
+function editProposal(value = 2) {
   return JSON.stringify({
     summary: 'Updated the exported value.',
-    files: [{ path: 'src/value.ts', content: 'export const value = 2;\n' }]
+    files: [{ path: 'src/value.ts', content: `export const value = ${value};\n` }]
   });
 }
 
@@ -117,6 +117,25 @@ function passingReview() {
     issues: [],
     repairTask: '',
     repairFiles: [],
+    researchRequests: []
+  });
+}
+
+function repairReview(description: string, fix: string) {
+  return JSON.stringify({
+    verdict: 'repair',
+    confidence: 0.78,
+    summary: description,
+    issues: [
+      {
+        severity: 'high',
+        file: 'src/value.ts',
+        description,
+        fix
+      }
+    ],
+    repairTask: fix,
+    repairFiles: ['src/value.ts'],
     researchRequests: []
   });
 }
@@ -255,7 +274,6 @@ test('rolls implementation back when adversarial local review requires Claude', 
   });
 });
 
-
 test('does not retry a transport failure as invalid structured output', async () => {
   await withWorkspace(async (workspace, stateRoot) => {
     let calls = 0;
@@ -272,5 +290,39 @@ test('does not retry a transport failure as invalid structured output', async ()
       /transport timeout/
     );
     assert.equal(calls, 2, 'investigation plus exactly one planning attempt');
+  });
+});
+
+test('monotonic repair keeps earlier regression issues in every later repair prompt', async () => {
+  await withWorkspace(async (workspace, stateRoot) => {
+    const issueA = 'Fixing mode B accidentally breaks the previously working mode A behavior.';
+    const issueB = 'The attempted mode A repair now breaks mode B behavior.';
+    const model = new FakeModel([
+      investigation(),
+      readyPlan(),
+      editProposal(2),
+      repairReview(issueA, 'Preserve mode A while implementing the requested change.'),
+      editProposal(3),
+      repairReview(issueB, 'Preserve mode B without undoing the mode A repair.'),
+      editProposal(2),
+      passingReview()
+    ]);
+
+    const output = await executeLocalEngineer(model as never, config(stateRoot), {
+      workspace,
+      goal: 'Fix the interacting mode A and mode B behavior.',
+      maxRepairRounds: 2
+    });
+
+    assert.equal(output.result.status, 'success');
+    assert.equal(output.result.repairRounds, 2);
+    const repairCalls = model.calls.filter(
+      (call) => call.user.includes('CUMULATIVE REPAIR / REGRESSION LEDGER')
+    );
+    assert.equal(repairCalls.length, 2);
+    assert.match(repairCalls[0]!.user, new RegExp(issueA.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.doesNotMatch(repairCalls[0]!.user, new RegExp(issueB.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(repairCalls[1]!.user, new RegExp(issueA.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(repairCalls[1]!.user, new RegExp(issueB.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   });
 });
