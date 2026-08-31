@@ -34,6 +34,17 @@ export type FallbackConfirmation = (
   request: FallbackConfirmationRequest
 ) => boolean | Promise<boolean>;
 
+export interface AttemptAuthorizationRequest {
+  candidate: RoutingCandidate;
+  inference: Omit<InferenceRequest, 'model'>;
+  fallback: boolean;
+  reason?: string;
+}
+
+export type AttemptAuthorizer = (
+  request: AttemptAuthorizationRequest
+) => void | Promise<void>;
+
 export interface RoutedInferenceInput {
   inference: Omit<InferenceRequest, 'model'>;
   routing: CognitiveRoutingRequest;
@@ -42,6 +53,8 @@ export interface RoutedInferenceInput {
    * "do not silently cross that boundary", not implicit approval.
    */
   confirmFallback?: FallbackConfirmation;
+  /** Hard admission hook (budgets, quotas, policy extensions) run before provider I/O. */
+  authorizeAttempt?: AttemptAuthorizer;
 }
 
 export interface RoutedInferenceResult {
@@ -144,6 +157,11 @@ export class RoutedInferenceRuntime {
 
     const attempts: RoutedInferenceAttempt[] = [];
     const primaryProvider = this.providerFor(primary);
+    await input.authorizeAttempt?.({
+      candidate: primary,
+      inference: input.inference,
+      fallback: false
+    });
     try {
       const result = await primaryProvider.invoke({ ...input.inference, model: primary.modelId });
       attempts.push({ providerId: primary.providerId, modelId: primary.modelId, status: 'success' });
@@ -169,6 +187,12 @@ export class RoutedInferenceRuntime {
         ? `${previous.providerId}/${previous.modelId} is rate-limited.`
         : `${previous.providerId}/${previous.modelId} is temporarily unavailable.`;
       await ensureFallbackAllowed(previous, fallback, input.confirmFallback, reason);
+      await input.authorizeAttempt?.({
+        candidate: fallback,
+        inference: input.inference,
+        fallback: true,
+        reason
+      });
 
       const provider = this.providerFor(fallback);
       try {
