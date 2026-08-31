@@ -52,7 +52,10 @@ test('responsive layout covers desktop, compact desktop and narrow fallback widt
 });
 
 test('Claude-like visual overrides load after all legacy console styles', () => {
-  const imports = main.split('\n').filter((line) => line.startsWith("import './"));
+  const imports = main
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("import './"));
   assert.equal(imports.at(-1), "import './claude-shell.css';");
   assert.match(shell, /--lc-accent:\s*#c86442/);
   assert.match(shell, /--lc-bg:\s*#f7f6f2/);
