@@ -21,6 +21,7 @@ export interface RoutedInferenceAttempt {
   error?: string;
   retryable?: boolean;
   rateLimited?: boolean;
+  admissionDenied?: boolean;
 }
 
 export interface FallbackConfirmationRequest {
@@ -144,6 +145,10 @@ function providerFailure(error: unknown): ProviderError | undefined {
   return error instanceof ProviderError ? error : undefined;
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Provider-agnostic inference entrypoint. Routing is deterministic host code; it never
  * invokes a local model (or any model) to decide which provider should receive the call.
@@ -166,49 +171,80 @@ export class RoutedInferenceRuntime {
     }
 
     const attempts: RoutedInferenceAttempt[] = [];
-    const primaryProvider = this.providerFor(primary);
-    await input.authorizeAttempt?.({
-      candidate: primary,
-      inference: input.inference,
-      fallback: false
-    });
-    try {
-      const result = await primaryProvider.invoke({ ...input.inference, model: primary.modelId });
-      attempts.push({ providerId: primary.providerId, modelId: primary.modelId, status: 'success' });
-      return { result, routing, attempts, fallbackUsed: false };
-    } catch (error) {
-      const providerError = providerFailure(error);
-      attempts.push({
-        providerId: primary.providerId,
-        modelId: primary.modelId,
-        status: 'error',
-        error: error instanceof Error ? error.message : String(error),
-        retryable: providerError?.options.retryable,
-        rateLimited: providerError?.options.rateLimited
-      });
-      await input.onAttemptFailure?.({
-        candidate: primary,
-        inference: input.inference,
-        fallback: false,
-        error
-      });
-      if (!providerError || (!providerError.options.retryable && !providerError.options.rateLimited)) throw error;
-      if (isExplicit(selection)) throw error;
+    let lastError: unknown;
+
+    const authorize = async (
+      candidate: RoutingCandidate,
+      fallback: boolean,
+      reason?: string
+    ): Promise<boolean> => {
+      try {
+        await input.authorizeAttempt?.({
+          candidate,
+          inference: input.inference,
+          fallback,
+          reason
+        });
+        return true;
+      } catch (error) {
+        lastError = error;
+        attempts.push({
+          providerId: candidate.providerId,
+          modelId: candidate.modelId,
+          status: 'error',
+          error: errorText(error),
+          admissionDenied: true
+        });
+        return false;
+      }
+    };
+
+    const primaryAuthorized = await authorize(primary, false);
+    if (!primaryAuthorized) {
+      if (isExplicit(selection)) throw lastError;
+    } else {
+      const primaryProvider = this.providerFor(primary);
+      try {
+        const result = await primaryProvider.invoke({ ...input.inference, model: primary.modelId });
+        attempts.push({ providerId: primary.providerId, modelId: primary.modelId, status: 'success' });
+        return { result, routing, attempts, fallbackUsed: false };
+      } catch (error) {
+        lastError = error;
+        const providerError = providerFailure(error);
+        attempts.push({
+          providerId: primary.providerId,
+          modelId: primary.modelId,
+          status: 'error',
+          error: errorText(error),
+          retryable: providerError?.options.retryable,
+          rateLimited: providerError?.options.rateLimited
+        });
+        await input.onAttemptFailure?.({
+          candidate: primary,
+          inference: input.inference,
+          fallback: false,
+          error
+        });
+        if (!providerError || (!providerError.options.retryable && !providerError.options.rateLimited)) throw error;
+        if (isExplicit(selection)) throw error;
+      }
     }
 
     let previous = primary;
     for (const fallback of orderedEligibleFallbacks(routing, candidates)) {
       const prior = attempts.at(-1);
-      const reason = prior?.rateLimited
-        ? `${previous.providerId}/${previous.modelId} is rate-limited.`
-        : `${previous.providerId}/${previous.modelId} is temporarily unavailable.`;
+      const reason = prior?.admissionDenied
+        ? `${previous.providerId}/${previous.modelId} was denied by admission policy: ${prior.error ?? 'not allowed'}.`
+        : prior?.rateLimited
+          ? `${previous.providerId}/${previous.modelId} is rate-limited.`
+          : `${previous.providerId}/${previous.modelId} is temporarily unavailable.`;
       await ensureFallbackAllowed(previous, fallback, input.confirmFallback, reason);
-      await input.authorizeAttempt?.({
-        candidate: fallback,
-        inference: input.inference,
-        fallback: true,
-        reason
-      });
+
+      const fallbackAuthorized = await authorize(fallback, true, reason);
+      if (!fallbackAuthorized) {
+        previous = fallback;
+        continue;
+      }
 
       const provider = this.providerFor(fallback);
       try {
@@ -232,12 +268,13 @@ export class RoutedInferenceRuntime {
           fallbackUsed: true
         };
       } catch (error) {
+        lastError = error;
         const providerError = providerFailure(error);
         attempts.push({
           providerId: fallback.providerId,
           modelId: fallback.modelId,
           status: 'error',
-          error: error instanceof Error ? error.message : String(error),
+          error: errorText(error),
           retryable: providerError?.options.retryable,
           rateLimited: providerError?.options.rateLimited
         });
@@ -253,6 +290,7 @@ export class RoutedInferenceRuntime {
       }
     }
 
+    if (lastError && !(lastError instanceof ProviderError)) throw lastError;
     const last = attempts.at(-1);
     throw new ProviderError(
       last?.providerId ?? primary.providerId,
