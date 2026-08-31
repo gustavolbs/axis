@@ -3,8 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { ExecutionBackend } from './execution-runtime.js';
-import type { LocalEngineerInput, LocalEngineerResult } from './local-engineer.js';
+import type { LocalEngineerResult } from './local-engineer.js';
 import type { PremiumDecisionRequest, PremiumEngineerResult } from './premium-agent.js';
+import type { ProjectEngineerInput } from './project-engineer-backend.js';
 
 export type StandaloneJobStatus =
   | 'queued'
@@ -15,6 +16,7 @@ export type StandaloneJobStatus =
   | 'error';
 
 export interface StandaloneJobInput {
+  projectId?: string;
   workspace: string;
   goal: string;
   context?: string;
@@ -167,7 +169,12 @@ export class StandaloneJobManager {
       status: 'queued',
       createdAt: now,
       updatedAt: now,
-      input: { ...input, workspace: input.workspace.trim(), goal: input.goal.trim() },
+      input: {
+        ...input,
+        projectId: input.projectId?.trim() || undefined,
+        workspace: input.workspace.trim(),
+        goal: input.goal.trim()
+      },
       rounds: 0,
       events: []
     };
@@ -275,7 +282,13 @@ export class StandaloneJobManager {
 
       for (let round = Math.max(1, job.rounds + 1); round <= 6; round += 1) {
         job.rounds = round;
-        const input: LocalEngineerInput = { ...job.input, claudeGuidance: job.guidance };
+        const input: ProjectEngineerInput = {
+          ...job.input,
+          claudeGuidance: job.guidance,
+          // A Console job is one billing/budget unit even when material-decision or
+          // external-guidance checkpoints cause multiple backend rounds or a restart.
+          budgetJobId: job.id
+        };
         this.emit(job, 'status', `Agent round ${round} running`);
         const result = await this.execution.executeEngineer(input);
         job.result = result;
