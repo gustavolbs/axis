@@ -4,6 +4,7 @@ import os from 'node:os';
 
 import { loadConfig } from './config.js';
 import { executeAgenticCodeTask } from './executor.js';
+import { classifyInferenceStage, WorkerInferenceTracker } from './inference-status.js';
 import { getMachineStatus } from './machine-status.js';
 import { OllamaClient } from './ollama.js';
 import { executeLocalCodePlan } from './orchestrator.js';
@@ -20,10 +21,31 @@ import { executeLocalEngineerWithRepoIntelligence } from './repo-intelligence.js
 import { WorkerScheduler } from './worker-scheduler.js';
 import { withWorkerWorkspace } from './worker-workspace.js';
 
-const WORKER_VERSION = '0.11.0';
+const WORKER_VERSION = '0.11.1';
 const config = loadConfig();
 const ollama = new OllamaClient(config);
 const scheduler = new WorkerScheduler(config.workerMaxConcurrentJobs ?? 1);
+const inferenceTracker = new WorkerInferenceTracker();
+
+const baseChat = ollama.chat.bind(ollama);
+ollama.chat = (async (...args: Parameters<OllamaClient['chat']>) => {
+  const [systemPrompt, , , runtime] = args;
+  const stage = classifyInferenceStage(systemPrompt);
+  const inferenceId = inferenceTracker.begin(stage, runtime?.model ?? config.model);
+  try {
+    const generation = await baseChat(...args);
+    inferenceTracker.complete(inferenceId, 'success', {
+      promptTokens: generation.promptTokens,
+      completionTokens: generation.completionTokens
+    });
+    return generation;
+  } catch (error) {
+    inferenceTracker.complete(inferenceId, 'error', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    throw error;
+  }
+}) as OllamaClient['chat'];
 
 function json(
   response: ServerResponse,
@@ -155,6 +177,7 @@ async function status(response: ServerResponse): Promise<void> {
       model: config.model,
       bootstrap: config.workerBootstrap,
       scheduler: scheduler.snapshot(),
+      inference: inferenceTracker.snapshot(),
       repoIntelligence: repoIntelligenceStatus(),
       ollama: ollamaHealth,
       machine
@@ -166,6 +189,7 @@ async function status(response: ServerResponse): Promise<void> {
       ok: false,
       collectedAt: new Date().toISOString(),
       scheduler: scheduler.snapshot(),
+      inference: inferenceTracker.snapshot(),
       error: error instanceof Error ? error.message : String(error)
     });
   }
