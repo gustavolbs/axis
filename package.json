@@ -22,6 +22,7 @@
     "desktop": "npm run build && electron .",
     "desktop:dir:mac": "npm run build && electron-builder --mac dir --publish never",
     "desktop:pack:mac": "npm run build && electron-builder --mac dmg zip --publish never",
+    "desktop:release:mac": "npm run build && electron-builder --config electron-builder.release.yml --mac dmg zip --publish never",
     "test": "tsx --test test/**/*.test.ts",
     "check": "npm run build && npm test",
     "smoke:cloud": "npm run build && node scripts/smoke-cloud-providers.mjs",
