@@ -164,6 +164,7 @@ try {
   console.log(JSON.stringify({ ok: true, checks }, null, 2));
 } finally {
   if (window && !window.isDestroyed()) window.destroy();
+  server.closeAllConnections?.();
   await new Promise((resolve) => server.close(resolve));
   app.quit();
 }
