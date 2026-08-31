@@ -63,7 +63,7 @@ test('budgeted admission reads pricing only after acquiring the shared budget lo
     { inputPerMillionUsd: 10, outputPerMillionUsd: 20 }
   );
   assert.equal(resolved.upperBoundCostUsd, expectedUpper);
-  session.releaseAttempt(candidate());
+  session.releaseAttempt(resolved);
 });
 
 test('unbudgeted in-flight inference settles with the price sheet used at admission', async () => {
@@ -85,7 +85,7 @@ test('unbudgeted in-flight inference settles with the price sheet used at admiss
   });
   const session = new ProjectBudgetSession(project, pricing, ledger);
 
-  await session.authorize(candidate(), {
+  const admission = await session.authorize(candidate(), {
     systemPrompt: 'system',
     userPrompt: 'user',
     maxOutputTokens: 100
@@ -106,7 +106,8 @@ test('unbudgeted in-flight inference settles with the price sheet used at admiss
       latencyMs: 10,
       usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 }
     },
-    false
+    false,
+    admission
   );
 
   assert.equal(event.pricingSource, 'old-price-sheet');
