@@ -14,19 +14,6 @@ interface OllamaPsResponse {
   models?: Array<{ name?: string; model?: string }>;
 }
 
-interface OllamaChatResponse {
-  model?: string;
-  message?: {
-    role?: string;
-    content?: string;
-  };
-  done?: boolean;
-  done_reason?: string;
-  total_duration?: number;
-  prompt_eval_count?: number;
-  eval_count?: number;
-}
-
 export interface OllamaHealth {
   ok: boolean;
   baseUrl: string;
@@ -40,6 +27,12 @@ export interface OllamaHealth {
   numCtx: number;
   maxParallelInferences: 1;
   globalInferenceLock: true;
+  inferenceTimeouts: {
+    headerMs: number;
+    firstChunkMs: number;
+    idleMs: number;
+    maxDurationMs: number;
+  };
   availableModels: string[];
 }
 
@@ -95,6 +88,15 @@ export class OllamaClient {
 
   constructor(private readonly config: LocalCoderConfig) {}
 
+  private inferenceTimeouts() {
+    return {
+      headerMs: this.config.inferenceHeaderTimeoutMs ?? 180_000,
+      firstChunkMs: this.config.inferenceFirstChunkTimeoutMs ?? 600_000,
+      idleMs: this.config.inferenceIdleTimeoutMs ?? 300_000,
+      maxDurationMs: this.config.inferenceMaxDurationMs ?? 1_800_000
+    };
+  }
+
   async health(): Promise<OllamaHealth> {
     const response = await this.request('/api/tags', { method: 'GET' });
     const payload = (await response.json()) as OllamaTagsResponse;
@@ -117,6 +119,7 @@ export class OllamaClient {
       numCtx: this.config.ollamaNumCtx ?? 16_384,
       maxParallelInferences: 1,
       globalInferenceLock: true,
+      inferenceTimeouts: this.inferenceTimeouts(),
       availableModels
     };
   }
@@ -142,35 +145,46 @@ export class OllamaClient {
           userPrompt,
           runtime.numCtx ?? this.config.ollamaNumCtx ?? 16_384
         );
+        const timeouts = this.inferenceTimeouts();
 
         // The lock is shared by every local-coder MCP process. Once held, inspect Ollama's
         // actual loaded-model state so a second Claude Code session cannot leave the other
         // tier resident while this process starts a new inference.
         await this.unloadOtherConfiguredTier(model);
 
-        const response = await this.request('/api/chat', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            model,
-            stream: true,
-            keep_alive: keepAlive,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: preparedPrompt.userPrompt }
-            ],
-            ...(format ? { format } : {}),
-            ...(think !== undefined ? { think } : {}),
-            options: {
-              temperature: format ? 0 : 0.2,
-              num_ctx: runtime.numCtx ?? this.config.ollamaNumCtx ?? 16_384
-            }
-          })
-        });
+        const response = await this.requestStreamingHeaders(
+          '/api/chat',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              model,
+              stream: true,
+              keep_alive: keepAlive,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: preparedPrompt.userPrompt }
+              ],
+              ...(format ? { format } : {}),
+              ...(think !== undefined ? { think } : {}),
+              options: {
+                temperature: format ? 0 : 0.2,
+                num_ctx: runtime.numCtx ?? this.config.ollamaNumCtx ?? 16_384
+              }
+            })
+          },
+          timeouts.headerMs
+        );
 
-        // stream:true makes Ollama send HTTP headers immediately, avoiding the ~300s
-        // headers timeout that can occur when a long non-streaming inference holds them.
-        const generation = await readOllamaChatStream(response, model);
+        // The header timer is cleared as soon as Ollama accepts the streaming request.
+        // Stream liveness is then governed independently: a cold/thinking model gets a
+        // generous first-chunk window, active chunks reset the idle timer, and a hard cap
+        // still prevents a genuinely runaway inference from occupying the GPU forever.
+        const generation = await readOllamaChatStream(response, model, {
+          firstChunkTimeoutMs: timeouts.firstChunkMs,
+          idleTimeoutMs: timeouts.idleMs,
+          maxDurationMs: timeouts.maxDurationMs
+        });
         await this.recordInference(generation);
         return generation;
       })
@@ -188,7 +202,14 @@ export class OllamaClient {
 
   private async withGlobalInferenceLock<T>(run: () => Promise<T>): Promise<T> {
     const lockPath = path.join(path.dirname(this.config.telemetryPath), 'inference.lock');
-    const staleAfterMs = Math.max(this.config.requestTimeoutMs + 60_000, 300_000);
+    // The lock must never be considered stale while a valid long inference is still
+    // allowed to run. Keep its stale threshold beyond the absolute inference cap.
+    const maxInferenceMs = this.config.inferenceMaxDurationMs ?? 1_800_000;
+    const staleAfterMs = Math.max(
+      maxInferenceMs + 120_000,
+      this.config.requestTimeoutMs + 60_000,
+      300_000
+    );
     const deadline = Date.now() + staleAfterMs * 2;
     await fs.mkdir(path.dirname(lockPath), { recursive: true });
 
@@ -281,6 +302,44 @@ export class OllamaClient {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`local-coder inference telemetry write failed: ${message}`);
     }
+  }
+
+  private async requestStreamingHeaders(
+    pathname: string,
+    init: RequestInit,
+    headerTimeoutMs: number
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.max(1, headerTimeoutMs));
+    let response: Response;
+
+    try {
+      response = await fetch(`${this.config.ollamaBaseUrl}${pathname}`, {
+        ...init,
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(
+          `Ollama did not return streaming response headers within ${headerTimeoutMs}ms.`
+        );
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Could not reach Ollama at ${this.config.ollamaBaseUrl}. Ensure Ollama is running. ${message}`
+      );
+    } finally {
+      // Important: do not abort the response body after headers arrive. The stream
+      // reader owns liveness/absolute timeouts from this point forward.
+      clearTimeout(timer);
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`Ollama HTTP ${response.status}: ${body || response.statusText}`);
+    }
+
+    return response;
   }
 
   private async request(pathname: string, init: RequestInit): Promise<Response> {
