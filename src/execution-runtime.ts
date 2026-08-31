@@ -14,7 +14,7 @@ import {
   type LocalExecutionPlan,
   type LocalExecutionPlanResult
 } from './orchestrator.js';
-import { executeLocalEngineerWithRepoIntelligence } from './repo-intelligence.js';
+import { executePremiumLocalEngineer } from './premium-engineer.js';
 import { RemoteWorkerClient, RemoteWorkerError } from './remote-worker-client.js';
 
 export interface ChatClient {
@@ -53,7 +53,7 @@ class LocalExecutionBackend implements ExecutionBackend {
   }
 
   async executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult> {
-    return (await executeLocalEngineerWithRepoIntelligence(this.ollama, this.config, input)).result;
+    return (await executePremiumLocalEngineer(this.ollama, this.config, input)).result;
   }
 }
 
