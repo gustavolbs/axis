@@ -40,6 +40,22 @@ const critiqueSchema = z.object({
   crossCuttingConcerns: z.array(z.string().min(1).max(1200)).max(10).default([])
 });
 
+const unresolvedDecisionSchema = z.object({
+  question: z.string().min(1).max(1200),
+  rationale: z.string().min(1).max(1200),
+  options: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(80),
+        label: z.string().min(1).max(300),
+        tradeoff: z.string().min(1).max(1000)
+      })
+    )
+    .min(2)
+    .max(6),
+  recommendedOptionId: z.string().min(1).max(80).nullable().optional()
+});
+
 const judgeSchema = z.object({
   summary: z.string().min(1).max(4000),
   selectedProposalId: z.string().min(1).max(60),
@@ -47,23 +63,7 @@ const judgeSchema = z.object({
   principles: z.array(z.string().min(1).max(1200)).max(12).default([]),
   rejectedAlternatives: z.array(z.string().min(1).max(1200)).max(8).default([]),
   researchRequests: z.array(z.string().min(1).max(1200)).max(8).default([]),
-  unresolvedDecision: z
-    .object({
-      question: z.string().min(1).max(1200),
-      rationale: z.string().min(1).max(1200),
-      options: z
-        .array(
-          z.object({
-            id: z.string().min(1).max(80),
-            label: z.string().min(1).max(300),
-            tradeoff: z.string().min(1).max(1000)
-          })
-        )
-        .min(2)
-        .max(6),
-      recommendedOptionId: z.string().min(1).max(80).optional()
-    })
-    .optional()
+  unresolvedDecision: unresolvedDecisionSchema.nullable().optional()
 });
 
 const proposalFormat = {
@@ -133,7 +133,7 @@ const judgeFormat = {
             properties: { id: { type: 'string' }, label: { type: 'string' }, tradeoff: { type: 'string' } }
           }
         },
-        recommendedOptionId: { type: 'string' }
+        recommendedOptionId: { type: ['string', 'null'] }
       }
     }
   }
@@ -162,7 +162,7 @@ export interface DeliberationOutcome {
   principles: string[];
   rejectedAlternatives: string[];
   researchRequests: string[];
-  unresolvedDecision?: z.infer<typeof judgeSchema>['unresolvedDecision'];
+  unresolvedDecision?: z.infer<typeof unresolvedDecisionSchema>;
   generations: OllamaGeneration[];
   passes: number;
 }
