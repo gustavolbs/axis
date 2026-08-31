@@ -190,9 +190,10 @@ function trace(event: ProjectRouteEvent): ProjectRoutingTraceEntry {
 }
 
 /**
- * Project-aware engineer wrapper. Non-Project calls delegate byte-for-byte to the legacy
- * backend. Project calls keep orchestration/workspace mutation on the Mac control plane,
- * then route cognitive calls to cloud directly or to Qwen through the Windows worker.
+ * Project-aware engineer wrapper. Unregistered workspaces delegate byte-for-byte to the
+ * legacy backend. Registered Project workspaces keep orchestration/workspace mutation on
+ * the Mac control plane, then route cognitive calls to cloud directly or to Qwen through
+ * the Windows worker. An explicit projectId is also supported for standalone/API callers.
  */
 export class ProjectAwareEngineerBackend {
   private readonly projects: ProjectStore;
@@ -211,19 +212,9 @@ export class ProjectAwareEngineerBackend {
   }
 
   async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
-    if (!input.projectId) return await this.legacy.executeEngineer(input);
-
-    const project = this.projects.get(input.projectId);
-    if (!project) throw new Error(`Project not found: ${input.projectId}`);
-    const [workspace, projectWorkspace] = await Promise.all([
-      resolveWorkspace(input.workspace),
-      resolveWorkspace(project.workspace)
-    ]);
-    if (workspace !== projectWorkspace) {
-      throw new Error(
-        `Project ${project.id} is bound to ${projectWorkspace}; refusing workspace ${workspace}.`
-      );
-    }
+    const resolved = await this.resolveProject(input);
+    if (!resolved.project) return await this.legacy.executeEngineer(input);
+    const { project, workspace: projectWorkspace } = resolved;
 
     const localProvider = this.localProvider();
     const providerRuntime = new ProjectProviderRuntime({
@@ -259,6 +250,43 @@ export class ProjectAwareEngineerBackend {
       routingTrace
     };
     return result;
+  }
+
+  private async resolveProject(
+    input: ProjectEngineerInput
+  ): Promise<{ project?: ProjectDefinition; workspace: string }> {
+    if (!input.projectId && this.projects.list().length === 0) {
+      return { workspace: input.workspace };
+    }
+
+    const workspace = await resolveWorkspace(input.workspace);
+    if (input.projectId) {
+      const project = this.projects.get(input.projectId);
+      if (!project) throw new Error(`Project not found: ${input.projectId}`);
+      const projectWorkspace = await resolveWorkspace(project.workspace);
+      if (workspace !== projectWorkspace) {
+        throw new Error(
+          `Project ${project.id} is bound to ${projectWorkspace}; refusing workspace ${workspace}.`
+        );
+      }
+      return { project, workspace: projectWorkspace };
+    }
+
+    const matches: ProjectDefinition[] = [];
+    for (const project of this.projects.list()) {
+      try {
+        if (await resolveWorkspace(project.workspace) === workspace) matches.push(project);
+      } catch {
+        // Stale/unmounted Projects must not block unrelated workspaces.
+      }
+    }
+    if (matches.length > 1) {
+      throw new Error(
+        `Workspace ${workspace} belongs to multiple Projects (${matches.map((project) => project.id).join(', ')}). ` +
+        'Select projectId explicitly.'
+      );
+    }
+    return { project: matches[0], workspace };
   }
 
   private localProvider(): InferenceProvider {
