@@ -2,6 +2,11 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  isCancellationError,
+  throwIfCancelled,
+  withCancellationSignal
+} from './cancellation.js';
 import type { ExecutionBackend } from './execution-runtime.js';
 import type { LocalEngineerResult } from './local-engineer.js';
 import type { PremiumDecisionRequest, PremiumEngineerResult } from './premium-agent.js';
@@ -13,6 +18,7 @@ export type StandaloneJobStatus =
   | 'waiting-decision'
   | 'waiting-guidance'
   | 'success'
+  | 'cancelled'
   | 'error';
 
 export interface StandaloneJobInput {
@@ -28,7 +34,7 @@ export interface StandaloneJobInput {
 export interface StandaloneJobEvent {
   id: string;
   jobId: string;
-  type: 'status' | 'decision' | 'result' | 'error' | 'guidance';
+  type: 'status' | 'decision' | 'result' | 'error' | 'guidance' | 'cancelled';
   timestamp: string;
   title: string;
   data?: Record<string, unknown>;
@@ -55,9 +61,10 @@ type WaitingInput = {
 type JobInternal = StandaloneJobSnapshot & {
   waiting?: WaitingInput;
   guidance?: string;
+  controller?: AbortController;
 };
 
-type PersistedJob = Omit<JobInternal, 'waiting'>;
+type PersistedJob = Omit<JobInternal, 'waiting' | 'controller'>;
 
 export type JobListener = (event: StandaloneJobEvent, job: StandaloneJobSnapshot) => void;
 
@@ -132,9 +139,8 @@ export class StandaloneJobManager {
       });
     }
 
-    // A process restart cannot preserve an in-flight HTTP request, but source-of-truth
-    // workspaces and compact guidance are durable. Re-run interrupted active jobs from
-    // the same goal; decision/guidance checkpoints remain paused and user-answerable.
+    // Cancelled/success/error jobs are terminal. Only work that was actually running when
+    // the process stopped is resumed; user-decision/guidance checkpoints remain paused.
     for (const job of this.jobs.values()) {
       if (job.status === 'queued' || job.status === 'running') {
         job.status = 'queued';
@@ -176,11 +182,31 @@ export class StandaloneJobManager {
         goal: input.goal.trim()
       },
       rounds: 0,
-      events: []
+      events: [],
+      controller: new AbortController()
     };
     this.jobs.set(job.id, job);
     this.emit(job, 'status', 'Job queued');
     void this.run(job);
+    return snapshot(job);
+  }
+
+  cancel(id: string): StandaloneJobSnapshot {
+    const job = this.requireJob(id);
+    if (job.status === 'cancelled') return snapshot(job);
+    if (job.status === 'success' || job.status === 'error') {
+      throw new Error(`Cannot cancel a completed job with status ${job.status}.`);
+    }
+
+    job.status = 'cancelled';
+    job.error = undefined;
+    job.decisionRequest = undefined;
+    job.controller?.abort();
+    const waiting = job.waiting;
+    job.waiting = undefined;
+    this.emit(job, 'cancelled', 'Job cancelled by user');
+    // Wake a suspended decision/guidance round so its cancellation context can unwind.
+    waiting?.resolve('');
     return snapshot(job);
   }
 
@@ -196,7 +222,10 @@ export class StandaloneJobManager {
     job.status = 'running';
     this.emit(job, 'decision', 'User decision received', { selections });
     if (waiting) waiting.resolve(guidance);
-    else void this.run(job);
+    else {
+      job.controller = new AbortController();
+      void this.run(job);
+    }
     return snapshot(job);
   }
 
@@ -210,7 +239,10 @@ export class StandaloneJobManager {
     job.status = 'running';
     this.emit(job, 'guidance', 'Additional guidance received');
     if (waiting) waiting.resolve(guidance.trim());
-    else void this.run(job);
+    else {
+      job.controller = new AbortController();
+      void this.run(job);
+    }
     return snapshot(job);
   }
 
@@ -276,62 +308,86 @@ export class StandaloneJobManager {
   }
 
   private async run(job: JobInternal): Promise<void> {
+    if (job.status === 'cancelled') return;
+    const controller = job.controller ?? new AbortController();
+    job.controller = controller;
+
     try {
-      job.status = 'running';
-      this.emit(job, 'status', job.rounds > 0 ? 'Local agent resumed' : 'Local agent started');
+      await withCancellationSignal(controller.signal, async () => {
+        throwIfCancelled();
+        job.status = 'running';
+        this.emit(job, 'status', job.rounds > 0 ? 'Local agent resumed' : 'Local agent started');
 
-      for (let round = Math.max(1, job.rounds + 1); round <= 6; round += 1) {
-        job.rounds = round;
-        const input: ProjectEngineerInput = {
-          ...job.input,
-          claudeGuidance: job.guidance,
-          // A Console job is one billing/budget unit even when material-decision or
-          // external-guidance checkpoints cause multiple backend rounds or a restart.
-          budgetJobId: job.id
-        };
-        this.emit(job, 'status', `Agent round ${round} running`);
-        const result = await this.execution.executeEngineer(input);
-        job.result = result;
+        for (let round = Math.max(1, job.rounds + 1); round <= 6; round += 1) {
+          throwIfCancelled();
+          job.rounds = round;
+          const input: ProjectEngineerInput = {
+            ...job.input,
+            claudeGuidance: job.guidance,
+            // A Console job is one billing/budget unit even when material-decision or
+            // external-guidance checkpoints cause multiple backend rounds or a restart.
+            budgetJobId: job.id
+          };
+          this.emit(job, 'status', `Agent round ${round} running`);
+          const result = await this.execution.executeEngineer(input);
+          throwIfCancelled();
+          job.result = result;
 
-        if (result.status === 'success') {
-          job.status = 'success';
-          this.emit(job, 'result', 'Local agent completed', {
-            changedFiles: result.changedFiles.length,
-            quality: premium(result).quality ?? null
-          });
-          return;
+          if (result.status === 'success') {
+            job.status = 'success';
+            this.emit(job, 'result', 'Local agent completed', {
+              changedFiles: result.changedFiles.length,
+              quality: premium(result).quality ?? null
+            });
+            return;
+          }
+
+          const decisionRequest = premium(result).decisionRequest;
+          if (decisionRequest?.questions.length) {
+            job.status = 'waiting-decision';
+            job.decisionRequest = decisionRequest;
+            this.emit(job, 'decision', 'Material user decision required', {
+              questions: decisionRequest.questions.map((question) => question.id)
+            });
+            await this.wait(job, 'decision');
+            throwIfCancelled();
+            continue;
+          }
+
+          if (result.escalation) {
+            job.status = 'waiting-guidance';
+            this.emit(job, 'guidance', 'The local agent needs bounded external guidance', {
+              kind: result.escalation.kind,
+              questions: result.escalation.questions,
+              researchRequests: result.escalation.researchRequests
+            });
+            await this.wait(job, 'guidance');
+            throwIfCancelled();
+            continue;
+          }
+
+          throw new Error(`Agent stopped with status ${result.status} without a resumable checkpoint.`);
         }
 
-        const decisionRequest = premium(result).decisionRequest;
-        if (decisionRequest?.questions.length) {
-          job.status = 'waiting-decision';
-          job.decisionRequest = decisionRequest;
-          this.emit(job, 'decision', 'Material user decision required', {
-            questions: decisionRequest.questions.map((question) => question.id)
-          });
-          await this.wait(job, 'decision');
-          continue;
-        }
-
-        if (result.escalation) {
-          job.status = 'waiting-guidance';
-          this.emit(job, 'guidance', 'The local agent needs bounded external guidance', {
-            kind: result.escalation.kind,
-            questions: result.escalation.questions,
-            researchRequests: result.escalation.researchRequests
-          });
-          await this.wait(job, 'guidance');
-          continue;
-        }
-
-        throw new Error(`Agent stopped with status ${result.status} without a resumable checkpoint.`);
-      }
-
-      throw new Error('Standalone agent exceeded the six-round resume safety limit.');
+        throw new Error('Standalone agent exceeded the six-round resume safety limit.');
+      });
     } catch (error) {
+      if (controller.signal.aborted || isCancellationError(error)) {
+        if (job.status !== 'cancelled') {
+          job.status = 'cancelled';
+          job.error = undefined;
+          job.decisionRequest = undefined;
+          this.emit(job, 'cancelled', 'Job cancelled');
+        }
+        return;
+      }
       job.status = 'error';
       job.error = error instanceof Error ? error.message : String(error);
       this.emit(job, 'error', 'Local agent failed', { error: job.error });
+    } finally {
+      job.waiting = undefined;
+      job.controller = undefined;
+      this.schedulePersist();
     }
   }
 }
