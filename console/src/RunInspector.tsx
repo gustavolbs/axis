@@ -22,6 +22,14 @@ interface RoutingTrace {
   reasons: string[];
 }
 
+interface ModelCall {
+  stage: string;
+  model: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalDurationNs?: number;
+}
+
 interface BudgetWarning {
   scope: 'daily' | 'monthly' | 'job';
   fraction: number;
@@ -78,6 +86,7 @@ interface RunJob {
     summary: string;
     changedFiles: string[];
     repairRounds: number;
+    modelCalls?: ModelCall[];
     quality?: { score: number; band: string; passed: boolean };
     projectExecution?: ProjectExecution;
   };
@@ -102,6 +111,12 @@ function time(value?: string): string {
   return value ? new Date(value).toLocaleString() : '—';
 }
 
+function durationNs(value?: number): string {
+  if (!Number.isFinite(value)) return '—';
+  const ms = (value ?? 0) / 1_000_000;
+  return ms < 1_000 ? `${ms.toFixed(0)}ms` : `${(ms / 1_000).toFixed(1)}s`;
+}
+
 function statusTone(status?: string): string {
   if (status === 'success') return 'good';
   if (status === 'error') return 'bad';
@@ -124,6 +139,9 @@ export function RunInspector() {
   const active = projectRuns.find((job) => job.id === activeId) ?? projectRuns[0];
   const execution = active?.result?.projectExecution;
   const budget = execution?.budget;
+  const routedCalls = execution?.routingTrace ?? [];
+  const legacyLocalCalls = active?.result?.modelCalls ?? [];
+  const cognitiveCallCount = routedCalls.length || legacyLocalCalls.length;
 
   useEffect(() => {
     void loadJobs()
@@ -136,8 +154,7 @@ export function RunInspector() {
 
     const events = new EventSource('/api/events');
     events.addEventListener('jobs', (event) => {
-      const next = JSON.parse((event as MessageEvent<string>).data) as RunJob[];
-      setJobs(next);
+      setJobs(JSON.parse((event as MessageEvent<string>).data) as RunJob[]);
     });
     events.addEventListener('job', (event) => {
       const payload = JSON.parse((event as MessageEvent<string>).data) as { job: RunJob };
@@ -178,7 +195,7 @@ export function RunInspector() {
           <div className="cards four runs-metrics">
             <section className="panel metric-card"><span>Job spend</span><strong>{usd(budget?.jobKnownCostUsd)}</strong><small>{budget?.jobUnknownCostEvents ?? 0} unpriced events</small></section>
             <section className="panel metric-card"><span>Reserved</span><strong>{usd(budget?.jobReservedUpperBoundUsd)}</strong><small>active upper bound</small></section>
-            <section className="panel metric-card"><span>Routes</span><strong>{execution?.routingTrace.length ?? 0}</strong><small>{execution?.routingTrace.filter((trace) => trace.fallbackUsed).length ?? 0} fallbacks</small></section>
+            <section className="panel metric-card"><span>Cognitive calls</span><strong>{cognitiveCallCount}</strong><small>{routedCalls.filter((trace) => trace.fallbackUsed).length} fallbacks</small></section>
             <section className="panel metric-card"><span>Quality</span><strong>{active.result?.quality ? `${active.result.quality.score}/100` : '—'}</strong><small>{active.result?.quality?.band ?? active.result?.phase ?? 'pending'}</small></section>
           </div>
 
@@ -193,8 +210,8 @@ export function RunInspector() {
           </section> : null}
 
           <section className="panel route-panel">
-            <div className="panel-heading"><div><span className="eyebrow">ROUTING TRACE</span><strong>{execution?.routingTrace.length ?? 0} cognitive calls</strong></div></div>
-            {!execution?.routingTrace.length ? <p className="muted small">Routing evidence will appear after the Project agent completes a cognitive call.</p> : <div className="route-list">{execution.routingTrace.map((trace, index) => (
+            <div className="panel-heading"><div><span className="eyebrow">ROUTING TRACE</span><strong>{routedCalls.length} routed calls</strong></div></div>
+            {routedCalls.length ? <div className="route-list">{routedCalls.map((trace, index) => (
               <article className="route-entry" key={`${trace.stage}-${index}-${trace.providerId}-${trace.modelId}`}>
                 <div className="route-head">
                   <div className="route-stage"><span>{index + 1}</span><div><strong>{trace.stage}</strong><small>{trace.requestedPolicy} → {trace.effectivePolicy}</small></div></div>
@@ -205,7 +222,10 @@ export function RunInspector() {
                   <div><span className="route-label">Attempts</span><div className="attempt-list">{trace.attempts.map((attempt, attemptIndex) => <div className={`attempt ${attempt.status}`} key={`${attempt.providerId}-${attempt.modelId}-${attemptIndex}`}><i className={`dot ${attempt.status === 'success' ? 'good' : 'bad'}`} /><span><strong>{attempt.providerId} / {attempt.modelId}</strong><small>{attempt.status}{attempt.rateLimited ? ' · rate limited' : ''}{attempt.admissionDenied ? ' · admission denied' : ''}{attempt.retryable ? ' · retryable' : ''}</small>{attempt.error ? <em>{attempt.error}</em> : null}</span></div>)}</div></div>
                 </div>
               </article>
-            ))}</div>}
+            ))}</div> : legacyLocalCalls.length ? <div className="legacy-call-list">
+              <p className="muted small">Strict local-only Projects intentionally bypass the multi-provider router. These are the model calls reported by the preserved legacy local path; no synthetic routing decision is inferred.</p>
+              {legacyLocalCalls.map((call, index) => <div className="legacy-call" key={`${call.stage}-${call.model}-${index}`}><i className="dot good" /><div><strong>{call.stage} · {call.model}</strong><span>{call.promptTokens ?? 0} in · {call.completionTokens ?? 0} out · {durationNs(call.totalDurationNs)}</span></div></div>)}
+            </div> : <p className="muted small">Routing evidence will appear after the Project agent completes a cognitive call.</p>}
           </section>
 
           <section className="panel budget-panel">
