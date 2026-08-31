@@ -53,21 +53,23 @@ test('administrative APIs reject non-loopback clients before touching stores', a
   assert.match(response.body, /restricted to loopback clients/);
 });
 
-test('mutating administrative APIs reject browser origins outside loopback', async () => {
-  const response = new ResponseCapture();
-  const handled = await handleProjectAdminRequest(
-    request({
-      url: '/api/projects',
-      method: 'POST',
-      remoteAddress: '127.0.0.1',
-      origin: 'https://evil.example'
-    }),
-    response as unknown as ServerResponse,
-    admin()
-  );
+test('mutating administrative APIs reject browser origins outside literal loopback', async () => {
+  for (const origin of ['https://evil.example', 'https://127.0.0.1.evil.example']) {
+    const response = new ResponseCapture();
+    const handled = await handleProjectAdminRequest(
+      request({
+        url: '/api/projects',
+        method: 'POST',
+        remoteAddress: '127.0.0.1',
+        origin
+      }),
+      response as unknown as ServerResponse,
+      admin()
+    );
 
-  assert.equal(handled, true);
-  assert.equal(response.status, 403);
+    assert.equal(handled, true);
+    assert.equal(response.status, 403, origin);
+  }
 });
 
 test('loopback clients can read administrative APIs and unrelated paths remain untouched', async () => {
