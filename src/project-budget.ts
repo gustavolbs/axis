@@ -98,8 +98,6 @@ function upperBoundCost(
     inference.maxOutputTokens <= 0
   ) return undefined;
   const promptBytes = Buffer.byteLength(`${inference.systemPrompt}\n${inference.userPrompt}`, 'utf8');
-  // Byte-fallback tokenizers cannot create more billable input tokens than prompt bytes.
-  // This is intentionally much more conservative than the routing estimate.
   const upperInputTokens = Math.max(1, promptBytes);
   return calculateUsageCostUsd(
     {
@@ -234,9 +232,6 @@ export class ProjectBudgetSession {
       const upper = upperBoundCost(inference, modelPricing);
       const upperCostUsd = upper ?? expected?.estimatedCostUsd ?? 0;
       const expectedCostUsd = expected?.estimatedCostUsd ?? candidate.estimatedCostUsd ?? upperCostUsd;
-      // Preserve the exact price sheet used for this in-flight call. Admin pricing may
-      // legitimately change when no hard budget is active; settlement must not silently
-      // re-price a request after it has already been admitted.
       this.rememberAttempt(attemptId, candidate, undefined, modelPricing);
       return {
         attemptId,
@@ -249,9 +244,6 @@ export class ProjectBudgetSession {
     }
 
     return await this.ledger.withBudgetLock(async () => {
-      // Pricing is read only after acquiring the same lock used by the admin pricing API.
-      // That closes the read-price -> reserve race: a mutation can occur entirely before
-      // this admission or entirely after settlement, never between these two operations.
       const modelPricing = this.pricing.get(candidate.providerId, candidate.modelId);
       if (!modelPricing) {
         throw new BudgetGuardError(
@@ -432,7 +424,8 @@ export class ProjectBudgetSession {
       costUsd,
       pricingSource: modelPricing?.source,
       pricingVerifiedAt: modelPricing?.verifiedAt,
-      fallbackUsed
+      fallbackUsed,
+      timestamp: this.now().toISOString()
     });
     if (pending?.reservationId) this.ledger.releaseReservation(pending.reservationId);
     if (attemptId) this.pendingAttempts.delete(attemptId);

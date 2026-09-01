@@ -1,18 +1,26 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 
-import { app, BrowserWindow, dialog, session } from 'electron';
+import { app, BrowserWindow, dialog, nativeTheme, screen, session } from 'electron';
 
 const HOST = '127.0.0.1';
 const DEFAULT_PORT = 7557;
 const STARTUP_TIMEOUT_MS = 15_000;
 const PROBE_TIMEOUT_MS = 1_200;
+const DEFAULT_WINDOW_WIDTH = 1280;
+const DEFAULT_WINDOW_HEIGHT = 840;
+const MIN_WINDOW_WIDTH = 760;
+const MIN_WINDOW_HEIGHT = 560;
+const WINDOW_STATE_FILE = 'window-state.json';
+const SAVE_BOUNDS_DEBOUNCE_MS = 180;
 
 let mainWindow;
 let backendChild;
 let ownsBackend = false;
 let quitting = false;
 let backendUrl;
+let saveBoundsTimer;
 
 function configuredPort() {
   const raw = process.env.LOCAL_CODER_CONSOLE_PORT?.trim();
@@ -41,6 +49,90 @@ async function probeLocalCoder(url) {
 
 function backendScript() {
   return path.join(app.getAppPath(), 'dist', 'standalone-console.js');
+}
+
+function windowStatePath() {
+  return path.join(app.getPath('userData'), WINDOW_STATE_FILE);
+}
+
+function finiteInteger(value) {
+  return Number.isFinite(value) ? Math.round(value) : undefined;
+}
+
+function readWindowState() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(windowStatePath(), 'utf8'));
+    return {
+      x: finiteInteger(parsed?.x),
+      y: finiteInteger(parsed?.y),
+      width: finiteInteger(parsed?.width),
+      height: finiteInteger(parsed?.height),
+      maximized: parsed?.maximized === true
+    };
+  } catch {
+    return {};
+  }
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function normalizedWindowState(saved) {
+  const primary = screen.getPrimaryDisplay();
+  const requested = {
+    x: saved.x ?? primary.workArea.x,
+    y: saved.y ?? primary.workArea.y,
+    width: Math.max(saved.width ?? DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH),
+    height: Math.max(saved.height ?? DEFAULT_WINDOW_HEIGHT, MIN_WINDOW_HEIGHT)
+  };
+
+  const displays = screen.getAllDisplays();
+  const intersectsDisplay = displays.some(({ workArea }) => {
+    const overlapWidth = Math.max(0, Math.min(requested.x + requested.width, workArea.x + workArea.width) - Math.max(requested.x, workArea.x));
+    const overlapHeight = Math.max(0, Math.min(requested.y + requested.height, workArea.y + workArea.height) - Math.max(requested.y, workArea.y));
+    return overlapWidth >= 80 && overlapHeight >= 80;
+  });
+
+  const target = intersectsDisplay ? screen.getDisplayMatching(requested) : primary;
+  const work = target.workArea;
+  const width = Math.min(Math.max(requested.width, MIN_WINDOW_WIDTH), work.width);
+  const height = Math.min(Math.max(requested.height, MIN_WINDOW_HEIGHT), work.height);
+  const fallbackX = work.x + Math.round((work.width - width) / 2);
+  const fallbackY = work.y + Math.round((work.height - height) / 2);
+  const x = clamp(intersectsDisplay ? requested.x : fallbackX, work.x, work.x + work.width - width);
+  const y = clamp(intersectsDisplay ? requested.y : fallbackY, work.y, work.y + work.height - height);
+
+  return { x, y, width, height, maximized: saved.maximized === true };
+}
+
+function persistWindowState(window) {
+  if (!window || window.isDestroyed()) return;
+  const bounds = window.getNormalBounds();
+  const state = {
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    maximized: window.isMaximized()
+  };
+  const target = windowStatePath();
+  const temp = `${target}.tmp-${process.pid}`;
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temp, target);
+  } catch {
+    try { fs.rmSync(temp, { force: true }); } catch { /* best effort only */ }
+  }
+}
+
+function scheduleWindowStateSave(window) {
+  if (saveBoundsTimer) clearTimeout(saveBoundsTimer);
+  saveBoundsTimer = setTimeout(() => {
+    saveBoundsTimer = undefined;
+    persistWindowState(window);
+  }, SAVE_BOUNDS_DEBOUNCE_MS);
 }
 
 async function stopOwnedBackend() {
@@ -124,15 +216,20 @@ function restrictRenderer(window, baseUrl) {
 }
 
 function createMainWindow(url) {
+  const restored = normalizedWindowState(readWindowState());
   const window = new BrowserWindow({
-    width: 1460,
-    height: 940,
-    minWidth: 980,
-    minHeight: 700,
+    x: restored.x,
+    y: restored.y,
+    width: restored.width,
+    height: restored.height,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     show: false,
-    backgroundColor: '#07090d',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f1e1b' : '#f7f6f2',
     title: 'Local Coder',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 18, y: 18 } } : {}),
+    autoHideMenuBar: process.platform !== 'darwin',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -141,8 +238,16 @@ function createMainWindow(url) {
       devTools: !app.isPackaged
     }
   });
+
   restrictRenderer(window, url);
-  window.once('ready-to-show', () => window.show());
+  window.on('resize', () => scheduleWindowStateSave(window));
+  window.on('move', () => scheduleWindowStateSave(window));
+  window.on('maximize', () => scheduleWindowStateSave(window));
+  window.on('unmaximize', () => scheduleWindowStateSave(window));
+  window.once('ready-to-show', () => {
+    if (restored.maximized) window.maximize();
+    window.show();
+  });
   void window.loadURL(url);
   return window;
 }
@@ -212,6 +317,11 @@ if (!hasSingleInstanceLock) {
 
   app.on('before-quit', () => {
     quitting = true;
+    if (saveBoundsTimer) {
+      clearTimeout(saveBoundsTimer);
+      saveBoundsTimer = undefined;
+    }
+    persistWindowState(mainWindow);
     void stopOwnedBackend();
   });
 

@@ -83,10 +83,9 @@ test('standalone cancellation is terminal and cancelled jobs are not resumed aft
   const manager = new StandaloneJobManager(execution, stateDir);
   const created = manager.create({ workspace: stateDir, goal: 'long task' });
   await waitFor(() => manager.get(created.id)?.status === 'running');
-  const cancelled = manager.cancel(created.id);
+  const cancelled = await manager.cancel(created.id);
   assert.equal(cancelled.status, 'cancelled');
   await waitFor(() => manager.get(created.id)?.status === 'cancelled');
-  await new Promise((resolve) => setTimeout(resolve, 30));
 
   const restoredExecutions = executions;
   const restored = new StandaloneJobManager(execution, stateDir);

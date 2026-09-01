@@ -9,7 +9,12 @@ import { createControlPlaneLocalProvider } from './local-inference-provider.js';
 import { OllamaClient } from './ollama.js';
 import { ProjectAdminService } from './project-admin.js';
 import { handleProjectAdminRequest } from './project-admin-http.js';
-import { StandaloneJobManager, type StandaloneJobInput } from './standalone-job-manager.js';
+import type { ModelSelection } from './project-store.js';
+import {
+  StandaloneJobManager,
+  type StandaloneJobInput,
+  type StandaloneReasoningEffort
+} from './standalone-job-manager.js';
 
 const config = loadConfig();
 const ollama = new OllamaClient(config);
@@ -69,6 +74,38 @@ async function readJson(request: IncomingMessage, maxBytes = 200_000): Promise<R
   return parsed as Record<string, unknown>;
 }
 
+function parseModelSelection(value: unknown): ModelSelection | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('modelSelection must be an object.');
+  }
+  const candidate = value as Record<string, unknown>;
+  if (candidate.mode === 'auto') return { mode: 'auto' };
+  if (
+    candidate.mode === 'explicit' &&
+    typeof candidate.providerId === 'string' && candidate.providerId.trim() &&
+    typeof candidate.modelId === 'string' && candidate.modelId.trim()
+  ) {
+    return {
+      mode: 'explicit',
+      providerId: candidate.providerId.trim(),
+      modelId: candidate.modelId.trim()
+    };
+  }
+  throw new Error('modelSelection must be auto or an explicit provider/model pair.');
+}
+
+function parseReasoningEffort(value: unknown): StandaloneReasoningEffort | undefined {
+  if (value === undefined) return undefined;
+  const allowed = new Set<StandaloneReasoningEffort>([
+    'auto', 'none', 'low', 'medium', 'high', 'xhigh', 'max'
+  ]);
+  if (typeof value !== 'string' || !allowed.has(value as StandaloneReasoningEffort)) {
+    throw new Error('reasoningEffort must be auto, none, low, medium, high, xhigh, or max.');
+  }
+  return value as StandaloneReasoningEffort;
+}
+
 function parseJobInput(
   body: Record<string, unknown>,
   admin: ProjectAdminService
@@ -83,6 +120,13 @@ function parseJobInput(
       ? body.workspace
       : undefined;
   if (!workspace) throw new Error('workspace is required when projectId is not provided.');
+
+  const modelSelection = parseModelSelection(body.modelSelection);
+  const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
+  if (!projectId && (modelSelection || (reasoningEffort && reasoningEffort !== 'auto'))) {
+    throw new Error('Model and effort overrides require a configured Project.');
+  }
+
   return {
     projectId,
     workspace,
@@ -95,7 +139,9 @@ function parseJobInput(
     maxRepairRounds:
       typeof body.maxRepairRounds === 'number' && Number.isInteger(body.maxRepairRounds)
         ? Math.max(0, Math.min(body.maxRepairRounds, 2))
-        : 1
+        : 1,
+    modelSelection,
+    reasoningEffort
   };
 }
 
@@ -209,7 +255,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
 
   const cancelMatch = /^\/api\/jobs\/([A-Za-z0-9-]+)\/cancel$/.exec(url.pathname);
   if (request.method === 'POST' && cancelMatch) {
-    json(response, 200, { job: jobs.cancel(cancelMatch[1]) });
+    json(response, 200, { job: await jobs.cancel(cancelMatch[1]) });
     return;
   }
 

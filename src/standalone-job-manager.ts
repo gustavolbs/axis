@@ -11,6 +11,8 @@ import type { ExecutionBackend } from './execution-runtime.js';
 import type { LocalEngineerResult } from './local-engineer.js';
 import type { PremiumDecisionRequest, PremiumEngineerResult } from './premium-agent.js';
 import type { ProjectEngineerInput } from './project-engineer-backend.js';
+import type { ModelSelection } from './project-store.js';
+import type { ReasoningEffort } from './providers/types.js';
 
 export type StandaloneJobStatus =
   | 'queued'
@@ -21,6 +23,8 @@ export type StandaloneJobStatus =
   | 'cancelled'
   | 'error';
 
+export type StandaloneReasoningEffort = 'auto' | ReasoningEffort;
+
 export interface StandaloneJobInput {
   projectId?: string;
   workspace: string;
@@ -29,6 +33,10 @@ export interface StandaloneJobInput {
   constraints?: string[];
   language?: string;
   maxRepairRounds?: number;
+  /** Optional standalone override. Auto preserves the Project/agent stage policy. */
+  modelSelection?: ModelSelection;
+  /** Optional standalone override applied to every routed cognitive stage. */
+  reasoningEffort?: StandaloneReasoningEffort;
 }
 
 export interface StandaloneJobEvent {
@@ -139,8 +147,6 @@ export class StandaloneJobManager {
       });
     }
 
-    // Cancelled/success/error jobs are terminal. Only work that was actually running when
-    // the process stopped is resumed; user-decision/guidance checkpoints remain paused.
     for (const job of this.jobs.values()) {
       if (job.status === 'queued' || job.status === 'running') {
         job.status = 'queued';
@@ -179,7 +185,8 @@ export class StandaloneJobManager {
         ...input,
         projectId: input.projectId?.trim() || undefined,
         workspace: input.workspace.trim(),
-        goal: input.goal.trim()
+        goal: input.goal.trim(),
+        reasoningEffort: input.reasoningEffort ?? 'auto'
       },
       rounds: 0,
       events: [],
@@ -191,9 +198,12 @@ export class StandaloneJobManager {
     return snapshot(job);
   }
 
-  cancel(id: string): StandaloneJobSnapshot {
+  async cancel(id: string): Promise<StandaloneJobSnapshot> {
     const job = this.requireJob(id);
-    if (job.status === 'cancelled') return snapshot(job);
+    if (job.status === 'cancelled') {
+      await this.persistTail;
+      return snapshot(job);
+    }
     if (job.status === 'success' || job.status === 'error') {
       throw new Error(`Cannot cancel a completed job with status ${job.status}.`);
     }
@@ -205,7 +215,7 @@ export class StandaloneJobManager {
     const waiting = job.waiting;
     job.waiting = undefined;
     this.emit(job, 'cancelled', 'Job cancelled by user');
-    // Wake a suspended decision/guidance round so its cancellation context can unwind.
+    await this.persistTail;
     waiting?.resolve('');
     return snapshot(job);
   }
@@ -256,8 +266,8 @@ export class StandaloneJobManager {
     return path.join(this.stateDir!, 'jobs.json');
   }
 
-  private schedulePersist(): void {
-    if (!this.stateDir) return;
+  private schedulePersist(): Promise<void> {
+    if (!this.stateDir) return Promise.resolve();
     this.persistTail = this.persistTail.then(async () => {
       const jobs: PersistedJob[] = this.list()
         .slice(0, 30)
@@ -270,12 +280,17 @@ export class StandaloneJobManager {
         });
       await fs.mkdir(this.stateDir!, { recursive: true });
       const file = this.stateFile();
-      const temp = `${file}.tmp-${process.pid}`;
-      await fs.writeFile(temp, `${JSON.stringify(jobs, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-      await fs.rename(temp, file);
+      const temp = `${file}.tmp-${process.pid}-${randomUUID()}`;
+      try {
+        await fs.writeFile(temp, `${JSON.stringify(jobs, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+        await fs.rename(temp, file);
+      } finally {
+        await fs.rm(temp, { force: true }).catch(() => undefined);
+      }
     }).catch((error) => {
       console.error(`Local Coder Console session persistence failed: ${error instanceof Error ? error.message : String(error)}`);
     });
+    return this.persistTail;
   }
 
   private emit(
@@ -295,7 +310,7 @@ export class StandaloneJobManager {
     };
     job.events.push(event);
     job.events.splice(0, Math.max(0, job.events.length - 200));
-    this.schedulePersist();
+    void this.schedulePersist();
     const publicJob = snapshot(job);
     for (const listener of this.listeners) listener(event, publicJob);
   }
@@ -303,7 +318,7 @@ export class StandaloneJobManager {
   private wait(job: JobInternal, kind: WaitingInput['kind']): Promise<string> {
     return new Promise((resolve) => {
       job.waiting = { kind, resolve };
-      this.schedulePersist();
+      void this.schedulePersist();
     });
   }
 
@@ -324,8 +339,6 @@ export class StandaloneJobManager {
           const input: ProjectEngineerInput = {
             ...job.input,
             claudeGuidance: job.guidance,
-            // A Console job is one billing/budget unit even when material-decision or
-            // external-guidance checkpoints cause multiple backend rounds or a restart.
             budgetJobId: job.id
           };
           this.emit(job, 'status', `Agent round ${round} running`);
@@ -388,7 +401,7 @@ export class StandaloneJobManager {
     } finally {
       job.waiting = undefined;
       job.controller = undefined;
-      this.schedulePersist();
+      void this.schedulePersist();
     }
   }
 }

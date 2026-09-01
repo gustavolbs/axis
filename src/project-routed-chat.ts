@@ -32,6 +32,7 @@ export type ProjectRouteEvent = Pick<
 export interface ProjectRoutedChatOptions {
   policy?: RoutingPolicy;
   modelSelection?: ModelSelection;
+  reasoningEffort?: ReasoningEffort;
   urgency?: RoutingUrgency;
   complexityScore?: number;
   blastRadius?: RoutingBlastRadius;
@@ -46,6 +47,14 @@ function reasoningEffort(think: OllamaThinkingLevel | undefined): ReasoningEffor
   if (think === false) return 'none';
   if (think === true) return 'high';
   return think;
+}
+
+function localThinkingLevel(effort: ReasoningEffort): OllamaThinkingLevel {
+  if (effort === 'none') return false;
+  if (effort === 'low' || effort === 'medium' || effort === 'high') return effort;
+  // Current Ollama/Qwen compatibility contract exposes low/medium/high. Higher cloud
+  // effort levels degrade explicitly to the strongest local intent instead of being ignored.
+  return 'high';
 }
 
 function outputFormat(
@@ -73,7 +82,6 @@ function safeStreamProgress(
   return {
     elapsedMs: Math.max(0, Date.now() - startedAt),
     chunkCount: progress.eventCount,
-    // Hidden reasoning content is never transported through the provider contract.
     thinkingChars: 0,
     outputChars: progress.outputChars,
     state: progress.state === 'generating' ? 'generating' : 'thinking',
@@ -96,8 +104,8 @@ function budgetCandidateKey(candidate: { providerId: string; modelId: string }):
 /**
  * Structural adapter for the current Agent Runtime. Existing stages can keep calling
  * `.chat(...)` while project-aware jobs route each call independently. A strictly
- * Local-only project bypasses the new provider layer entirely, preserving the v0.14
- * Ollama fast/strong/numCtx/keepAlive behavior byte-for-byte at the call boundary.
+ * Local-only project bypasses the provider layer while still honoring explicit desktop
+ * model/effort choices at the legacy Ollama call boundary.
  */
 export class ProjectRoutedChatClient implements LegacyAgentChatClient {
   constructor(
@@ -114,8 +122,26 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
     runtime: OllamaChatOptions = {}
   ): Promise<OllamaGeneration> {
     const stage = classifyInferenceStage(systemPrompt);
+    const selectedEffort = this.options.reasoningEffort ?? reasoningEffort(runtime.think);
+    const routedThink = this.options.reasoningEffort === undefined
+      ? runtime.think
+      : localThinkingLevel(this.options.reasoningEffort);
+
     if (isStrictLegacyLocal(this.project)) {
-      const modelId = runtime.model ?? 'ollama-local';
+      const explicit = this.options.modelSelection?.mode === 'explicit'
+        ? this.options.modelSelection
+        : undefined;
+      if (explicit && explicit.providerId !== 'ollama') {
+        throw new Error(
+          `Local-only Project ${this.project.id} cannot execute explicit provider ${explicit.providerId}.`
+        );
+      }
+      const modelId = explicit?.modelId ?? runtime.model ?? 'ollama-local';
+      const effectiveRuntime: OllamaChatOptions = {
+        ...runtime,
+        model: modelId,
+        think: routedThink
+      };
       const candidate = {
         providerId: 'ollama',
         providerKind: 'local' as const,
@@ -124,7 +150,7 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
       };
       const startedAt = Date.now();
       try {
-        const generation = await this.legacyLocal.chat(systemPrompt, userPrompt, format, runtime);
+        const generation = await this.legacyLocal.chat(systemPrompt, userPrompt, format, effectiveRuntime);
         this.options.budget?.recordLocalGeneration(stage, generation.model, generation);
         await this.observe({
           candidate: { ...candidate, modelId: generation.model },
@@ -170,16 +196,14 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
       userPrompt,
       stage,
       output: outputFormat(format, stage),
-      reasoning: runtime.think === undefined
-        ? undefined
-        : { effort: reasoningEffort(runtime.think) ?? 'none' },
+      reasoning: selectedEffort === undefined ? undefined : { effort: selectedEffort },
       maxOutputTokens: runtime.maxTokens,
       timeoutMs: runtime.maxDurationMs,
       providerOptions: {
         ollama: {
           numCtx: runtime.numCtx,
           keepAlive: runtime.keepAlive,
-          think: runtime.think
+          think: routedThink
         }
       },
       onProgress: runtime.onStreamProgress
@@ -202,7 +226,7 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
         urgency: this.options.urgency,
         complexityScore: this.options.complexityScore,
         blastRadius: this.options.blastRadius,
-        requireReasoning: runtime.think !== false && runtime.think !== undefined,
+        requireReasoning: selectedEffort !== undefined && selectedEffort !== 'none',
         requireStructuredOutput: format !== undefined && format !== 'json'
       },
       confirmFallback: this.options.confirmFallback,
