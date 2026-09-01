@@ -6,7 +6,7 @@ directories:
 files:
   - desktop/**/*
   - dist/**/*
-  - console-dist/**/*
+  - app-dist/**/*
   - package.json
 mac:
   category: public.app-category.developer-tools
