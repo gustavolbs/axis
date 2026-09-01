@@ -150,14 +150,15 @@ export function RunInspectorV2() {
           const lastRoute = execution?.routingTrace.at(-1);
           const calls = job.result?.modelCalls ?? [];
           const lastCall = calls.at(-1);
-          const input = execution?.budget.daily.inputTokens ?? calls.reduce((sum, call) => sum + (call.promptTokens ?? 0), 0);
-          const output = execution?.budget.daily.outputTokens ?? calls.reduce((sum, call) => sum + (call.completionTokens ?? 0), 0);
+          const input = calls.reduce((sum, call) => sum + (call.promptTokens ?? 0), 0);
+          const output = calls.reduce((sum, call) => sum + (call.completionTokens ?? 0), 0);
           const latency = calls.reduce((sum, call) => sum + (call.totalDurationNs ?? 0), 0);
+          const tokensKnown = calls.some((call) => call.promptTokens !== undefined || call.completionTokens !== undefined);
           return <tr key={job.id} className={active?.id === job.id ? 'active' : ''} onClick={() => setActiveId(job.id)}>
             <td><span className="runs-when">{relative(job.updatedAt)}</span></td>
             <td><strong>{job.input.projectId}</strong><small>{job.input.goal}</small></td>
             <td><strong>{lastRoute?.providerId ?? 'local'}</strong><small>{lastRoute?.modelId ?? lastCall?.model ?? '—'}</small></td>
-            <td><strong>{input.toLocaleString()} / {output.toLocaleString()}</strong><small>in / out</small></td>
+            <td><strong>{tokensKnown ? `${input.toLocaleString()} / ${output.toLocaleString()}` : '—'}</strong><small>{tokensKnown ? 'in / out' : 'not reported'}</small></td>
             <td><strong>{usd(execution?.budget.jobKnownCostUsd)}</strong>{execution?.budget.jobUnknownCostEvents ? <small>{execution.budget.jobUnknownCostEvents} unpriced</small> : null}</td>
             <td><strong>{durationNs(latency || undefined)}</strong></td>
             <td><span className={`status-pill ${statusTone(job.status)}`}><i />{job.status.replace('-', ' ')}</span></td>
