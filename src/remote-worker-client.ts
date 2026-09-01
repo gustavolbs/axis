@@ -33,14 +33,11 @@ export class RemoteWorkerError extends Error {
 
 export class RemoteWorkerClient {
   private readonly baseUrl: string;
-  private readonly token: string;
+  private readonly token?: string;
 
   constructor(private readonly config: LocalCoderConfig) {
     if (!config.remoteWorkerUrl) {
       throw new Error('LOCAL_CODER_REMOTE_WORKER_URL is required for remote execution.');
-    }
-    if (!config.remoteWorkerToken) {
-      throw new Error('LOCAL_CODER_REMOTE_WORKER_TOKEN is required for remote execution.');
     }
     this.baseUrl = config.remoteWorkerUrl.replace(/\/$/, '');
     this.token = config.remoteWorkerToken;
@@ -166,7 +163,7 @@ export class RemoteWorkerClient {
       response = await fetch(`${this.baseUrl}${pathname}`, {
         method,
         headers: {
-          authorization: `Bearer ${this.token}`,
+          ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
           ...(body ? { 'content-type': 'application/json' } : {})
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
