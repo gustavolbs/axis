@@ -132,7 +132,14 @@ function normalizeRestoredTurns(job: PersistedJob): StandaloneJobTurn[] {
       createdAt: job.createdAt
     });
   }
-  if (job.status === 'success' && job.result?.summary?.trim()) {
+  // Only Chat renders successful answers from turns. Cowork keeps rendering its
+  // result card exactly as before, so synthesizing a Cowork assistant turn here
+  // would duplicate result.summary after restoring an old session.
+  if (
+    job.input.interactionMode === 'chat' &&
+    job.status === 'success' &&
+    job.result?.summary?.trim()
+  ) {
     turns.push({
       id: randomUUID(),
       role: 'assistant',
