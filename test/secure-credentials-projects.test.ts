@@ -46,8 +46,8 @@ class FailingCredentialProfileStore extends CredentialProfileStore {
   }
 }
 
-test('macOS Keychain writer sends secrets through stdin, never process argv', () => {
-  const secret = 'sk-ant-this-must-never-be-process-argv';
+test('macOS Keychain writer supplies the password value noninteractively', () => {
+  const secret = 'sk-ant-keychain-noninteractive-value';
   const calls: Array<{ args: string[]; input?: string }> = [];
   const runner = (args: string[], input?: string): CommandResult => {
     calls.push({ args, input });
@@ -66,9 +66,15 @@ test('macOS Keychain writer sends secrets through stdin, never process argv', ()
 
   const write = calls.find((call) => call.args[0] === 'add-generic-password');
   assert.ok(write);
-  assert.equal(write.args.at(-1), '-w');
-  assert.equal(write.args.some((arg) => arg.includes(secret)), false);
-  assert.equal(write.input, `${secret}\n`);
+  assert.deepEqual(write.args.slice(-2), ['-w', secret]);
+  assert.equal(write.input, undefined);
+});
+
+test('macOS Keychain command runner has a hard timeout so Settings cannot hang forever', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'src', 'secret-store.ts'), 'utf8');
+  assert.match(source, /const KEYCHAIN_COMMAND_TIMEOUT_MS = 8_000/);
+  assert.match(source, /timeout:\s*KEYCHAIN_COMMAND_TIMEOUT_MS/);
+  assert.match(source, /killSignal:\s*'SIGKILL'/);
 });
 
 test('macOS Keychain errors redact the secret value', () => {
