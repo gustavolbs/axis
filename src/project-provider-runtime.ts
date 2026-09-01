@@ -110,6 +110,11 @@ function unique(values: Array<string | undefined>): string[] {
   return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
 }
 
+/**
+ * Provider-specific model-list normalization belongs at the provider boundary. OpenAI's
+ * `/models` endpoint is unusually broad, so keep non-conversational assets out of Chat.
+ * Other providers are expected to expose invokable text models from listModels().
+ */
 function isPersonalChatModel(providerId: string, model: ModelDefinition): boolean {
   if (providerId !== 'openai') return true;
   const id = model.id.toLowerCase();
@@ -184,21 +189,21 @@ export class ProjectProviderRuntime {
   }
 
   /**
-   * Resolve a provider for projectless Chat. Only credentials without an organization
-   * boundary are eligible. Corporate credentials can therefore never leak into a
-   * personal conversation. Multiple personal credentials fail closed because there is
-   * no Project binding available to disambiguate them.
+   * Resolve any registered provider for projectless Chat. Cloud providers all share the
+   * same isolation rule: only credentials without organizationId are eligible. Corporate
+   * credentials can therefore never leak into a personal conversation. Multiple personal
+   * credentials fail closed because there is no Project binding available to disambiguate.
    */
   personalChatProvider(providerId: string): { provider?: InferenceProvider; reason?: string } {
     if (providerId === this.localProvider?.id || providerId === 'ollama') {
       if (!this.localProvider) return { reason: 'Local inference is not configured.' };
       const settings = this.settings.get(this.localProvider.id);
-      if (settings?.enabled === false) return { reason: 'Ollama is disabled in Model routing settings.' };
+      if (settings?.enabled === false) return { reason: `${this.localProvider.id} is disabled in Model routing settings.` };
       return { provider: this.localProvider };
     }
 
     const factory = this.factories[providerId];
-    if (!factory) return { reason: `Provider ${providerId} is not supported.` };
+    if (!factory) return { reason: `Provider ${providerId} is not registered.` };
     const settings = this.settings.get(providerId);
     if (settings?.enabled === false) return { reason: `${providerId} is disabled in Model routing settings.` };
 
@@ -216,7 +221,7 @@ export class ProjectProviderRuntime {
     }
 
     if (available.length === 0) {
-      return { reason: `Add an available personal ${providerId === 'openai' ? 'OpenAI' : 'Anthropic'} API key in Settings → API keys.` };
+      return { reason: `Add an available personal ${providerId} credential in Settings → API keys.` };
     }
     if (available.length > 1) {
       return { reason: `Multiple personal ${providerId} credentials are available. Use a Project to choose one explicitly.` };
@@ -229,10 +234,15 @@ export class ProjectProviderRuntime {
     return { provider };
   }
 
+  /**
+   * Personal Chat provider discovery is factory-driven, not hardcoded to Claude/GPT.
+   * Registering a new cloud provider factory automatically enrolls it in the same
+   * credential-isolation and model-discovery path.
+   */
   async personalChatCatalog(): Promise<PersonalChatCatalog> {
     const providerIds = unique([
       this.localProvider?.id ?? 'ollama',
-      ...BUILT_IN_CLOUD_PROVIDER_IDS
+      ...Object.keys(this.factories)
     ]);
     const providers: PersonalChatCatalogProvider[] = [];
 
@@ -255,7 +265,7 @@ export class ProjectProviderRuntime {
       const ready = Boolean(provider) && !discoveryError && models.length > 0;
       providers.push({
         id: providerId,
-        kind: provider?.kind ?? (providerId === 'ollama' ? 'local' : 'cloud'),
+        kind: provider?.kind ?? (providerId === (this.localProvider?.id ?? 'ollama') ? 'local' : 'cloud'),
         ready,
         reason: ready
           ? undefined
@@ -346,8 +356,8 @@ export class ProjectProviderRuntime {
       } else if (selection.mode === 'explicit' && selection.providerId === provider.id) {
         requestedIds = [selection.modelId];
       } else if (selection.mode === 'explicit') {
-        // Direct Ollama / Claude / GPT selection is exact. Do not keep unrelated
-        // providers around as fallback candidates for provider failures.
+        // Direct provider selection is exact. Do not keep unrelated providers around
+        // as fallback candidates for provider failures.
         requestedIds = [];
       } else if (provider.kind === 'local') {
         const configuredFast = discovered.find(
