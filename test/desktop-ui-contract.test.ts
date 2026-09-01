@@ -392,7 +392,10 @@ test('model menu exposes Ollama Claude GPT Local-first plus Effort and Thinking'
   assert.match(agentSurface, /<strong>Effort<\/strong>/);
   assert.match(agentSurface, /<strong>Thinking<\/strong>/);
   for (const label of ['Low', 'Medium', 'High', 'Extra high', 'Max']) assert.match(agentSurface, new RegExp(`label: '${label}'`));
-  assert.match(agentSurface, /reasoningEffort:\s*selectedProject \? \(thinkingEnabled \? effort : 'none'\)/);
+  assert.match(agentSurface, /const modelOverrideAllowed = Boolean\(selectedProject\) \|\| mode === 'chat'/);
+  assert.match(agentSurface, /modelSelection:\s*modelOverrideAllowed \? parseModelValue\(modelSelection\) : undefined/);
+  assert.match(agentSurface, /reasoningEffort:\s*modelOverrideAllowed \? \(thinkingEnabled \? effort : 'none'\) : undefined/);
+  assert.match(agentSurface, /allowLocalFirst=\{Boolean\(selectedProject\)\}/);
   assert.match(agentSurface, /\/api\/jobs\/\$\{active\.id\}\/escalate/);
   assert.match(agentSurface, /Ollama remains the task owner and resumes after the answer/);
   assert.match(css, /\.lc-agent-switch\.on/);
