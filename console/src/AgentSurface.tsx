@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type KeyboardEvent,
+  type SetStateAction
+} from 'react';
 import {
   ArrowUp,
   Check,
@@ -15,6 +22,10 @@ import {
 import type { AdminProject, ModelSelection } from './AdminPanel.js';
 
 type ReasoningEffortSelection = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+type JobReasoningEffort = ReasoningEffortSelection | 'none';
+type ModelMenuView = 'closed' | 'models' | 'effort';
+
+const NEW_TASK_ID = '__new__';
 
 interface DecisionOption { id: string; label: string; tradeoff: string }
 interface DecisionQuestion {
@@ -60,7 +71,7 @@ interface Job {
     goal: string;
     context?: string;
     modelSelection?: ModelSelection;
-    reasoningEffort?: ReasoningEffortSelection;
+    reasoningEffort?: JobReasoningEffort;
   };
   decisionRequest?: DecisionRequest;
   result?: EngineerResult;
@@ -164,14 +175,16 @@ export function AgentSurface() {
   const [submitting, setSubmitting] = useState(false);
   const [modelSelection, setModelSelection] = useState('auto');
   const [effort, setEffort] = useState<ReasoningEffortSelection>('auto');
-  const [modelMenu, setModelMenu] = useState<'closed' | 'models' | 'effort'>('closed');
+  const [thinkingEnabled, setThinkingEnabled] = useState(true);
+  const [modelMenu, setModelMenu] = useState<ModelMenuView>('closed');
   const [projectMenu, setProjectMenu] = useState(false);
   const [extrasOpen, setExtrasOpen] = useState(false);
   const [decisionSelections, setDecisionSelections] = useState<Record<string, string>>({});
   const [guidance, setGuidance] = useState('');
-  const menuRoot = useRef<HTMLDivElement>(null);
 
-  const active = jobs.find((job) => job.id === activeId) ?? jobs[0];
+  const active = activeId === NEW_TASK_ID
+    ? undefined
+    : jobs.find((job) => job.id === activeId) ?? jobs[0];
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
   const currentInference = worker?.inference?.current ?? undefined;
 
@@ -183,6 +196,7 @@ export function AgentSurface() {
       setJobs(initialJobs);
       setProjects(initialProjects);
       if (initialJobs[0]) setActiveId(initialJobs[0].id);
+      else setActiveId(NEW_TASK_ID);
       if (selectedProjectId && !initialProjects.some((project) => project.id === selectedProjectId)) {
         setSelectedProjectId('');
         localStorage.removeItem('local-coder.project');
@@ -238,7 +252,8 @@ export function AgentSurface() {
 
   useEffect(() => {
     function closeMenus(event: PointerEvent) {
-      if (menuRoot.current?.contains(event.target as Node)) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest('.composer-menu-anchor')) return;
       setModelMenu('closed');
       setProjectMenu(false);
     }
@@ -266,12 +281,22 @@ export function AgentSurface() {
   const selectedModel = modelOptions.find((model) => model.value === modelSelection);
   const modelLabel = modelSelection === 'auto' ? 'Auto' : selectedModel?.label ?? 'Model';
   const effortLabel = effortOptions.find((option) => option.id === effort)?.label ?? 'Default';
+  const displayedEffortLabel = thinkingEnabled ? effortLabel : 'Thinking off';
 
   function chooseProject(projectId: string) {
     setSelectedProjectId(projectId);
     setProjectMenu(false);
     if (projectId) localStorage.setItem('local-coder.project', projectId);
     else localStorage.removeItem('local-coder.project');
+  }
+
+  function startNewTask() {
+    setActiveId(NEW_TASK_ID);
+    setGoal('');
+    setContext('');
+    setExtrasOpen(false);
+    setModelMenu('closed');
+    setProjectMenu(false);
   }
 
   async function createJob() {
@@ -289,7 +314,7 @@ export function AgentSurface() {
           context: context.trim() || undefined,
           maxRepairRounds: 1,
           modelSelection: selectedProject ? parseModelValue(modelSelection) : undefined,
-          reasoningEffort: selectedProject ? effort : undefined
+          reasoningEffort: selectedProject ? (thinkingEnabled ? effort : 'none') : undefined
         })
       });
       if (!selectedProject) localStorage.setItem('local-coder.workspace', effectiveWorkspace);
@@ -298,6 +323,8 @@ export function AgentSurface() {
       setGoal('');
       setContext('');
       setExtrasOpen(false);
+      setModelMenu('closed');
+      setProjectMenu(false);
     } catch (next) {
       setError(next instanceof Error ? next.message : String(next));
     } finally {
@@ -340,16 +367,16 @@ export function AgentSurface() {
     }
   }
 
-  function onComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+  function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       void createJob();
     }
   }
 
-  return <div className="claude-agent-shell" ref={menuRoot}>
+  return <div className="claude-agent-shell">
     <aside className="claude-sidebar" aria-label="Task history">
-      <button className="new-task-button" onClick={() => setActiveId(undefined)}>
+      <button className="new-task-button" onClick={startNewTask}>
         <Plus size={15} strokeWidth={1.8} />
         <span>New task</span>
       </button>
@@ -408,7 +435,9 @@ export function AgentSurface() {
         modelLabel={modelLabel}
         effort={effort}
         setEffort={setEffort}
-        effortLabel={effortLabel}
+        effortLabel={displayedEffortLabel}
+        thinkingEnabled={thinkingEnabled}
+        setThinkingEnabled={setThinkingEnabled}
         submitting={submitting}
         canSubmit={Boolean(goal.trim() && (selectedProject || workspace.trim()))}
         activeWorking={Boolean(active && isWorking(active.status))}
@@ -444,8 +473,8 @@ function Composer(props: {
   chooseProject: (id: string) => void;
   extrasOpen: boolean;
   setExtrasOpen: (value: boolean) => void;
-  modelMenu: 'closed' | 'models' | 'effort';
-  setModelMenu: (value: 'closed' | 'models' | 'effort') => void;
+  modelMenu: ModelMenuView;
+  setModelMenu: (value: ModelMenuView) => void;
   modelOptions: ModelOption[];
   modelSelection: string;
   setModelSelection: (value: string) => void;
@@ -453,12 +482,14 @@ function Composer(props: {
   effort: ReasoningEffortSelection;
   setEffort: (value: ReasoningEffortSelection) => void;
   effortLabel: string;
+  thinkingEnabled: boolean;
+  setThinkingEnabled: (value: boolean) => void;
   submitting: boolean;
   canSubmit: boolean;
   activeWorking: boolean;
   createJob: () => Promise<void>;
   cancelActive: () => Promise<void>;
-  onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
 }) {
   return <div className="claude-composer-wrap">
     <div className="claude-composer">
@@ -479,17 +510,17 @@ function Composer(props: {
 
       <div className="composer-toolbar">
         <div className="composer-toolbar-left">
-          <button className={`composer-icon-button ${props.extrasOpen ? 'active' : ''}`} onClick={() => props.setExtrasOpen(!props.extrasOpen)} aria-label="Add context">
+          <button className={`composer-icon-button ${props.extrasOpen ? 'active' : ''}`} onClick={() => props.setExtrasOpen(!props.extrasOpen)} aria-label="Add context" aria-pressed={props.extrasOpen}>
             <Plus size={18} strokeWidth={1.7} />
           </button>
 
           <div className="composer-menu-anchor">
-            <button className="composer-text-button" onClick={() => props.setProjectMenu(!props.projectMenu)}>
+            <button className="composer-text-button" aria-haspopup="menu" aria-expanded={props.projectMenu} onClick={() => { props.setModelMenu('closed'); props.setProjectMenu(!props.projectMenu); }}>
               <FolderGit2 size={14} strokeWidth={1.6} />
               <span>{props.selectedProject?.name ?? 'Work in a project'}</span>
               <ChevronDown size={13} strokeWidth={1.6} />
             </button>
-            {props.projectMenu ? <div className="claude-popover project-popover">
+            {props.projectMenu ? <div className="claude-popover project-popover" role="menu">
               <button className={!props.selectedProject ? 'selected' : ''} onClick={() => props.chooseProject('')}>
                 <span><strong>No project</strong><small>Use a workspace path directly</small></span>
                 {!props.selectedProject ? <Check size={15} /> : null}
@@ -504,7 +535,7 @@ function Composer(props: {
 
         <div className="composer-toolbar-right">
           <div className="composer-menu-anchor model-menu-anchor">
-            <button className="model-effort-trigger" disabled={!props.selectedProject} onClick={() => props.setModelMenu(props.modelMenu === 'closed' ? 'models' : 'closed')}>
+            <button className="model-effort-trigger" disabled={!props.selectedProject} aria-haspopup="menu" aria-expanded={props.modelMenu !== 'closed'} onClick={() => { props.setProjectMenu(false); props.setModelMenu(props.modelMenu === 'closed' ? 'models' : 'closed'); }}>
               <span>{props.modelLabel}</span>
               {props.selectedProject ? <><span className="model-trigger-dot">·</span><span>{props.effortLabel}</span></> : null}
               <ChevronDown size={13} strokeWidth={1.6} />
@@ -522,17 +553,19 @@ function Composer(props: {
 }
 
 function ModelMenu(props: {
-  modelMenu: 'closed' | 'models' | 'effort';
-  setModelMenu: (value: 'closed' | 'models' | 'effort') => void;
+  modelMenu: ModelMenuView;
+  setModelMenu: (value: ModelMenuView) => void;
   modelOptions: ModelOption[];
   modelSelection: string;
   setModelSelection: (value: string) => void;
   effort: ReasoningEffortSelection;
   setEffort: (value: ReasoningEffortSelection) => void;
   effortLabel: string;
+  thinkingEnabled: boolean;
+  setThinkingEnabled: (value: boolean) => void;
 }) {
   if (props.modelMenu === 'effort') {
-    return <div className="claude-popover model-popover effort-popover">
+    return <div className="claude-popover model-popover effort-popover" role="menu">
       <button className="popover-back" onClick={() => props.setModelMenu('models')}><ChevronLeft size={16} /><strong>Effort</strong></button>
       <div className="popover-separator" />
       {effortOptions.map((option) => <button key={option.id} className={props.effort === option.id ? 'selected' : ''} onClick={() => { props.setEffort(option.id); props.setModelMenu('models'); }}>
@@ -542,19 +575,23 @@ function ModelMenu(props: {
     </div>;
   }
 
-  return <div className="claude-popover model-popover">
-    <button className={props.modelSelection === 'auto' ? 'selected' : ''} onClick={() => props.setModelSelection('auto')}>
+  return <div className="claude-popover model-popover" role="menu">
+    <button className={props.modelSelection === 'auto' ? 'selected' : ''} onClick={() => { props.setModelSelection('auto'); props.setModelMenu('closed'); }}>
       <span><strong>Auto</strong><small>Route each stage to the best allowed model</small></span>
       {props.modelSelection === 'auto' ? <Check size={16} /> : null}
     </button>
-    {props.modelOptions.map((model) => <button key={model.value} className={props.modelSelection === model.value ? 'selected' : ''} disabled={!model.available} onClick={() => props.setModelSelection(model.value)}>
+    {props.modelOptions.map((model) => <button key={model.value} className={props.modelSelection === model.value ? 'selected' : ''} disabled={!model.available} onClick={() => { props.setModelSelection(model.value); props.setModelMenu('closed'); }}>
       <span><strong>{model.label}</strong><small>{model.description}{model.available ? '' : ' · unavailable'}</small></span>
       {props.modelSelection === model.value ? <Check size={16} /> : null}
     </button>)}
     <div className="popover-separator" />
     <button className="popover-row-link" onClick={() => props.setModelMenu('effort')}>
       <span><strong>Effort</strong><small>Control how deeply the selected model reasons</small></span>
-      <span className="popover-row-value">{props.effortLabel} ›</span>
+      <span className="popover-row-value">{props.effortLabel.replace('Thinking off', 'Default')} ›</span>
+    </button>
+    <button className="popover-row-link thinking-row" aria-pressed={props.thinkingEnabled} onClick={() => props.setThinkingEnabled(!props.thinkingEnabled)}>
+      <span><strong>Thinking</strong><small>Allow the model to use extended reasoning when supported</small></span>
+      <span className={`claude-switch ${props.thinkingEnabled ? 'on' : ''}`} aria-hidden="true"><i /></span>
     </button>
   </div>;
 }
@@ -563,7 +600,7 @@ function TaskThread(props: {
   job: Job;
   currentInference?: NonNullable<WorkerStatus['inference']>['current'];
   decisionSelections: Record<string, string>;
-  setDecisionSelections: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setDecisionSelections: Dispatch<SetStateAction<Record<string, string>>>;
   sendDecision: () => Promise<void>;
   guidance: string;
   setGuidance: (value: string) => void;
@@ -620,7 +657,7 @@ function TaskThread(props: {
 function DecisionMessage(props: {
   request: DecisionRequest;
   selections: Record<string, string>;
-  setSelections: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setSelections: Dispatch<SetStateAction<Record<string, string>>>;
   onContinue: () => Promise<void>;
 }) {
   return <div className="assistant-decision-message">
@@ -660,6 +697,12 @@ function ResultMessage({ result }: { result: EngineerResult }) {
 function ProgressRail({ job, currentInference }: { job: Job; currentInference?: NonNullable<WorkerStatus['inference']>['current'] }) {
   const events = [...job.events].reverse();
   const result = job.result;
+  const thinking = job.input.reasoningEffort === 'none' ? 'Off' : 'On';
+  const effort = job.input.reasoningEffort === 'none'
+    ? '—'
+    : job.input.reasoningEffort === 'auto' || !job.input.reasoningEffort
+      ? result?.preflight?.cognitive?.effort ?? 'Auto'
+      : job.input.reasoningEffort;
   return <aside className="claude-progress-rail" aria-label="Task progress">
     <details className="progress-panel" open>
       <summary>Progress <ChevronDown size={14} /></summary>
@@ -675,7 +718,8 @@ function ProgressRail({ job, currentInference }: { job: Job; currentInference?: 
       <div className="context-list">
         <div><span>Workspace</span><code>{job.input.workspace}</code></div>
         <div><span>Model</span><strong>{currentInference?.model ?? result?.modelCalls?.at(-1)?.model ?? 'Auto'}</strong></div>
-        <div><span>Effort</span><strong>{job.input.reasoningEffort === 'auto' || !job.input.reasoningEffort ? result?.preflight?.cognitive?.effort ?? 'Auto' : job.input.reasoningEffort}</strong></div>
+        <div><span>Effort</span><strong>{effort}</strong></div>
+        <div><span>Thinking</span><strong>{thinking}</strong></div>
         <div><span>Round</span><strong>{job.rounds}</strong></div>
       </div>
     </details>
