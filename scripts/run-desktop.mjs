@@ -10,6 +10,7 @@ delete env.ELECTRON_NO_ATTACH_CONSOLE;
 const forwarded = process.argv.slice(2);
 const args = forwarded.length > 0 ? forwarded : ['.'];
 console.log(`[Local Coder desktop] launching Electron GUI: ${electronPath}`);
+console.log(`[Local Coder desktop] entry: ${args.join(' ')}`);
 
 const child = spawn(electronPath, args, {
   cwd: process.cwd(),
