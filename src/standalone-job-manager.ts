@@ -132,7 +132,7 @@ export class StandaloneJobManager {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       throw new Error(
-        `Could not restore Local Coder Console sessions from ${file}: ${error instanceof Error ? error.message : String(error)}`
+        `Could not restore Local Coder sessions from ${file}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
     if (!Array.isArray(parsed)) throw new Error(`Standalone job store ${file} must contain an array.`);
@@ -150,7 +150,7 @@ export class StandaloneJobManager {
     for (const job of this.jobs.values()) {
       if (job.status === 'queued' || job.status === 'running') {
         job.status = 'queued';
-        this.emit(job, 'status', 'Console restarted; resuming job from durable checkpoint');
+        this.emit(job, 'status', 'App restarted; resuming job from durable checkpoint');
         void this.run(job);
       }
     }
@@ -288,7 +288,7 @@ export class StandaloneJobManager {
         await fs.rm(temp, { force: true }).catch(() => undefined);
       }
     }).catch((error) => {
-      console.error(`Local Coder Console session persistence failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`Local Coder session persistence failed: ${error instanceof Error ? error.message : String(error)}`);
     });
     return this.persistTail;
   }
@@ -338,7 +338,7 @@ export class StandaloneJobManager {
           job.rounds = round;
           const input: ProjectEngineerInput = {
             ...job.input,
-            claudeGuidance: job.guidance,
+            userGuidance: job.guidance,
             budgetJobId: job.id
           };
           this.emit(job, 'status', `Agent round ${round} running`);
