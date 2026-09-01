@@ -56,12 +56,20 @@ export interface StandaloneJobEvent {
   data?: Record<string, unknown>;
 }
 
+export interface StandaloneJobTurn {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+}
+
 export interface StandaloneJobSnapshot {
   id: string;
   status: StandaloneJobStatus;
   createdAt: string;
   updatedAt: string;
   input: StandaloneJobInput;
+  turns: StandaloneJobTurn[];
   decisionRequest?: PremiumDecisionRequest;
   escalationPlan?: ProjectEscalationPlan;
   result?: LocalEngineerResult;
@@ -85,8 +93,61 @@ type PersistedJob = Omit<JobInternal, 'waiting' | 'controller'>;
 
 export type JobListener = (event: StandaloneJobEvent, job: StandaloneJobSnapshot) => void;
 
+const MAX_PERSISTED_TURNS = 200;
+
 function premium(result: LocalEngineerResult): PremiumEngineerResult {
   return result as PremiumEngineerResult;
+}
+
+function boundTurns(turns: StandaloneJobTurn[]): StandaloneJobTurn[] {
+  return turns.slice(-MAX_PERSISTED_TURNS);
+}
+
+function lastUserTurnIndex(turns: StandaloneJobTurn[]): number {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    if (turns[index]?.role === 'user') return index;
+  }
+  return -1;
+}
+
+function normalizeRestoredTurns(job: PersistedJob): StandaloneJobTurn[] {
+  if (Array.isArray(job.turns)) {
+    const turns = job.turns.filter((turn): turn is StandaloneJobTurn =>
+      Boolean(turn) &&
+      typeof turn.id === 'string' &&
+      (turn.role === 'user' || turn.role === 'assistant') &&
+      typeof turn.content === 'string' &&
+      typeof turn.createdAt === 'string'
+    );
+    if (turns.length > 0) return boundTurns(turns);
+  }
+
+  const turns: StandaloneJobTurn[] = [];
+  const first = job.input.goal.trim();
+  if (first) {
+    turns.push({
+      id: randomUUID(),
+      role: 'user',
+      content: first,
+      createdAt: job.createdAt
+    });
+  }
+  // Only Chat renders successful answers from turns. Cowork keeps rendering its
+  // result card exactly as before, so synthesizing a Cowork assistant turn here
+  // would duplicate result.summary after restoring an old session.
+  if (
+    job.input.interactionMode === 'chat' &&
+    job.status === 'success' &&
+    job.result?.summary?.trim()
+  ) {
+    turns.push({
+      id: randomUUID(),
+      role: 'assistant',
+      content: job.result.summary.trim(),
+      createdAt: job.updatedAt
+    });
+  }
+  return turns;
 }
 
 function snapshot(job: JobInternal): StandaloneJobSnapshot {
@@ -96,6 +157,7 @@ function snapshot(job: JobInternal): StandaloneJobSnapshot {
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     input: job.input,
+    turns: [...job.turns],
     decisionRequest: job.decisionRequest,
     escalationPlan: job.escalationPlan,
     result: job.result,
@@ -167,6 +229,7 @@ export class StandaloneJobManager {
       if (typeof job.id !== 'string' || !job.input || typeof job.input.goal !== 'string') continue;
       this.jobs.set(job.id, {
         ...job,
+        turns: normalizeRestoredTurns(job),
         events: Array.isArray(job.events) ? job.events.slice(-200) : []
       });
     }
@@ -217,12 +280,52 @@ export class StandaloneJobManager {
         interactionMode: input.interactionMode ?? 'cowork',
         reasoningEffort: input.reasoningEffort ?? 'auto'
       },
+      turns: [{
+        id: randomUUID(),
+        role: 'user',
+        content: input.goal.trim(),
+        createdAt: now
+      }],
       rounds: 0,
       events: [],
       controller: new AbortController()
     };
     this.jobs.set(job.id, job);
     this.emit(job, 'status', input.interactionMode === 'chat' ? 'Chat queued' : 'Job queued');
+    void this.run(job);
+    return snapshot(job);
+  }
+
+  async followUp(id: string, message: string): Promise<StandaloneJobSnapshot> {
+    const job = this.requireJob(id);
+    if (job.input.interactionMode !== 'chat') {
+      throw new Error('Follow-up messages are available only for Chat conversations.');
+    }
+    if (['queued', 'running', 'waiting-decision', 'waiting-guidance'].includes(job.status)) {
+      throw new Error(`Cannot send a follow-up while the chat status is ${job.status}.`);
+    }
+    const content = message.trim();
+    if (!content) throw new Error('message is required.');
+
+    job.turns = boundTurns([
+      ...job.turns,
+      {
+        id: randomUUID(),
+        role: 'user',
+        content,
+        createdAt: new Date().toISOString()
+      }
+    ]);
+    job.status = 'running';
+    job.error = undefined;
+    job.result = undefined;
+    job.decisionRequest = undefined;
+    job.escalationPlan = undefined;
+    // Chat is one inference per message. Its turns must never consume Cowork's
+    // six-round decision/guidance resume budget.
+    job.rounds = 0;
+    job.controller = new AbortController();
+    this.emit(job, 'status', 'Chat follow-up queued');
     void this.run(job);
     return snapshot(job);
   }
@@ -366,6 +469,7 @@ export class StandaloneJobManager {
           const internal = this.jobs.get(publicJob.id)!;
           return {
             ...publicJob,
+            turns: boundTurns(publicJob.turns),
             guidance: internal.guidance
           };
         });
@@ -427,6 +531,49 @@ export class StandaloneJobManager {
           ? 'Direct chat started'
           : job.rounds > 0 ? 'Local agent resumed' : 'Local agent started');
 
+        if (isChat) {
+          const currentIndex = lastUserTurnIndex(job.turns);
+          const currentTurn = currentIndex >= 0 ? job.turns[currentIndex] : undefined;
+          if (!currentTurn) throw new Error('Chat has no user turn to answer.');
+
+          job.rounds = 1;
+          const input: ProjectEngineerInput = {
+            ...job.input,
+            goal: currentTurn.content,
+            userGuidance: job.guidance,
+            budgetJobId: job.id,
+            chatHistory: job.turns.slice(0, currentIndex).map((turn) => ({
+              role: turn.role,
+              content: turn.content
+            }))
+          };
+          this.emit(job, 'status', 'Generating chat response');
+          const result = await this.execution.executeEngineer(input);
+          throwIfCancelled();
+          job.result = result;
+
+          if (result.status !== 'success') {
+            throw new Error('Chat mode returned an engineering checkpoint instead of a direct response.');
+          }
+
+          job.turns = boundTurns([
+            ...job.turns,
+            {
+              id: randomUUID(),
+              role: 'assistant',
+              content: result.summary.trim(),
+              createdAt: new Date().toISOString()
+            }
+          ]);
+          job.status = 'success';
+          job.escalationPlan = undefined;
+          this.emit(job, 'result', 'Chat response completed', {
+            changedFiles: result.changedFiles.length,
+            quality: null
+          });
+          return;
+        }
+
         for (let round = Math.max(1, job.rounds + 1); round <= 6; round += 1) {
           throwIfCancelled();
           job.rounds = round;
@@ -435,7 +582,7 @@ export class StandaloneJobManager {
             userGuidance: job.guidance,
             budgetJobId: job.id
           };
-          this.emit(job, 'status', isChat ? 'Generating chat response' : `Agent round ${round} running`);
+          this.emit(job, 'status', `Agent round ${round} running`);
           const result = await this.execution.executeEngineer(input);
           throwIfCancelled();
           job.result = result;
@@ -443,15 +590,11 @@ export class StandaloneJobManager {
           if (result.status === 'success') {
             job.status = 'success';
             job.escalationPlan = undefined;
-            this.emit(job, 'result', isChat ? 'Chat response completed' : 'Local agent completed', {
+            this.emit(job, 'result', 'Local agent completed', {
               changedFiles: result.changedFiles.length,
-              quality: isChat ? null : premium(result).quality ?? null
+              quality: premium(result).quality ?? null
             });
             return;
-          }
-
-          if (isChat) {
-            throw new Error('Chat mode returned an engineering checkpoint instead of a direct response.');
           }
 
           const decisionRequest = premium(result).decisionRequest;
