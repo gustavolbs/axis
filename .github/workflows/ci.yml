@@ -48,13 +48,7 @@ jobs:
       - name: Build and run full test suite on Windows
         run: npm run check
 
-      - name: Check Node installer syntax
-        shell: pwsh
-        run: |
-          node --check scripts/install-claude-windows-remote.mjs
-          node --check scripts/install-claude-remote-worker.mjs
-
-      - name: Check PowerShell installer syntax
+      - name: Check PowerShell worker scripts syntax
         shell: pwsh
         run: |
           $scripts = @(
@@ -62,7 +56,6 @@ jobs:
             '.\scripts\windows-firewall.ps1',
             '.\scripts\setup-windows-host.ps1',
             '.\scripts\install-windows-worker-task.ps1',
-            '.\scripts\install-windows-dashboard-task.ps1',
             '.\scripts\ensure-windows-host.ps1',
             '.\test\windows-auth.ps1',
             '.\test\windows-firewall.ps1'
@@ -107,7 +100,6 @@ jobs:
         run: |
           npm run build
           node --check desktop/main.mjs
-          node --check desktop/bootstrap.mjs
           node --check scripts/run-desktop.mjs
           npx tsx --test test/desktop-shell.test.ts test/desktop-ui-contract.test.ts
 
