@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CheckCircle2, KeyRound, Plus, Trash2 } from 'lucide-react';
 
-import type { AdminProject, ModelSelection, RoutingPolicy } from './AdminPanel.js';
+import type { AdminProject, ModelSelection, RoutingPolicy } from './app-types.js';
 import { UiSelect, type UiSelectOption } from './UiSelect.js';
 
 interface Credential {
@@ -74,6 +74,146 @@ function optionalBudget(value: string): number | null {
   if (!value.trim()) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+/**
+ * Where the local runtime looks for Ollama. Until this was editable, a wrong or
+ * moved endpoint could only be fixed with an environment variable, and the only
+ * symptom was a toast saying the address could not be reached.
+ */
+type ExecutionMode = 'local' | 'remote' | 'auto';
+
+interface RuntimeSettingsResponse {
+  ollamaBaseUrl: string;
+  executionMode: ExecutionMode;
+  requiresWorkerToken: boolean;
+  restartRequired?: boolean;
+}
+
+export function OllamaEndpointSetting() {
+  const [value, setValue] = useState('');
+  const [saved, setSaved] = useState('');
+  const [mode, setMode] = useState<ExecutionMode>('local');
+  const [restartNeeded, setRestartNeeded] = useState(false);
+  const [busy, setBusy] = useState<'saving' | 'probing' | 'mode'>();
+  const [result, setResult] = useState<{ ok: boolean; message: string }>();
+
+  useEffect(() => {
+    void api<{ settings: RuntimeSettingsResponse }>('/api/settings')
+      .then(({ settings }) => {
+        setValue(settings.ollamaBaseUrl);
+        setSaved(settings.ollamaBaseUrl);
+        setMode(settings.executionMode);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  async function chooseMode(next: ExecutionMode) {
+    if (next === mode) return;
+    setBusy('mode');
+    setResult(undefined);
+    try {
+      const { settings } = await api<{ settings: RuntimeSettingsResponse }>('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ executionMode: next })
+      });
+      setMode(settings.executionMode);
+      setRestartNeeded(Boolean(settings.restartRequired));
+    } catch (error) {
+      setResult({ ok: false, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  const dirty = value.trim().replace(/\/+$/, '') !== saved;
+
+  async function save() {
+    setBusy('saving');
+    setResult(undefined);
+    try {
+      const { settings } = await api<{ settings: RuntimeSettingsResponse }>('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ ollamaBaseUrl: value })
+      });
+      setValue(settings.ollamaBaseUrl);
+      setSaved(settings.ollamaBaseUrl);
+      setResult({ ok: true, message: 'Saved. New requests use this address.' });
+    } catch (error) {
+      setResult({ ok: false, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  async function test() {
+    setBusy('probing');
+    setResult(undefined);
+    try {
+      const probe = await api<{ reachable: boolean; models?: number; error?: string }>('/api/settings/probe-ollama', {
+        method: 'POST',
+        body: JSON.stringify({ ollamaBaseUrl: value })
+      });
+      setResult(probe.reachable
+        ? { ok: true, message: `Reachable — ${probe.models ?? 0} model${probe.models === 1 ? '' : 's'} installed.` }
+        : { ok: false, message: probe.error ?? 'Not reachable.' });
+    } catch (error) {
+      setResult({ ok: false, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  return <>
+    <div className="settings-card settings-card-column">
+      <div>
+        <strong>Where work runs</strong>
+        <p>Direct talks straight to Ollama over the network — no worker and no bearer token. Windows worker runs the whole agent on the other machine and needs one.</p>
+      </div>
+      <div className="settings-mode-choice" role="radiogroup" aria-label="Execution mode">
+        {([
+          ['local', 'Direct to Ollama', 'No token'],
+          ['auto', 'Worker, fall back to direct', 'Needs a token'],
+          ['remote', 'Windows worker only', 'Needs a token']
+        ] as const).map(([id, label, note]) => <button
+          key={id}
+          role="radio"
+          aria-checked={mode === id}
+          className={mode === id ? 'selected' : ''}
+          disabled={busy !== undefined}
+          onClick={() => void chooseMode(id)}
+        ><strong>{label}</strong><small>{note}</small></button>)}
+      </div>
+      {restartNeeded ? <p className="settings-endpoint-result" role="status">Restart Local Coder to apply.</p> : null}
+    </div>
+
+    <div className="settings-card settings-card-column">
+      <div>
+        <strong>Ollama endpoint</strong>
+        <p>Default is http://127.0.0.1:11434. For an Ollama on another machine, use its address — that host needs OLLAMA_HOST=0.0.0.0 to accept connections.</p>
+      </div>
+      <div className="settings-endpoint-row">
+      <input
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => { if (event.key === 'Enter' && dirty) void save(); }}
+        placeholder="http://127.0.0.1:11434"
+        spellCheck={false}
+        autoCapitalize="off"
+        aria-label="Ollama base URL"
+      />
+      <button className="btn-secondary" onClick={() => void test()} disabled={!value.trim() || busy !== undefined}>
+        {busy === 'probing' ? 'Testing…' : 'Test'}
+      </button>
+      <button className="btn-primary" onClick={() => void save()} disabled={!dirty || busy !== undefined}>
+        {busy === 'saving' ? 'Saving…' : 'Save'}
+      </button>
+    </div>
+      {result ? <p className={`settings-endpoint-result ${result.ok ? 'ok' : 'error'}`} role="status">
+        {result.ok ? <CheckCircle2 size={13} /> : null}{result.message}
+      </p> : null}
+    </div>
+  </>;
 }
 
 export function ModelRoutingSettings() {

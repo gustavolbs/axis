@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { readAppSettings, writeAppSettings, type AppSettingsFile } from './app-config.js';
 import { loadConfig } from './config.js';
 import { createExecutionRuntime } from './execution-runtime.js';
 import { createLocalInferenceProvider } from './local-inference-provider.js';
@@ -103,6 +104,34 @@ function createCredentialInput(body: JsonObject): CreateCredentialInput {
   throw new Error('backend must be macos-keychain or environment.');
 }
 
+/** The slice of ~/.local-coder/settings.json that Settings can edit. */
+type RuntimeSettings = Pick<AppSettingsFile, 'ollamaBaseUrl' | 'executionMode'>;
+
+/** Exported for tests: the endpoint the user typed must be rejected here, not
+ *  three layers down inside a fetch error. */
+export function normalizeBaseUrl(value: string): string {
+  const raw = value.trim();
+  if (!raw) throw new Error('ollamaBaseUrl is required.');
+  const invalid = new Error(`"${value}" is not a valid URL. Expected something like http://127.0.0.1:11434`);
+  // `localhost:11434` is what people type; accept it rather than making them
+  // remember the scheme. Infer before trimming slashes, or a bare "http://"
+  // becomes the hostname.
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(withScheme);
+  } catch {
+    throw invalid;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('ollamaBaseUrl must use http or https.');
+  }
+  if (!parsed.hostname) throw invalid;
+  // Serialize from the parsed URL so the stored value is canonical, then drop
+  // the path: requests append their own (/api/tags, /api/chat, ...).
+  return `${parsed.protocol}//${parsed.host}`;
+}
+
 export class DesktopAppRuntime {
   private readonly listeners = new Set<AppRuntimeListener>();
   private readonly config = loadConfig();
@@ -116,6 +145,15 @@ export class DesktopAppRuntime {
     path.join(path.dirname(this.config.runStorePath), 'sessions')
   );
   private workerTimer?: NodeJS.Timeout;
+
+  /**
+   * Merges into ~/.local-coder/settings.json instead of replacing it. loadConfig
+   * reads executionMode, remoteWorkerUrl, remoteWorkerCredentialRef and model
+   * from that same file, so writing a fresh object would silently drop them.
+   */
+  private patchSettings(patch: RuntimeSettings): void {
+    writeAppSettings({ ...readAppSettings(), ...patch });
+  }
 
   static async create(): Promise<DesktopAppRuntime> {
     const runtime = new DesktopAppRuntime();
@@ -243,6 +281,68 @@ export class DesktopAppRuntime {
 
     if (method === 'GET' && pathname === '/health') {
       return { ok: true, execution: await this.execution.health() };
+    }
+
+    if (method === 'GET' && pathname === '/settings') {
+      return {
+        settings: {
+          ollamaBaseUrl: this.config.ollamaBaseUrl,
+          executionMode: this.config.executionMode,
+          // Direct mode never consults a worker, so no bearer token is involved.
+          requiresWorkerToken: this.config.executionMode !== 'local'
+        }
+      };
+    }
+    if (method === 'PUT' && pathname === '/settings') {
+      const body = objectBody(request.body);
+      const patch: RuntimeSettings = {};
+
+      if (body.ollamaBaseUrl !== undefined) {
+        const next = normalizeBaseUrl(requiredString(body, 'ollamaBaseUrl'));
+        // OllamaClient reads config.ollamaBaseUrl per request, so this applies
+        // to the next call without a restart.
+        this.config.ollamaBaseUrl = next;
+        patch.ollamaBaseUrl = next;
+      }
+
+      if (body.executionMode !== undefined) {
+        const mode = requiredString(body, 'executionMode');
+        if (mode !== 'local' && mode !== 'remote' && mode !== 'auto') {
+          throw new Error("executionMode must be 'local', 'remote' or 'auto'.");
+        }
+        // The execution runtime is built once from this value, so unlike the
+        // endpoint it only takes effect on the next launch.
+        patch.executionMode = mode;
+      }
+
+      if (Object.keys(patch).length === 0) throw new Error('No supported settings in request.');
+      this.patchSettings(patch);
+      return {
+        settings: {
+          ollamaBaseUrl: this.config.ollamaBaseUrl,
+          executionMode: patch.executionMode ?? this.config.executionMode,
+          requiresWorkerToken: (patch.executionMode ?? this.config.executionMode) !== 'local',
+          restartRequired: patch.executionMode !== undefined && patch.executionMode !== this.config.executionMode
+        }
+      };
+    }
+    /** Probes a URL without saving it, so Settings can show whether it works. */
+    if (method === 'POST' && pathname === '/settings/probe-ollama') {
+      const body = objectBody(request.body);
+      const target = normalizeBaseUrl(requiredString(body, 'ollamaBaseUrl'));
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4_000);
+      try {
+        const response = await fetch(`${target}/api/tags`, { signal: controller.signal });
+        if (!response.ok) return { reachable: false, error: `HTTP ${response.status}` };
+        const payload = (await response.json()) as { models?: Array<{ name?: string }> };
+        return { reachable: true, models: (payload.models ?? []).map((model) => model.name).filter(Boolean).length };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { reachable: false, error: controller.signal.aborted ? 'Timed out after 4s' : message };
+      } finally {
+        clearTimeout(timeout);
+      }
     }
     if (method === 'GET' && pathname === '/fs/exists') {
       const raw = url.searchParams.get('path')?.trim();

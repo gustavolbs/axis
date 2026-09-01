@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Check, ChevronDown, Folder, Info, MoreHorizontal, Pin, Search, X } from 'lucide-react';
 
-import type { AdminProject } from './AdminPanel.js';
+import type { AdminProject } from './app-types.js';
 import { FolderField } from './FolderField.js';
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {

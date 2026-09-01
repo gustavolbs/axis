@@ -3,20 +3,11 @@ import ReactDOM from 'react-dom/client';
 
 import { AppRoot } from './AppRoot.js';
 import { installRuntimeTransport } from './runtime-shim.js';
-import './styles.css';
-import './runs.css';
-import './runs-fixes.css';
-import './cancellation.css';
-import './lc-agent-shell.css';
-import './lc-agent.css';
-import './lc-agent-fidelity.css';
-import './lc-shell-fidelity.css';
-import './lc-layout-overrides.css';
-import './ui-select.css';
-import './settings-panels.css';
-import './chat-history.css';
-import './audit-v2.css';
-import './audit-v2-components.css';
+// Import order is the cascade. Keep it: tokens/base, then components, then the
+// corrections layer. Do not add a fifth stylesheet — fold changes into these.
+import './lc-base.css';
+import './lc-app.css';
+import './lc-fixes.css';
 
 installRuntimeTransport();
 

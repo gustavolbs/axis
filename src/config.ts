@@ -133,7 +133,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
     : env.LOCAL_CODER_MODEL ?? env.LOCAL_CODER_FAST_MODEL ?? configuredModel ?? 'qwen2.5-coder:14b';
 
   return {
-    ollamaBaseUrl: (env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434').replace(/\/$/, ''),
+    // Settings-file value wins over the built-in default so a remote Ollama can
+    // be configured from the app; the env var still overrides both.
+    ollamaBaseUrl: (env.OLLAMA_BASE_URL ?? settings?.ollamaBaseUrl ?? 'http://127.0.0.1:11434').replace(/\/$/, ''),
     model: fastModel,
     strongModel: env.LOCAL_CODER_STRONG_MODEL ?? configuredModel ?? 'qwen2.5-coder:14b',
     adaptiveModelsEnabled,

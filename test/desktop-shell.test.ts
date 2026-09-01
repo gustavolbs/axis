@@ -101,9 +101,12 @@ test('native bridge provides folder picker theme profile login settings and app 
   assert.match(desktopMain, /nativeTheme\.themeSource/);
   assert.match(desktopMain, /getLoginItemSettings/);
   assert.match(desktopMain, /setLoginItemSettings/);
-  for (const accelerator of ['CommandOrControl+N', 'CommandOrControl+\\\\', 'CommandOrControl+,', 'CommandOrControl+1', 'CommandOrControl+2', 'CommandOrControl+3']) {
+  // ⌘1 Projects, ⌘2 Runs. There is no third surface: conversations live in the
+  // sidebar tree, not on a Chats screen.
+  for (const accelerator of ['CommandOrControl+N', 'CommandOrControl+\\\\', 'CommandOrControl+,', 'CommandOrControl+1', 'CommandOrControl+2']) {
     assert.equal(desktopMain.includes(accelerator), true, `missing shortcut ${accelerator}`);
   }
+  assert.equal(desktopMain.includes('CommandOrControl+3'), false);
 });
 
 test('standalone document has a restrictive CSP', () => {

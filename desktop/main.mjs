@@ -237,14 +237,17 @@ function installApplicationMenu() {
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' }
       ]
     },
+    // Required, not cosmetic: on macOS the clipboard and selection accelerators
+    // (Cmd+A/C/V/X/Z) are delivered through these menu roles. A custom
+    // application menu without an Edit menu disables all of them, with no error.
+    { role: 'editMenu' },
     {
       label: 'View',
       submenu: [
         { label: 'Toggle sidebar', accelerator: 'CommandOrControl+\\', click: () => emitCommand('toggle-sidebar') },
         { type: 'separator' },
-        { label: 'Chats', accelerator: 'CommandOrControl+1', click: () => emitCommand('chats') },
-        { label: 'Projects', accelerator: 'CommandOrControl+2', click: () => emitCommand('projects') },
-        { label: 'Runs', accelerator: 'CommandOrControl+3', click: () => emitCommand('runs') },
+        { label: 'Projects', accelerator: 'CommandOrControl+1', click: () => emitCommand('projects') },
+        { label: 'Runs', accelerator: 'CommandOrControl+2', click: () => emitCommand('runs') },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'togglefullscreen' }

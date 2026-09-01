@@ -1,0 +1,774 @@
+/* ============================================================================
+   Local Coder — corrections layer
+   Last import. Each block states the defect it repairs so it can be folded
+   back into lc-app.css and this file deleted.
+   ========================================================================= */
+
+/* --------------------------------------------------------------------------
+   1. Rail width. It was hardcoded to 56px while macOS needs 78px to clear the
+      traffic lights, so the New chat "+" bled out of the rail. One token now.
+   ----------------------------------------------------------------------- */
+
+.lc-shell-app-shell,
+.lc-shell-app-shell.sidebar-collapsed {
+  grid-template-columns: var(--lc-sidebar-width) minmax(0, 1fr);
+}
+
+.sidebar-collapsed .lc-shell-primary-nav,
+.sidebar-collapsed .lc-shell-sidebar-footer {
+  padding-inline: 6px;
+}
+
+.sidebar-collapsed .lc-shell-primary-nav button,
+.sidebar-collapsed .lc-shell-sidebar-footer > button,
+.sidebar-collapsed .lc-shell-account-row {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  justify-content: center;
+  padding-inline: 0;
+}
+
+/* --------------------------------------------------------------------------
+   2. The account avatar vanished when collapsed: the rule hiding footer button
+      spans had no :not(), and nothing brought the avatar back.
+   ----------------------------------------------------------------------- */
+
+.sidebar-collapsed .lc-shell-account-row .lc-shell-account-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-inline: auto;
+}
+
+.sidebar-collapsed .lc-shell-runtime-status {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.sidebar-collapsed .lc-shell-runtime-status span {
+  display: none;
+}
+
+.sidebar-collapsed .lc-shell-runtime-status i {
+  margin: 0;
+}
+
+/* --------------------------------------------------------------------------
+   3. Footer pinned to the bottom in both states.
+   ----------------------------------------------------------------------- */
+
+.lc-shell-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-x: clip;
+}
+
+.lc-shell-sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.lc-shell-sidebar-footer {
+  flex: 0 0 auto;
+  margin-top: auto;
+}
+
+.sidebar-collapsed .lc-shell-sidebar-scroll {
+  display: block;
+  flex: 1 1 auto;
+  visibility: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   4. Window chrome. The toggle and search must sit beside the traffic lights
+      in BOTH states. Keeping the strip inside the sidebar made that
+      impossible: a 56px rail cannot hold 76px of lights plus a button, so the
+      collapsed state pushed them underneath instead. The strip is now a
+      window-level row, so its position no longer depends on sidebar width.
+   ----------------------------------------------------------------------- */
+
+.lc-shell-window-chrome {
+  position: fixed;
+  z-index: 20;
+  top: 0;
+  left: 0;
+  display: flex;
+  height: var(--lc-titlebar-h);
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  -webkit-app-region: drag;
+}
+
+.lc-shell-window-chrome button {
+  -webkit-app-region: no-drag;
+}
+
+/* Clears the lights, plus breathing room so the toggle is not welded to the
+   green button. */
+[data-shell='electron'][data-platform='darwin'] .lc-shell-window-chrome {
+  padding-left: calc(var(--lc-traffic-w) + var(--lc-traffic-gap));
+}
+
+/* The strip is out of flow, so the sidebar has to reserve the height itself. */
+.lc-shell-primary-nav {
+  margin-top: var(--lc-titlebar-h);
+}
+
+.lc-shell-icon-button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--lc-muted);
+}
+
+.lc-shell-icon-button:hover {
+  background: var(--lc-hover);
+  color: var(--lc-text);
+}
+
+/* --------------------------------------------------------------------------
+   5. Sidebar type scale. 14px overshot the reference app; 13px with 32px rows
+      matches it. Section titles, avatar and account text were undersized at
+      10.5px / 22px / 9px.
+   ----------------------------------------------------------------------- */
+
+.lc-shell-primary-nav {
+  gap: 1px;
+  padding: 2px 8px 8px;
+}
+
+.lc-shell-primary-nav button,
+.lc-shell-sidebar-footer > button {
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.lc-shell-primary-nav button.active {
+  font-weight: 500;
+}
+
+.lc-shell-primary-nav svg,
+.lc-shell-sidebar-footer > button svg {
+  flex: 0 0 auto;
+}
+
+.lc-shell-sidebar-section-title {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.lc-shell-recent-label {
+  padding: 8px 10px 2px;
+  font-size: 11px;
+}
+
+.lc-shell-sidebar-row {
+  min-height: 30px;
+  border-radius: 8px;
+}
+
+.lc-shell-sidebar-row-copy strong {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.lc-shell-sidebar-row-copy small {
+  font-size: 11px;
+}
+
+.lc-shell-sidebar-empty {
+  padding: 2px 10px 6px;
+  font-size: 13px;
+}
+
+.lc-shell-sidebar-footer {
+  gap: 2px;
+  padding: 6px 8px 8px;
+}
+
+.lc-shell-account-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 10px;
+  border-radius: 8px;
+}
+
+.lc-shell-account-avatar {
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.lc-shell-account-row > span:last-of-type {
+  flex: 1 1 auto;
+}
+
+.lc-shell-account-row strong {
+  color: var(--lc-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.lc-shell-account-row small {
+  font-size: 11px;
+}
+
+.lc-shell-account-chevron {
+  flex: 0 0 auto;
+  color: var(--lc-faint);
+}
+
+.sidebar-collapsed .lc-shell-account-chevron {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   6. Conversation tree. Chats now live under their project, reachable through
+      the folder icon acting as a disclosure, with a section for the ones that
+      belong to no project.
+   ----------------------------------------------------------------------- */
+
+.lc-shell-sidebar-row-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.lc-shell-sidebar-row-wrap .lc-shell-sidebar-row {
+  flex: 1 1 auto;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.lc-shell-project-disclosure {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lc-muted);
+}
+
+.lc-shell-project-disclosure:hover:not(:disabled) {
+  background: var(--lc-hover);
+  color: var(--lc-text);
+}
+
+.lc-shell-project-disclosure:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.lc-shell-sidebar-row.project-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/* Indented to the disclosure's text edge, with a guide line like a tree. */
+.lc-shell-project-children {
+  margin-left: 15px;
+  padding-left: 9px;
+  border-left: 1px solid var(--lc-border-soft);
+}
+
+.lc-shell-project-node {
+  margin-bottom: 1px;
+}
+
+/* --------------------------------------------------------------------------
+   7. Read state. One dot, three states: pulsing while the run is in flight,
+      filled accent when unread, hollow once read. Clicking toggles read
+      without opening the conversation.
+   ----------------------------------------------------------------------- */
+
+.lc-shell-chat-dot {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.lc-shell-chat-dot::before {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  content: '';
+}
+
+.lc-shell-chat-dot[data-state='unread']::before {
+  background: var(--lc-accent);
+}
+
+.lc-shell-chat-dot[data-state='read']::before {
+  border: 1px solid var(--lc-border-strong);
+  background: transparent;
+}
+
+.lc-shell-chat-dot[data-state='running']::before {
+  background: var(--lc-muted);
+  animation: lc-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.lc-shell-chat-dot[data-state='running'] {
+  cursor: default;
+}
+
+.lc-shell-chat-dot:hover:not([data-state='running'])::before {
+  border-color: var(--lc-text-soft);
+  background: var(--lc-text-soft);
+}
+
+@keyframes lc-dot-pulse {
+  0%,
+  100% {
+    opacity: .25;
+    transform: scale(.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Unread conversations read as unread in the label too, not only in the dot. */
+.lc-shell-sidebar-row.unread .lc-shell-sidebar-row-copy strong {
+  color: var(--lc-text);
+  font-weight: 500;
+}
+
+/* The row menu only appears on hover, so the dot is not competing with it. */
+.lc-shell-row-menu-button {
+  opacity: 0;
+}
+
+.lc-shell-sidebar-row-wrap:hover .lc-shell-row-menu-button,
+.lc-shell-row-menu-button:focus-visible {
+  opacity: 1;
+}
+
+.sidebar-collapsed .lc-shell-chat-dot,
+.sidebar-collapsed .lc-shell-row-menu-button,
+.sidebar-collapsed .lc-shell-project-disclosure {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   8. Error toast. Every button was forced to a 26px square, so the "Retry" and
+      "Settings" labels overflowed and collided with the dismiss X.
+   ----------------------------------------------------------------------- */
+
+.lc-agent-error-banner > button:not([aria-label='Dismiss']) {
+  display: inline-flex;
+  width: auto;
+  height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 7px;
+  white-space: nowrap;
+}
+
+.lc-agent-error-banner > button[aria-label='Dismiss'] {
+  flex: 0 0 auto;
+  margin-left: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   9. Hover and active resolved to the same background, so a hovered row was
+      indistinguishable from the selected one.
+   ----------------------------------------------------------------------- */
+
+.lc-shell-primary-nav button,
+.settings-rail button,
+.runs-filter button {
+  background: transparent;
+  color: var(--lc-text-soft);
+}
+
+.lc-shell-primary-nav button:hover,
+.settings-rail button:hover,
+.runs-filter button:hover {
+  background: var(--lc-hover);
+  color: var(--lc-text);
+}
+
+.lc-shell-primary-nav button.active,
+.settings-rail button.active,
+.runs-filter button.active {
+  background: var(--lc-surface-3);
+  color: var(--lc-text);
+  font-weight: 500;
+}
+
+.lc-shell-primary-nav button.active:hover,
+.settings-rail button.active:hover,
+.runs-filter button.active:hover {
+  background: var(--lc-surface-3);
+}
+
+/* --------------------------------------------------------------------------
+   10. Composer focus was a square 2px outline on the textarea inside a 24px
+       card: it clipped the corners and read as a nested box, while the card
+       lightened its border at the same time. One ring, on the card.
+   ----------------------------------------------------------------------- */
+
+.lc-agent-prompt-input:focus,
+.lc-agent-prompt-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.lc-agent-composer:focus-within {
+  border-color: var(--lc-border-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lc-accent) 18%, transparent),
+              0 2px 8px rgba(0, 0, 0, .16);
+}
+
+/* --------------------------------------------------------------------------
+   11. Popovers grew until they covered the greeting and the suggestion chips.
+   ----------------------------------------------------------------------- */
+
+.lc-agent-popover,
+.composer-add-popover {
+  max-height: min(360px, calc(100vh - var(--lc-titlebar-h) - 180px));
+  overflow-y: auto;
+}
+
+/* --------------------------------------------------------------------------
+   12. Typography: uppercase eyebrows and 580-weight headings were off-scale.
+   ----------------------------------------------------------------------- */
+
+.page-title {
+  font-family: var(--lc-font-serif);
+  font-size: 30px;
+  font-weight: 400;
+  letter-spacing: -.01em;
+}
+
+.lc-shell-sidebar-section-title,
+.lc-shell-recent-label {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--lc-muted);
+}
+
+/* --------------------------------------------------------------------------
+   14. New chat: no border, just a tinted square behind the +.
+   ----------------------------------------------------------------------- */
+
+.lc-shell-new-chat {
+  margin-bottom: 2px;
+  border: 0;
+  background: transparent;
+}
+
+.lc-shell-new-chat:hover {
+  background: var(--lc-hover);
+}
+
+.lc-shell-new-chat i {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--lc-accent) 16%, transparent);
+  color: var(--lc-accent);
+}
+
+/* --------------------------------------------------------------------------
+   15. Empty state: greeting only. The mark is inline with the text, and the
+       breadcrumb and explanatory paragraph are gone — the reference app shows
+       neither, and they were most of the content on the screen.
+   ----------------------------------------------------------------------- */
+
+.lc-agent-empty-start {
+  padding-bottom: 8px;
+}
+
+.lc-agent-empty-start h1 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.lc-agent-empty-mark {
+  flex: 0 0 auto;
+  color: var(--lc-accent);
+}
+
+/* --------------------------------------------------------------------------
+   16. Suggestions moved below the composer and gained an icon plus a real
+       surface — as pale hairline pills above it they read as disabled.
+   ----------------------------------------------------------------------- */
+
+/* The composer reserves trailing space for when it is the last thing on the
+   screen: 22px of margin plus 12px of padding. With the suggestions below it
+   that stacked into a ~48px gap, so drop it and let one margin be the gap. */
+.lc-agent-thread-pane:has(.lc-agent-quick-actions) .lc-agent-composer-wrap,
+.lc-agent-thread-pane:has(.lc-agent-cowork-hint) .lc-agent-composer-wrap {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.lc-agent-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: min(760px, 100%);
+  margin: 12px auto 0;
+  padding-inline: 8px;
+}
+
+.lc-agent-quick-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 13px;
+  border: 1px solid var(--lc-border);
+  border-radius: 999px;
+  background: var(--lc-surface-2);
+  color: var(--lc-text-soft);
+  font-size: 13px;
+  font-weight: 450;
+}
+
+.lc-agent-quick-actions button:hover {
+  border-color: var(--lc-border-strong);
+  background: var(--lc-surface-3);
+  color: var(--lc-text);
+}
+
+.lc-agent-quick-actions svg {
+  flex: 0 0 auto;
+  color: var(--lc-muted);
+}
+
+.lc-agent-quick-actions button:hover svg {
+  color: var(--lc-accent);
+}
+
+.lc-agent-cowork-hint {
+  width: min(760px, 100%);
+  margin: 12px auto 0;
+  padding-inline: 10px;
+  color: var(--lc-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* --------------------------------------------------------------------------
+   17. Chat / Cowork switch inside the composer toolbar.
+   ----------------------------------------------------------------------- */
+
+.composer-mode-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--lc-surface-1);
+}
+
+.composer-mode-switch button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lc-muted);
+  font-size: 12px;
+  font-weight: 450;
+}
+
+.composer-mode-switch button:hover {
+  color: var(--lc-text-soft);
+}
+
+.composer-mode-switch button.selected {
+  background: var(--lc-surface-3);
+  color: var(--lc-text);
+  font-weight: 500;
+}
+
+/* Cowork needs a folder, so the empty selector is not a neutral chip. */
+.project-menu-anchor.required .composer-text-button {
+  color: var(--lc-text-soft);
+}
+
+/* --------------------------------------------------------------------------
+   18. Ollama endpoint field in Settings → General.
+   ----------------------------------------------------------------------- */
+
+.settings-mode-choice {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.settings-mode-choice button {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--lc-border);
+  border-radius: 9px;
+  background: var(--lc-surface-1);
+  color: var(--lc-text-soft);
+  text-align: left;
+}
+
+.settings-mode-choice button:hover:not(:disabled) {
+  border-color: var(--lc-border-strong);
+  background: var(--lc-surface-2);
+}
+
+.settings-mode-choice button.selected {
+  border-color: var(--lc-accent);
+  background: var(--lc-accent-soft);
+  color: var(--lc-text);
+}
+
+.settings-mode-choice strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.settings-mode-choice small {
+  color: var(--lc-muted);
+  font-size: 11px;
+}
+
+.settings-mode-choice button:disabled {
+  cursor: default;
+  opacity: .6;
+}
+
+.settings-endpoint-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-endpoint-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--lc-border);
+  border-radius: 8px;
+  background: var(--lc-surface-1);
+  color: var(--lc-text);
+  font-size: 13px;
+  font-variant-ligatures: none;
+}
+
+.settings-endpoint-row input:focus-visible {
+  border-color: var(--lc-border-strong);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lc-accent) 18%, transparent);
+}
+
+.settings-endpoint-row button {
+  flex: 0 0 auto;
+}
+
+.settings-endpoint-row button:disabled {
+  cursor: default;
+  opacity: .5;
+}
+
+.settings-endpoint-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.settings-endpoint-result.ok {
+  color: var(--lc-positive);
+}
+
+.settings-endpoint-result.error {
+  color: var(--lc-negative);
+}
+
+/* --------------------------------------------------------------------------
+   19. The "System" appearance card had no rule of its own and rendered a
+       stray diagonal instead of a light/dark split.
+   ----------------------------------------------------------------------- */
+
+.theme-preview.theme-light {
+  background: #ffffff;
+}
+
+.theme-preview.theme-light::before {
+  background: #f0eee9;
+}
+
+.theme-preview.theme-light i {
+  background: #e3dfd7;
+}
+
+.theme-preview.theme-dark {
+  background: #24231f;
+}
+
+.theme-preview.theme-dark::before {
+  background: #191815;
+}
+
+.theme-preview.theme-dark i {
+  background: #34312c;
+}
+
+.theme-preview.theme-system {
+  background: #24231f;
+}
+
+.theme-preview.theme-system::before {
+  background: #191815;
+}
+
+.theme-preview.theme-system i {
+  background: #34312c;
+}
+
+.theme-preview.theme-system::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, #f0eee9 0 28%, #ffffff 28% 100%);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+  content: '';
+}

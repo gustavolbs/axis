@@ -1,0 +1,266 @@
+/* ============================================================================
+   Local Coder — design tokens + base layer
+   Single source of truth. Nothing else in the app may declare :root, html,
+   body or #root. Dark is the base; light is opt-in.
+   ========================================================================= */
+
+:root {
+  color-scheme: dark;
+
+  /* geometry */
+  --lc-titlebar-h: 52px;
+  --lc-sidebar-width: 250px;
+  /* macOS traffic lights end around 76px from the window edge; the collapsed
+     rail may not be narrower. The gap keeps the sidebar toggle off the green
+     button instead of welded to it. */
+  --lc-traffic-w: 78px;
+  --lc-traffic-gap: 10px;
+
+  /* surfaces. The sidebar sits one hair below the canvas, not a visible step:
+     the reference app separates them with a hairline, not a fill change. */
+  --lc-bg: #1f1e1b;
+  --lc-sidebar: #1c1b18;
+  --lc-surface: #282722;
+  --lc-surface-1: #24231f;
+  --lc-surface-2: #2c2a26;
+  --lc-surface-3: #37342f;
+  --lc-hover: #2d2b27;
+
+  /* lines */
+  --lc-border: #3c3933;
+  --lc-border-soft: #2c2a26;
+  --lc-border-strong: #504b43;
+
+  /* type */
+  --lc-text: #f0ede6;
+  --lc-text-soft: #cbc5bb;
+  --lc-muted: #9b958b;
+  --lc-faint: #817b73;
+
+  /* accent + semantics */
+  --lc-accent: #d97757;
+  --lc-accent-hover: #e18162;
+  --lc-accent-soft: #452d24;
+  --lc-positive: #8bb99a;
+  --lc-positive-soft: #26372b;
+  --lc-warning: #d0a45e;
+  --lc-warning-soft: #3c3221;
+  --lc-negative: #e08a83;
+  --lc-negative-soft: #442827;
+  --lc-blue: #9aafc7;
+  --lc-blue-soft: #2a3440;
+
+  /* elevation */
+  --lc-shadow-popover: 0 20px 55px rgba(0, 0, 0, .42);
+
+  /* fonts */
+  --lc-font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --lc-font-serif: ui-serif, Charter, "Iowan Old Style", Georgia, Cambria, serif;
+}
+
+/* Light theme: explicit choice, or system preference while set to "system". */
+html[data-lc-theme='light'] {
+  color-scheme: light;
+
+  --lc-bg: #f7f6f2;
+  --lc-sidebar: #f3f1ec;
+  --lc-surface: #fffefa;
+  --lc-surface-1: #f5f3ee;
+  --lc-surface-2: #f4f2ed;
+  --lc-surface-3: #e3dfd7;
+  --lc-hover: #eae7e1;
+
+  --lc-border: #d8d3ca;
+  --lc-border-soft: #e4e0d8;
+  --lc-border-strong: #cbc7bd;
+
+  --lc-text: #25231f;
+  --lc-text-soft: #555149;
+  --lc-muted: #777168;
+  --lc-faint: #999188;
+
+  --lc-accent: #c86442;
+  --lc-accent-hover: #b95838;
+  --lc-accent-soft: #f5e6df;
+  --lc-positive: #4f735d;
+  --lc-positive-soft: #e8f0e9;
+  --lc-warning: #946c2f;
+  --lc-warning-soft: #f5eddb;
+  --lc-negative: #a24f4a;
+  --lc-negative-soft: #f7e5e3;
+  --lc-blue: #536d8c;
+  --lc-blue-soft: #e8edf3;
+
+  --lc-shadow-popover: 0 18px 50px rgba(42, 37, 31, .16);
+}
+
+@media (prefers-color-scheme: light) {
+  html[data-lc-theme='system'] {
+    color-scheme: light;
+
+    --lc-bg: #f7f6f2;
+    --lc-sidebar: #f3f1ec;
+    --lc-surface: #fffefa;
+    --lc-surface-1: #f5f3ee;
+    --lc-surface-2: #f4f2ed;
+    --lc-surface-3: #e3dfd7;
+    --lc-hover: #eae7e1;
+
+    --lc-border: #d8d3ca;
+    --lc-border-soft: #e4e0d8;
+    --lc-border-strong: #cbc7bd;
+
+    --lc-text: #25231f;
+    --lc-text-soft: #555149;
+    --lc-muted: #777168;
+    --lc-faint: #999188;
+
+    --lc-accent: #c86442;
+    --lc-accent-hover: #b95838;
+    --lc-accent-soft: #f5e6df;
+    --lc-positive: #4f735d;
+    --lc-positive-soft: #e8f0e9;
+    --lc-warning: #946c2f;
+    --lc-warning-soft: #f5eddb;
+    --lc-negative: #a24f4a;
+    --lc-negative-soft: #f7e5e3;
+    --lc-blue: #536d8c;
+    --lc-blue-soft: #e8edf3;
+
+    --lc-shadow-popover: 0 18px 50px rgba(42, 37, 31, .16);
+  }
+}
+
+/* Narrow windows: the title bar loses the height it only needed for the
+   traffic-light inset. Token overrides belong here, not scattered across
+   component media queries. */
+@media (max-width: 720px) {
+  :root {
+    --lc-titlebar-h: 48px;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Base
+   ----------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* An element with [hidden] must stay hidden. Author `display` declarations beat
+   the UA stylesheet regardless of specificity, so this guard is required —
+   without it a `<button hidden>` renders. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  background: var(--lc-bg);
+}
+
+body {
+  color: var(--lc-text);
+  font-family: var(--lc-font-sans);
+  letter-spacing: -.01em;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  letter-spacing: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--lc-accent);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--lc-border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--lc-border-strong);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Legacy: the only surviving rules from the retired styles.css
+   ----------------------------------------------------------------------- */
+
+.status-pill {
+  display: inline-flex;
+  width: max-content;
+  align-items: center;
+  padding: 3px 8px;
+  border: 1px solid var(--lc-border);
+  border-radius: 999px;
+  color: var(--lc-muted);
+  font-size: 11px;
+}
+
+.status-pill.good {
+  border-color: color-mix(in srgb, var(--lc-positive) 40%, transparent);
+  background: var(--lc-positive-soft);
+  color: var(--lc-positive);
+}
+
+.status-pill.warn {
+  border-color: color-mix(in srgb, var(--lc-warning) 40%, transparent);
+  background: var(--lc-warning-soft);
+  color: var(--lc-warning);
+}
+
+.status-pill.bad {
+  border-color: color-mix(in srgb, var(--lc-negative) 40%, transparent);
+  background: var(--lc-negative-soft);
+  color: var(--lc-negative);
+}
+
+.status-pill.live {
+  border-color: color-mix(in srgb, var(--lc-blue) 40%, transparent);
+  background: var(--lc-blue-soft);
+  color: var(--lc-blue);
+}

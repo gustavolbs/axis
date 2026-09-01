@@ -1,6 +1,6 @@
 import type { RuntimeEvent, RuntimeRequest } from './runtime-client.js';
 
-export type DesktopCommand = 'new-chat' | 'toggle-sidebar' | 'settings' | 'chats' | 'projects' | 'runs';
+export type DesktopCommand = 'new-chat' | 'toggle-sidebar' | 'settings' | 'projects' | 'runs';
 export type ThemeMode = 'system' | 'light' | 'dark';
 
 export interface LocalCoderBridge {
@@ -27,4 +27,18 @@ declare global {
 
 export function desktopBridge(): LocalCoderBridge | undefined {
   return window.localCoder ?? window.lc;
+}
+
+/**
+ * Turns an OS account name into something addressable: `gustavo.bispo` reads as
+ * "Gustavo Bispo", `gustavobispo` as "Gustavobispo". Used by both the sidebar
+ * account row and the greeting, which must agree.
+ */
+export function displayProfileName(value: string): string {
+  const clean = value.trim();
+  if (!clean) return 'Local profile';
+  const capitalize = (part: string) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`;
+  return /[._-]/.test(clean)
+    ? clean.split(/[._-]+/).filter(Boolean).map(capitalize).join(' ')
+    : capitalize(clean);
 }

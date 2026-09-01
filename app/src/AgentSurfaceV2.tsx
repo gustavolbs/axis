@@ -9,12 +9,16 @@ import {
 } from 'react';
 import {
   ArrowUp,
+  Bug,
   Check,
   ChevronDown,
   ChevronLeft,
   CircleStop,
+  Code,
   FileText,
+  FlaskConical,
   FolderGit2,
+  Lightbulb,
   LoaderCircle,
   Plus,
   Sparkles,
@@ -22,14 +26,25 @@ import {
   Zap
 } from 'lucide-react';
 
-import type { AdminProject, ModelSelection } from './AdminPanel.js';
+import type { AdminProject, ModelSelection } from './app-types.js';
 import { FolderField } from './FolderField.js';
+import { displayProfileName } from './native.js';
 
 type ReasoningEffortSelection = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 type JobReasoningEffort = ReasoningEffortSelection | 'none';
 type ModelMenuView = 'closed' | 'models' | 'effort';
 
 const NEW_TASK_ID = '__new__';
+
+/**
+ * Cowork is bound to a folder: it needs a project or a workspace path before it
+ * can run anything. Chat is a loose conversation — a project is optional.
+ */
+type ComposerMode = 'chat' | 'cowork';
+
+function storedMode(): ComposerMode {
+  return localStorage.getItem('local-coder.composer-mode') === 'cowork' ? 'cowork' : 'chat';
+}
 
 interface DecisionOption { id: string; label: string; tradeoff: string }
 interface DecisionQuestion {
@@ -179,6 +194,7 @@ export function AgentSurfaceV2() {
   const [workspace, setWorkspace] = useState(() => localStorage.getItem('local-coder.workspace') ?? '');
   const [goal, setGoal] = useState('');
   const [context, setContext] = useState('');
+  const [mode, setMode] = useState<ComposerMode>(storedMode);
   const [submitting, setSubmitting] = useState(false);
   const [modelSelection, setModelSelection] = useState('auto');
   const [effort, setEffort] = useState<ReasoningEffortSelection>('auto');
@@ -196,7 +212,7 @@ export function AgentSurfaceV2() {
 
   useEffect(() => {
     localStorage.removeItem('local-coder.open-job');
-    void window.lc?.getProfile().then(({ userName }) => setProfileName(userName));
+    void window.lc?.getProfile().then(({ userName }) => setProfileName(displayProfileName(userName)));
     void Promise.all([
       api<{ jobs: Job[] }>('/api/jobs'),
       api<{ projects: AdminProject[] }>('/api/projects')
@@ -304,13 +320,16 @@ export function AgentSurfaceV2() {
     else localStorage.removeItem('local-coder.project');
   }
 
-  function startNewTask() {
-    setActiveId(NEW_TASK_ID);
-    setGoal('');
-    setContext('');
-    setExtrasOpen(false);
-    setModelMenu('closed');
-    setProjectMenu(false);
+  function chooseMode(next: ComposerMode) {
+    localStorage.setItem('local-coder.composer-mode', next);
+    setMode(next);
+    // Cowork cannot run without a folder, so ask for one straight away instead
+    // of failing on submit.
+    if (next === 'cowork' && !selectedProject && !workspace.trim()) {
+      setModelMenu('closed');
+      if (projects.length > 0) setProjectMenu(true);
+      else setExtrasOpen(true);
+    }
   }
 
   async function createJob() {
@@ -404,7 +423,6 @@ export function AgentSurfaceV2() {
   }
 
   return <div className="lc-agent-agent-shell lc-agent-shell">
-    <button className="new-task-button agent-new-task-proxy" hidden onClick={startNewTask}>New chat</button>
     <main className="lc-agent-thread-pane lc-thread-pane">
       {error ? <div className="lc-agent-error-banner" role="status" aria-live="polite">
         <span>{error}</span>
@@ -413,7 +431,7 @@ export function AgentSurfaceV2() {
         <button onClick={() => setError(undefined)} aria-label="Dismiss"><X size={14} /></button>
       </div> : null}
 
-      {!active ? <EmptyStart selectedProject={selectedProject} profileName={profileName} onSuggestion={setGoal} /> : <TaskThread
+      {!active ? <EmptyStart selectedProject={selectedProject} profileName={profileName} /> : <TaskThread
         job={active}
         currentInference={currentInference}
         decisionSelections={decisionSelections}
@@ -455,21 +473,44 @@ export function AgentSurfaceV2() {
         createJob={createJob}
         cancelActive={cancelActive}
         onKeyDown={onComposerKeyDown}
+        mode={mode}
+        chooseMode={chooseMode}
       />
+
+      {/* Chat offers starting points; Cowork says which folder it will act on. */}
+      {!active && mode === 'chat' ? <Suggestions onPick={setGoal} /> : null}
+      {!active && mode === 'cowork' ? <p className="lc-agent-cowork-hint">
+        {selectedProject ? `Cowork runs in ${selectedProject.name}.` : workspace.trim() ? `Cowork runs in ${workspace.trim()}.` : 'Pick a project or folder for Cowork to act on.'}
+      </p> : null}
     </main>
     {active ? <ProgressRail job={active} currentInference={currentInference} /> : null}
   </div>;
 }
 
-function EmptyStart({ selectedProject, profileName, onSuggestion }: { selectedProject?: AdminProject; profileName?: string; onSuggestion: (value: string) => void }) {
-  const suggestions = ['Review this code', 'Fix a bug', 'Improve the tests', 'Explain this project'];
+/**
+ * Greeting only — the mark sits inline with the text, and there is no
+ * breadcrumb or explanatory paragraph. The suggestions moved below the
+ * composer, where they belong.
+ */
+function EmptyStart({ selectedProject, profileName }: { selectedProject?: AdminProject; profileName?: string }) {
   return <section className="lc-agent-empty-start">
-    {selectedProject ? <div className="empty-project-breadcrumb">Projects <span>›</span> {selectedProject.name}</div> : null}
-    <div className="lc-agent-empty-mark"><Sparkles size={26} strokeWidth={1.4} /></div>
-    <h1>{selectedProject ? selectedProject.name : greeting(profileName)}</h1>
-    <p>{selectedProject ? 'Start a chat in this project. Local Coder will use its isolated workspace and routing policy.' : 'Describe what you want to build, change, investigate or understand.'}</p>
-    <div className="lc-agent-quick-actions">{suggestions.map((label) => <button key={label} onClick={() => onSuggestion(label)}>{label}</button>)}</div>
+    <h1><Sparkles className="lc-agent-empty-mark" size={30} strokeWidth={1.4} aria-hidden="true" />{selectedProject ? selectedProject.name : greeting(profileName)}</h1>
   </section>;
+}
+
+const SUGGESTIONS: Array<{ label: string; icon: typeof Code; prompt: string }> = [
+  { label: 'Code', icon: Code, prompt: 'Review this code' },
+  { label: 'Fix a bug', icon: Bug, prompt: 'Fix a bug' },
+  { label: 'Tests', icon: FlaskConical, prompt: 'Improve the tests' },
+  { label: 'Explain', icon: Lightbulb, prompt: 'Explain this project' }
+];
+
+function Suggestions({ onPick }: { onPick: (value: string) => void }) {
+  return <div className="lc-agent-quick-actions">
+    {SUGGESTIONS.map(({ label, icon: Icon, prompt }) => <button key={label} onClick={() => onPick(prompt)}>
+      <Icon size={14} strokeWidth={1.7} aria-hidden="true" /><span>{label}</span>
+    </button>)}
+  </div>;
 }
 
 function Composer(props: {
@@ -484,6 +525,8 @@ function Composer(props: {
   projectMenu: boolean;
   setProjectMenu: (value: boolean) => void;
   chooseProject: (id: string) => void;
+  mode: ComposerMode;
+  chooseMode: (value: ComposerMode) => void;
   extrasOpen: boolean;
   setExtrasOpen: (value: boolean) => void;
   modelMenu: ModelMenuView;
@@ -542,10 +585,21 @@ function Composer(props: {
             </div> : null}
           </div>
 
-          <div className="composer-menu-anchor project-menu-anchor">
+          {/* Chat or Cowork. Cowork is bound to a folder; Chat is not. */}
+          <div className="composer-mode-switch" role="radiogroup" aria-label="Conversation mode">
+            {(['chat', 'cowork'] as const).map((value) => <button
+              key={value}
+              role="radio"
+              aria-checked={props.mode === value}
+              className={props.mode === value ? 'selected' : ''}
+              onClick={() => props.chooseMode(value)}
+            >{value === 'chat' ? 'Chat' : 'Cowork'}</button>)}
+          </div>
+
+          <div className={`composer-menu-anchor project-menu-anchor ${props.mode === 'cowork' ? 'required' : ''}`}>
             <button className="composer-text-button" aria-haspopup="menu" aria-expanded={props.projectMenu} onClick={() => { props.setExtrasOpen(false); props.setModelMenu('closed'); props.setProjectMenu(!props.projectMenu); }}>
               <FolderGit2 size={14} strokeWidth={1.6} />
-              <span>{props.selectedProject?.name ?? 'Choose project'}</span>
+              <span>{props.selectedProject?.name ?? (props.mode === 'cowork' ? 'Project or folder' : 'No project')}</span>
               <ChevronDown size={13} strokeWidth={1.6} />
             </button>
             {props.projectMenu ? <div className="lc-agent-popover project-popover" role="menu">

@@ -7,6 +7,12 @@ export interface AppSettingsFile {
   executionMode?: 'remote' | 'auto' | 'local';
   remoteWorkerUrl?: string;
   remoteWorkerCredentialRef?: string;
+  /**
+   * Base URL of the Ollama the runtime talks to. Set this to a machine on the
+   * LAN and `executionMode: 'local'` reaches a remote Ollama directly — no
+   * worker, and therefore no bearer token.
+   */
+  ollamaBaseUrl?: string;
   model?: string;
   updatedAt?: string;
 }
@@ -39,6 +45,7 @@ function parseSettings(raw: string, source: string): AppSettingsFile | undefined
     executionMode,
     remoteWorkerUrl: typeof value.remoteWorkerUrl === 'string' ? value.remoteWorkerUrl.trim() : undefined,
     remoteWorkerCredentialRef: typeof value.remoteWorkerCredentialRef === 'string' ? value.remoteWorkerCredentialRef.trim() : undefined,
+    ollamaBaseUrl: typeof value.ollamaBaseUrl === 'string' ? value.ollamaBaseUrl.trim() : undefined,
     model: typeof value.model === 'string' ? value.model.trim() : undefined,
     updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : undefined
   };
@@ -57,6 +64,7 @@ export function writeAppSettings(settings: AppSettingsFile): void {
     executionMode: settings.executionMode,
     remoteWorkerUrl: settings.remoteWorkerUrl?.trim() || undefined,
     remoteWorkerCredentialRef: settings.remoteWorkerCredentialRef?.trim() || undefined,
+    ollamaBaseUrl: settings.ollamaBaseUrl?.trim() || undefined,
     model: settings.model?.trim() || undefined,
     updatedAt: new Date().toISOString()
   };
