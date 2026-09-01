@@ -47,6 +47,7 @@ import type {
   InferenceProvider,
   InferenceRequest,
   InferenceUsage,
+  ProviderKind,
   ReasoningEffort
 } from './providers/types.js';
 import type { RemoteWorkerHealth } from './remote-protocol.js';
@@ -61,12 +62,21 @@ export interface ProjectChatHistoryTurn {
   content: string;
 }
 
+export interface ProjectChatModelLimits {
+  providerId: string;
+  providerKind: ProviderKind;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
 export type ProjectEngineerInput = LocalEngineerInput & {
   projectId?: string;
   /** Chat is a single inference; only Cowork runs the engineering pipeline. */
   interactionMode?: 'chat' | 'cowork';
   /** Earlier Chat turns. The current user message remains goal. */
   chatHistory?: ProjectChatHistoryTurn[];
+  /** Runtime-owned limits for the exact Chat provider/model. Never supplied by the UI. */
+  chatModelLimits?: ProjectChatModelLimits;
   /** Internal host correlation id so resumed decision rounds share one per-job budget. */
   budgetJobId?: string;
   /** Optional standalone override. Undefined preserves the Project default. */
@@ -151,6 +161,7 @@ type AgentExecutor = (
     repoMemoryScopeKey?: string;
     interactionMode?: 'chat' | 'cowork';
     chatHistory?: ProjectChatHistoryTurn[];
+    chatModelLimits?: ProjectChatModelLimits;
   }
 ) => Promise<LocalEngineerExecution>;
 
@@ -342,6 +353,7 @@ export class ProjectAwareEngineerBackend {
         routingPolicy: _routingPolicy,
         modelSelection: _modelSelection,
         reasoningEffort: _reasoningEffort,
+        chatModelLimits: _chatModelLimits,
         ...legacyInput
       } = input;
       return await this.legacy.executeEngineer(legacyInput);
@@ -383,19 +395,46 @@ export class ProjectAwareEngineerBackend {
       }
     );
 
+    let chatModelLimits: ProjectChatModelLimits | undefined;
+    if (input.interactionMode === 'chat') {
+      const selection = input.modelSelection ?? project.defaultModel;
+      const target = selection.mode === 'explicit'
+        ? { providerId: selection.providerId, modelId: selection.modelId }
+        : selection.mode === 'local-first'
+          ? { providerId: 'ollama', modelId: selection.modelId }
+          : undefined;
+      if (target) {
+        const definition = await providerRuntime.modelDefinition(
+          project,
+          target.providerId,
+          target.modelId
+        );
+        if (definition) {
+          chatModelLimits = {
+            providerId: target.providerId,
+            providerKind: definition.providerKind,
+            contextWindow: definition.model.contextWindow,
+            maxOutputTokens: definition.model.maxOutputTokens
+          };
+        }
+      }
+    }
+
     const {
       projectId: _projectId,
       budgetJobId: _budgetJobId,
       routingPolicy: _routingPolicy,
       modelSelection: _modelSelection,
       reasoningEffort: _reasoningEffort,
+      chatModelLimits: _chatModelLimits,
       ...agentInput
     } = input;
     const memoryScopeKey = projectIsolationKey(project);
     const execution = await this.agentExecutor(routedChat, this.config, {
       ...agentInput,
       workspace: projectWorkspace,
-      repoMemoryScopeKey: memoryScopeKey
+      repoMemoryScopeKey: memoryScopeKey,
+      chatModelLimits
     });
     const result = execution.result as ProjectEngineerResult;
     result.projectExecution = {
