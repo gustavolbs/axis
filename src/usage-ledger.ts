@@ -22,6 +22,8 @@ export interface UsageLedgerEvent {
   costUsd?: number;
   pricingSource?: string;
   pricingVerifiedAt?: string;
+  /** Correlates a billable provider reservation with the durable usage event. */
+  billingId?: string;
   fallbackUsed: boolean;
 }
 
@@ -118,6 +120,7 @@ function normalizeEvent(input: UsageLedgerEvent): UsageLedgerEvent {
     costUsd,
     pricingSource: input.pricingSource?.trim() || undefined,
     pricingVerifiedAt: input.pricingVerifiedAt?.trim() || undefined,
+    billingId: input.billingId ? safeId(input.billingId, 'Usage billing id') : undefined,
     fallbackUsed: input.fallbackUsed === true
   };
 }
