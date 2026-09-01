@@ -30,6 +30,18 @@ test('desktop uses the direct Electron main entry without an intermediate bootst
   assert.equal(fs.existsSync('desktop/bootstrap.mjs'), false);
 });
 
+test('desktop waits for Electron readiness before any explicit single-instance lock', () => {
+  const readyIndex = desktopMain.indexOf('await app.whenReady()');
+  const lockIndex = desktopMain.indexOf('app.requestSingleInstanceLock()');
+  assert.ok(readyIndex >= 0, 'missing app.whenReady()');
+  assert.ok(lockIndex > readyIndex, 'single-instance lock must not run before app.whenReady()');
+  assert.match(desktopMain, /if \(process\.platform !== 'darwin'\) \{[\s\S]*?app\.requestSingleInstanceLock\(\)/);
+  assert.match(desktopMain, /macOS startup: relying on Launch Services/);
+  assert.match(desktopMain, /main module loaded/);
+  assert.match(desktopMain, /will-finish-launching/);
+  assert.match(desktopMain, /ready event received/);
+});
+
 test('desktop renderer is sandboxed and does not expose Node', () => {
   assert.match(desktopMain, /nodeIntegration:\s*false/);
   assert.match(desktopMain, /contextIsolation:\s*true/);
@@ -50,7 +62,6 @@ test('desktop shell uses the same compiled standalone control plane', () => {
   assert.match(desktopMain, /dist', 'standalone-console\.js'/);
   assert.match(desktopMain, /ELECTRON_RUN_AS_NODE: '1'/);
   assert.match(desktopMain, /\/api\/jobs/);
-  assert.match(desktopMain, /requestSingleInstanceLock/);
 });
 
 test('desktop startup is immediately visible and diagnosable', () => {
