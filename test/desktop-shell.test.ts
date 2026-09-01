@@ -30,16 +30,19 @@ test('desktop uses the direct Electron main entry without an intermediate bootst
   assert.equal(fs.existsSync('desktop/bootstrap.mjs'), false);
 });
 
-test('desktop waits for Electron readiness before any explicit single-instance lock', () => {
-  const readyIndex = desktopMain.indexOf('await app.whenReady()');
-  const lockIndex = desktopMain.indexOf('app.requestSingleInstanceLock()');
-  assert.ok(readyIndex >= 0, 'missing app.whenReady()');
-  assert.ok(lockIndex > readyIndex, 'single-instance lock must not run before app.whenReady()');
-  assert.match(desktopMain, /if \(process\.platform !== 'darwin'\) \{[\s\S]*?app\.requestSingleInstanceLock\(\)/);
-  assert.match(desktopMain, /macOS startup: relying on Launch Services/);
+test('desktop main finishes ESM evaluation before waiting for Electron readiness', () => {
+  assert.doesNotMatch(desktopMain, /await\s+app\.whenReady\(\)/);
+  assert.match(desktopMain, /void app\.whenReady\(\)\s*\n\s*\.then\(initializeDesktop\)/);
+  assert.match(desktopMain, /app\.once\('will-finish-launching'/);
+  assert.match(desktopMain, /app\.once\('ready'/);
   assert.match(desktopMain, /main module loaded/);
-  assert.match(desktopMain, /will-finish-launching/);
-  assert.match(desktopMain, /ready event received/);
+});
+
+test('explicit single-instance lock is kept out of the macOS pre-ready path', () => {
+  assert.match(desktopMain, /function configureSingleInstanceBehavior\(\)/);
+  assert.match(desktopMain, /if \(process\.platform === 'darwin'\) \{[\s\S]*?return true;/);
+  assert.match(desktopMain, /app\.requestSingleInstanceLock\(\)/);
+  assert.match(desktopMain, /macOS startup: relying on Launch Services/);
 });
 
 test('desktop renderer is sandboxed and does not expose Node', () => {
