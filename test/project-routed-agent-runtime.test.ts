@@ -257,6 +257,7 @@ test('strict Local-only project bypasses the provider layer and preserves legacy
 test('speed-first agent chat routes directly to configured cloud model without legacy/local inference', async () => {
   const fixture = runtimeFixture();
   fixture.settings.update('anthropic', {
+    unlimitedUsage: true,
     defaultModelId: 'cloud-fast',
     models: { 'cloud-fast': { frontier: true, qualityScore: 92 } }
   });
