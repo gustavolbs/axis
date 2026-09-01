@@ -1,8 +1,19 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-import { app, BrowserWindow, dialog, nativeTheme, screen, session } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeTheme,
+  screen,
+  session,
+  shell
+} from 'electron';
 
 const HOST = '127.0.0.1';
 const DEFAULT_PORT = 7557;
@@ -27,9 +38,6 @@ function log(message, detail) {
   console.log(`[Local Coder desktop] ${message}${suffix}`);
 }
 
-// Register lifecycle diagnostics immediately. The ESM main module must finish
-// evaluating before Electron readiness is awaited asynchronously; blocking module
-// evaluation on app readiness can deadlock the main-process lifecycle.
 log('main module loaded', {
   pid: process.pid,
   platform: process.platform,
@@ -66,6 +74,10 @@ async function probeLocalCoder(url) {
 
 function backendScript() {
   return path.join(app.getAppPath(), 'dist', 'standalone-console.js');
+}
+
+function preloadScript() {
+  return path.join(app.getAppPath(), 'desktop', 'preload.mjs');
 }
 
 function windowStatePath() {
@@ -233,9 +245,23 @@ async function startControlPlane() {
   );
 }
 
+function openExternalIfSafe(target) {
+  try {
+    const url = new URL(target);
+    if (url.protocol !== 'https:') return false;
+    void shell.openExternal(url.toString());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function restrictRenderer(window, baseUrl) {
   const allowedOrigin = new URL(baseUrl).origin;
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalIfSafe(url);
+    return { action: 'deny' };
+  });
   window.webContents.on('will-navigate', (event, target) => {
     try {
       if (new URL(target).origin === allowedOrigin) return;
@@ -243,6 +269,7 @@ function restrictRenderer(window, baseUrl) {
       // Deny malformed/non-URL navigation below.
     }
     event.preventDefault();
+    openExternalIfSafe(target);
   });
 }
 
@@ -282,10 +309,104 @@ function installRendererDiagnostics(window, url) {
       });
     }
   });
-  window.on('unresponsive', () => {
-    console.error('[Local Coder desktop] window became unresponsive');
-  });
+  window.on('unresponsive', () => console.error('[Local Coder desktop] window became unresponsive'));
   window.on('responsive', () => log('window responsive'));
+}
+
+function emitCommand(command) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('local-coder:command', command);
+}
+
+function installApplicationMenu() {
+  const appMenu = process.platform === 'darwin'
+    ? [{
+        label: 'Local Coder',
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          { label: 'Settings…', accelerator: 'CommandOrControl+,', click: () => emitCommand('settings') },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' }
+        ]
+      }]
+    : [];
+
+  const template = [
+    ...appMenu,
+    {
+      label: 'File',
+      submenu: [
+        { label: 'New chat', accelerator: 'CommandOrControl+N', click: () => emitCommand('new-chat') },
+        { type: 'separator' },
+        process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        { label: 'Toggle sidebar', accelerator: 'CommandOrControl+\\', click: () => emitCommand('toggle-sidebar') },
+        { type: 'separator' },
+        { label: 'Chats', accelerator: 'CommandOrControl+1', click: () => emitCommand('chats') },
+        { label: 'Projects', accelerator: 'CommandOrControl+2', click: () => emitCommand('projects') },
+        { label: 'Runs', accelerator: 'CommandOrControl+3', click: () => emitCommand('runs') },
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    { role: 'windowMenu' }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function installNativeBridge() {
+  for (const channel of [
+    'local-coder:pick-directory',
+    'local-coder:set-theme',
+    'local-coder:get-profile',
+    'local-coder:get-login-item-settings',
+    'local-coder:set-open-at-login'
+  ]) ipcMain.removeHandler(channel);
+
+  ipcMain.handle('local-coder:pick-directory', async (event, defaultPath) => {
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+    const result = await dialog.showOpenDialog(owner, {
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: typeof defaultPath === 'string' && defaultPath.trim() ? defaultPath : app.getPath('home'),
+      buttonLabel: 'Use this folder'
+    });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+
+  ipcMain.handle('local-coder:set-theme', (_event, source) => {
+    const next = source === 'light' || source === 'dark' ? source : 'system';
+    nativeTheme.themeSource = next;
+    return nativeTheme.shouldUseDarkColors;
+  });
+  ipcMain.handle('local-coder:get-profile', () => ({
+    userName: process.env.LOCAL_CODER_PROFILE_NAME?.trim() || os.userInfo().username,
+    home: app.getPath('home')
+  }));
+  ipcMain.handle('local-coder:get-login-item-settings', () => ({
+    openAtLogin: app.getLoginItemSettings().openAtLogin
+  }));
+  ipcMain.handle('local-coder:set-open-at-login', (_event, enabled) => {
+    app.setLoginItemSettings({ openAtLogin: Boolean(enabled) });
+    return { openAtLogin: app.getLoginItemSettings().openAtLogin };
+  });
+
+  nativeTheme.on('updated', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('local-coder:theme-changed', nativeTheme.shouldUseDarkColors);
+    }
+  });
 }
 
 function createMainWindow(url) {
@@ -297,13 +418,14 @@ function createMainWindow(url) {
     height: restored.height,
     minWidth: MIN_WINDOW_WIDTH,
     minHeight: MIN_WINDOW_HEIGHT,
-    show: true,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f1e1b' : '#f7f6f2',
+    show: false,
+    backgroundColor: '#1f1e1b',
     title: 'Local Coder',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 18, y: 18 } } : {}),
     autoHideMenuBar: process.platform !== 'darwin',
     webPreferences: {
+      preload: preloadScript(),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -319,12 +441,25 @@ function createMainWindow(url) {
   window.on('maximize', () => scheduleWindowStateSave(window));
   window.on('unmaximize', () => scheduleWindowStateSave(window));
 
+  let shown = false;
+  const showWindow = () => {
+    if (shown || window.isDestroyed()) return;
+    shown = true;
+    window.show();
+    window.focus();
+  };
+  window.once('ready-to-show', showWindow);
+  const visibleFallback = setTimeout(() => {
+    log('ready-to-show fallback fired');
+    showWindow();
+  }, 1_500);
+  window.once('closed', () => clearTimeout(visibleFallback));
+
   if (restored.maximized) window.maximize();
-  window.show();
-  window.focus();
   log('window created', window.getBounds());
 
   window.loadURL(url).catch((error) => {
+    showWindow();
     const message = error instanceof Error ? error.stack || error.message : String(error);
     console.error('[Local Coder desktop] loadURL rejected', message);
     if (!window.isDestroyed()) {
@@ -422,6 +557,8 @@ async function initializeDesktop() {
   log('Electron ready', { packaged: app.isPackaged, version: process.versions.electron });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
+  installNativeBridge();
+  installApplicationMenu();
 
   if (process.platform !== 'darwin') {
     log('requesting explicit single-instance lock');
@@ -455,8 +592,6 @@ async function initializeDesktop() {
   });
 }
 
-// Do not block ESM module evaluation on Electron readiness. The callback starts
-// only after the app has emitted readiness and the module has returned control.
 app.whenReady()
   .then(initializeDesktop)
   .catch((error) => {
