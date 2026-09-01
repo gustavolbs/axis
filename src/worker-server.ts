@@ -284,7 +284,7 @@ async function handleChat(body: unknown, response: ServerResponse): Promise<void
   const request = body as unknown as RemoteChatRequest;
   const generation = await scheduler.enqueue('chat', 'model-chat', (job) => {
     job.update({ phase: 'other', action: 'Running delegated model chat' });
-    return ollama.chat(request.systemPrompt, request.userPrompt, request.format);
+    return ollama.chat(request.systemPrompt, request.userPrompt, request.format, request.runtime);
   });
   json(response, 200, {
     protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
