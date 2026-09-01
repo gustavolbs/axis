@@ -132,7 +132,7 @@ function json(
 
 function authorized(request: IncomingMessage): boolean {
   const token = config.workerToken;
-  if (!token) return false;
+  if (!token) return true;
   const header = request.headers.authorization;
   if (!header?.startsWith('Bearer ')) return false;
   const provided = Buffer.from(header.slice('Bearer '.length), 'utf8');
@@ -537,11 +537,6 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   });
 }
 
-if (!config.workerToken) {
-  console.error('LOCAL_CODER_WORKER_TOKEN is required to start the remote worker.');
-  process.exit(1);
-}
-
 const server = http.createServer((request, response) => {
   const controller = new AbortController();
   request.once('aborted', () => controller.abort());
@@ -580,7 +575,8 @@ server.headersTimeout = 30_000;
 server.keepAliveTimeout = 5_000;
 
 server.listen(config.workerPort, config.workerHost, () => {
+  const authMode = config.workerToken ? 'bearer-auth' : 'no-auth';
   console.error(
-    `local-coder worker v${WORKER_VERSION} listening on http://${config.workerHost}:${config.workerPort} (model: ${config.model}, bootstrap: ${config.workerBootstrap}, maxJobs: ${config.workerMaxConcurrentJobs ?? 1})`
+    `local-coder worker v${WORKER_VERSION} listening on http://${config.workerHost}:${config.workerPort} (model: ${config.model}, bootstrap: ${config.workerBootstrap}, maxJobs: ${config.workerMaxConcurrentJobs ?? 1}, auth: ${authMode})`
   );
 });

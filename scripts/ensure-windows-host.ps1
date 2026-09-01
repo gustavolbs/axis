@@ -135,15 +135,16 @@ function Assert-LocalHealth {
   param([Parameter(Mandatory = $true)][string]$DashboardHost)
 
   $workerToken = [Environment]::GetEnvironmentVariable("LOCAL_CODER_WORKER_TOKEN", "User")
-  if ([string]::IsNullOrWhiteSpace($workerToken)) {
-    throw "LOCAL_CODER_WORKER_TOKEN is missing after setup."
+  $workerRequest = @{
+    Uri = "http://127.0.0.1:$WorkerPort/v1/health"
+    Method = "Get"
+    TimeoutSec = 10
+  }
+  if (-not [string]::IsNullOrWhiteSpace($workerToken)) {
+    $workerRequest.Headers = @{ Authorization = "Bearer $workerToken" }
   }
 
-  $workerHealth = Invoke-RestMethod `
-    -Uri "http://127.0.0.1:$WorkerPort/v1/health" `
-    -Headers @{ Authorization = "Bearer $workerToken" } `
-    -Method Get `
-    -TimeoutSec 10
+  $workerHealth = Invoke-RestMethod @workerRequest
   if (-not $workerHealth) {
     throw "Worker health endpoint returned an empty response."
   }
@@ -201,9 +202,13 @@ function Invoke-FullVerification {
     -LocalAddress $ListenHost
   Assert-LocalHealth -DashboardHost $ListenHost
 
+  $workerToken = [Environment]::GetEnvironmentVariable("LOCAL_CODER_WORKER_TOKEN", "User")
+  $authMode = if ([string]::IsNullOrWhiteSpace($workerToken)) { "disabled" } else { "bearer token" }
+
   Write-Host ""
   Write-Host "Local Coder Windows host verified healthy." -ForegroundColor Green
   Write-Host "  Worker:    TCP $WorkerPort -> PID $($workerListener.ProcessId) -> $($workerListener.ExecutablePath)"
+  Write-Host "  Auth:      $authMode"
   Write-Host "  Dashboard: TCP $DashboardPort -> PID $($dashboardListener.ProcessId) -> $($dashboardListener.ExecutablePath)"
   Write-Host "  Firewall:  exact runtime + Mac $MacIp + required ports"
   Write-Host "  Dashboard: http://$ListenHost`:$DashboardPort -> HTTP 200"
@@ -285,7 +290,7 @@ if ($existingToken) {
   Write-Host "Preserving existing worker authentication token." -ForegroundColor Cyan
   $setupArguments.WorkerToken = $existingToken
 } else {
-  Write-Host "No existing worker token found; first-time setup will generate one." -ForegroundColor Yellow
+  Write-Host "No existing worker token found; worker authentication will remain disabled." -ForegroundColor Yellow
 }
 
 # Run setup in this PowerShell process so a preserved bearer token is never exposed in

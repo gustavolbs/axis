@@ -57,6 +57,12 @@ function Set-UserEnvironmentVariable {
   Set-Item -Path "Env:$Name" -Value $Value
 }
 
+function Remove-UserEnvironmentVariable {
+  param([string]$Name)
+  [Environment]::SetEnvironmentVariable($Name, $null, "User")
+  Remove-Item -Path "Env:$Name" -ErrorAction SilentlyContinue
+}
+
 function Replace-FirewallRule {
   param(
     [string]$DisplayName,
@@ -107,7 +113,7 @@ if ($Mode -eq "OllamaOnly") {
   Write-Host "Ollama-only remote inference configured." -ForegroundColor Green
   Write-Host "Quit Ollama from the system tray and start it again so OLLAMA_HOST takes effect." -ForegroundColor Yellow
   Write-Host "Then test from the Mac: curl http://<WINDOWS_IP>:$OllamaPort/api/tags"
-  Write-Host "Configure the Mac with: npm run install:claude:windows -- --host <WINDOWS_IP>"
+  Write-Host "Configure the Local Coder app to use http://<WINDOWS_IP>:$OllamaPort as the Ollama endpoint."
   return
 }
 
@@ -123,19 +129,23 @@ $tokenResolution = Resolve-LocalCoderWorkerToken `
 $WorkerToken = $tokenResolution.Token
 
 switch ($tokenResolution.Source) {
-  "existing" { Write-Host "Worker authentication token: preserving existing token." -ForegroundColor Cyan }
-  "explicit" { Write-Host "Worker authentication token: using explicitly supplied token." -ForegroundColor Cyan }
-  "generated" { Write-Host "Worker authentication token: generated for first-time setup." -ForegroundColor Yellow }
+  "existing" { Write-Host "Worker authentication: preserving existing bearer token." -ForegroundColor Cyan }
+  "explicit" { Write-Host "Worker authentication: using explicitly supplied bearer token." -ForegroundColor Cyan }
   "rotated" { Write-Host "Worker authentication token: ROTATED explicitly." -ForegroundColor Yellow }
+  "disabled" { Write-Host "Worker authentication: disabled because no token was configured." -ForegroundColor Yellow }
 }
 
-# In full worker mode Ollama stays loopback-only. Only the authenticated worker is
-# exposed to LAN/Meshnet. A dedicated Local Coder Node runtime isolates the worker
-# from generic firewall rules created for the system-wide Node installation.
+# In full worker mode Ollama stays loopback-only. Only the Local Coder worker is
+# exposed to the Mac. The firewall remains restricted to the supplied Mac IP even
+# when bearer authentication is intentionally disabled.
 Set-UserEnvironmentVariable "OLLAMA_HOST" "127.0.0.1:$OllamaPort"
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_HOST" "0.0.0.0"
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_PORT" "$WorkerPort"
-Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_TOKEN" $WorkerToken
+if ($tokenResolution.Source -eq "disabled") {
+  Remove-UserEnvironmentVariable "LOCAL_CODER_WORKER_TOKEN"
+} else {
+  Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_TOKEN" $WorkerToken
+}
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_ALLOWED_GIT_HOSTS" $AllowedGitHosts
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_BOOTSTRAP" $Bootstrap
 Set-UserEnvironmentVariable "LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS" "$MaxConcurrentJobs"
@@ -199,6 +209,7 @@ Write-Host "Bootstrap mode: $Bootstrap"
 Write-Host "Heavy job concurrency: $MaxConcurrentJobs"
 Write-Host "Persistent repo intelligence: $(if ($DisableRepoIntelligence) { 'disabled' } else { 'enabled' })"
 Write-Host "Dedicated Node runtime: $localCoderNode"
+Write-Host "Worker authentication: $(if ($tokenResolution.Source -eq 'disabled') { 'disabled' } else { 'bearer token enabled' })"
 if (-not $DisableRepoIntelligence) {
   Write-Host "Repo intelligence is stored outside target repositories under the worker state directory." -ForegroundColor Cyan
 }
@@ -208,12 +219,15 @@ if ($MaxConcurrentJobs -eq 1) {
   Write-Host "Different checkout/worktree jobs may overlap; same-checkout jobs and Ollama inference remain serialized." -ForegroundColor Yellow
 }
 Write-Host ""
-if ($tokenResolution.Source -in @("generated", "rotated")) {
-  Write-Host "WORKER TOKEN - copy this once to the Mac installer:" -ForegroundColor Yellow
+if ($tokenResolution.Source -eq "rotated") {
+  Write-Host "WORKER TOKEN - copy this once to the Mac settings if you want bearer auth enabled:" -ForegroundColor Yellow
   Write-Host $WorkerToken -ForegroundColor Yellow
   Write-Host ""
+} elseif ($tokenResolution.Source -eq "disabled") {
+  Write-Host "No worker token is required. The Windows firewall still restricts access to the supplied Mac IP." -ForegroundColor Cyan
+  Write-Host ""
 } else {
-  Write-Host "Worker token was preserved and is not printed during routine setup." -ForegroundColor Cyan
+  Write-Host "Worker token was preserved/configured and is not printed during routine setup." -ForegroundColor Cyan
   Write-Host ""
 }
 Write-Host "Ollama remains loopback-only in Worker mode; port $OllamaPort is not opened to the LAN."
@@ -239,7 +253,12 @@ if ($StartWorker) {
 }
 
 Write-Host ""
-Write-Host "Then on the Mac run:" -ForegroundColor Cyan
-Write-Host "  npm run install:claude:worker -- --host <WINDOWS_IP_OR_MESHNET_NAME> --token '<TOKEN>'"
+Write-Host "Then configure the standalone Mac app with:" -ForegroundColor Cyan
+Write-Host "  Worker URL: http://<WINDOWS_IP_OR_MESHNET_NAME>:$WorkerPort"
+if ($tokenResolution.Source -eq "disabled") {
+  Write-Host "  Worker token: leave empty"
+} else {
+  Write-Host "  Worker token: use the configured token"
+}
 Write-Host ""
 Write-Host "Do not port-forward $WorkerPort or $OllamaPort on your router."

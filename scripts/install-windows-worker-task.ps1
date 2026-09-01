@@ -41,9 +41,6 @@ $localCoderNode = Install-LocalCoderNodeRuntime -NodePath $node.Source
 if (-not (Test-Path $WorkerEntry)) {
   throw "Missing $WorkerEntry. Run npm run build first."
 }
-if (-not [Environment]::GetEnvironmentVariable("LOCAL_CODER_WORKER_TOKEN", "User")) {
-  throw "LOCAL_CODER_WORKER_TOKEN is not configured for the Windows user. Run setup-windows-host.ps1 first."
-}
 
 $workerRule = Get-NetFirewallRule -PolicyStore ActiveStore -DisplayName $WorkerFirewallRule -ErrorAction SilentlyContinue
 if (-not $workerRule) {
@@ -93,10 +90,16 @@ Register-ScheduledTask `
   -Trigger $trigger `
   -Settings $settings `
   -Principal $principal `
-  -Description "Authenticated local-coder execution worker for Claude Code" | Out-Null
+  -Description "Local Coder execution worker for standalone desktop inference" | Out-Null
 
 Write-Host "Installed scheduled task '$TaskName'." -ForegroundColor Green
 Write-Host "Dedicated Node runtime: $localCoderNode"
+$configuredToken = [Environment]::GetEnvironmentVariable("LOCAL_CODER_WORKER_TOKEN", "User")
+if ([string]::IsNullOrWhiteSpace($configuredToken)) {
+  Write-Host "Worker authentication: disabled (no token configured)." -ForegroundColor Yellow
+} else {
+  Write-Host "Worker authentication: bearer token enabled." -ForegroundColor Cyan
+}
 
 if (-not $NoStart) {
   Start-ScheduledTask -TaskName $TaskName

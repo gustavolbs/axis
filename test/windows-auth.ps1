@@ -19,10 +19,10 @@ Assert-True ($explicit.Source -eq "explicit") "Expected explicit token source."
 Assert-True ($explicit.Token -eq "explicit-token") "Explicit token was not used."
 Assert-True $explicit.Changed "Different explicit token should be marked changed."
 
-$firstInstall = Resolve-LocalCoderWorkerToken -ExistingToken $null
-Assert-True ($firstInstall.Source -eq "generated") "Expected first install to generate a token."
-Assert-True ($firstInstall.Changed) "Generated token should be marked changed."
-Assert-True (-not [string]::IsNullOrWhiteSpace($firstInstall.Token)) "Generated token is empty."
+$tokenless = Resolve-LocalCoderWorkerToken -ExistingToken $null
+Assert-True ($tokenless.Source -eq "disabled") "Expected first install without a token to keep authentication disabled."
+Assert-True (-not $tokenless.Changed) "Tokenless setup should not report a generated credential change."
+Assert-True ([string]::IsNullOrWhiteSpace($tokenless.Token)) "Tokenless setup unexpectedly produced a token."
 
 $rotated = Resolve-LocalCoderWorkerToken -ExistingToken $existing -Rotate
 Assert-True ($rotated.Source -eq "rotated") "Expected explicit rotation source."
