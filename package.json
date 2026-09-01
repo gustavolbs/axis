@@ -4,7 +4,7 @@
   "private": true,
   "description": "Provider-agnostic software engineering agent with Claude/MCP and standalone macOS interfaces.",
   "type": "module",
-  "main": "desktop/main.mjs",
+  "main": "desktop/bootstrap.mjs",
   "engines": {
     "node": ">=20"
   },
@@ -19,7 +19,7 @@
     "console:build": "vite build --config console/vite.config.ts",
     "console:start": "node dist/standalone-console.js",
     "console": "npm run build && npm run console:start",
-    "desktop": "npm run build && electron .",
+    "desktop": "npm run build && node scripts/run-desktop.mjs",
     "desktop:dir:mac": "npm run build && electron-builder --mac dir --publish never",
     "desktop:pack:mac": "npm run build && electron-builder --mac dmg zip --publish never",
     "desktop:release:mac": "node scripts/release-macos.mjs",
