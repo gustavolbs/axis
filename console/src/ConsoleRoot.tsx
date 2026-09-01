@@ -17,6 +17,7 @@ import { App } from './App.js';
 import { ProjectGallery } from './ProjectGallery.js';
 import { RunInspector } from './RunInspector.js';
 import { SettingsModal } from './SettingsModal.js';
+import type { DesktopCommand } from './native.js';
 
 type Surface = 'agent' | 'projects' | 'runs';
 
@@ -60,17 +61,32 @@ function groupLabel(value: string): string {
   return 'Older';
 }
 
+function displayProfileName(value: string): string {
+  const clean = value.trim();
+  if (!clean) return 'Local profile';
+  return clean.includes('.') || clean.includes('-') || clean.includes('_')
+    ? clean.split(/[._-]+/).filter(Boolean).map((part) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`).join(' ')
+    : clean;
+}
+
 export function ConsoleRoot() {
   const [surface, setSurface] = useState<Surface>(storedSurface);
   const [jobs, setJobs] = useState<SidebarJob[]>([]);
   const [projects, setProjects] = useState<AdminProject[]>([]);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [userCollapsed, setUserCollapsed] = useState(() => localStorage.getItem('local-coder.sidebar-collapsed') === 'true');
+  const [autoCollapsed, setAutoCollapsed] = useState(() => window.innerWidth < 900);
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('local-coder.sidebar-width') ?? 250));
   const [agentEpoch, setAgentEpoch] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [jobMenuId, setJobMenuId] = useState<string>();
+  const [profileName, setProfileName] = useState('Local profile');
+  const [runtimeOnline, setRuntimeOnline] = useState<boolean>();
+
+  const sidebarCollapsed = userCollapsed || autoCollapsed;
+  const isElectron = window.lc?.isElectron === true;
+  const platform = window.lc?.platform ?? 'web';
 
   async function refreshSidebar() {
     const [{ jobs: nextJobs }, { projects: nextProjects }] = await Promise.all([
@@ -83,6 +99,8 @@ export function ConsoleRoot() {
 
   useEffect(() => {
     void refreshSidebar();
+    void window.lc?.getProfile().then(({ userName }) => setProfileName(displayProfileName(userName)));
+
     const events = new EventSource('/api/events');
     events.addEventListener('jobs', (event) => setJobs(JSON.parse((event as MessageEvent<string>).data) as SidebarJob[]));
     events.addEventListener('job', (event) => {
@@ -90,6 +108,8 @@ export function ConsoleRoot() {
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
     });
+    events.addEventListener('worker', () => setRuntimeOnline(true));
+    events.addEventListener('worker-error', () => setRuntimeOnline(false));
     const onProjectsChanged = () => { void refreshSidebar(); };
     window.addEventListener('local-coder:projects-changed', onProjectsChanged);
     return () => {
@@ -99,18 +119,9 @@ export function ConsoleRoot() {
   }, []);
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        setSearchOpen(true);
-      }
-      if (event.key === 'Escape') {
-        setSearchOpen(false);
-        setJobMenuId(undefined);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    const onResize = () => setAutoCollapsed(window.innerWidth < 900);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
 
   const recentJobs = useMemo(() => [...jobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 24), [jobs]);
@@ -143,10 +154,6 @@ export function ConsoleRoot() {
     window.setTimeout(() => document.querySelector<HTMLButtonElement>('.new-task-button')?.click(), 40);
   }
 
-  function openChats() {
-    selectSurface('agent');
-  }
-
   function openJob(job: SidebarJob) {
     setSearchOpen(false);
     setJobMenuId(undefined);
@@ -167,10 +174,56 @@ export function ConsoleRoot() {
     window.setTimeout(() => document.querySelector<HTMLButtonElement>('.new-task-button')?.click(), 80);
   }
 
-  function openAdvanced(project?: AdminProject) {
+  function openSettings(project?: AdminProject) {
     if (project) localStorage.setItem('local-coder.admin-project', project.id);
     setSettingsOpen(true);
   }
+
+  function toggleSidebar() {
+    setUserCollapsed((current) => {
+      const next = !current;
+      localStorage.setItem('local-coder.sidebar-collapsed', String(next));
+      return next;
+    });
+  }
+
+  function handleCommand(command: DesktopCommand) {
+    if (command === 'new-chat') startNewTask();
+    else if (command === 'toggle-sidebar') toggleSidebar();
+    else if (command === 'settings') setSettingsOpen(true);
+    else if (command === 'chats') selectSurface('agent');
+    else if (command === 'projects') selectSurface('projects');
+    else if (command === 'runs') selectSurface('runs');
+  }
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) {
+        if (event.key === 'Escape') {
+          setSearchOpen(false);
+          setJobMenuId(undefined);
+        }
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === 'k') { event.preventDefault(); setSearchOpen(true); }
+      else if (key === 'n') { event.preventDefault(); startNewTask(); }
+      else if (key === '\\') { event.preventDefault(); toggleSidebar(); }
+      else if (key === ',') { event.preventDefault(); setSettingsOpen(true); }
+      else if (key === '1') { event.preventDefault(); selectSurface('agent'); }
+      else if (key === '2') { event.preventDefault(); selectSurface('projects'); }
+      else if (key === '3') { event.preventDefault(); selectSurface('runs'); }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    const unsubscribe = window.lc?.onCommand(handleCommand);
+    const openSettingsEvent = () => setSettingsOpen(true);
+    window.addEventListener('local-coder:open-settings', openSettingsEvent);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('local-coder:open-settings', openSettingsEvent);
+      unsubscribe?.();
+    };
+  }, []);
 
   function beginSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
     if (sidebarCollapsed) return;
@@ -191,23 +244,33 @@ export function ConsoleRoot() {
     window.addEventListener('pointerup', onUp, { once: true });
   }
 
-  const shellStyle = { '--ref-sidebar-width': `${sidebarWidth}px` } as CSSProperties;
+  const collapsedWidth = isElectron && platform === 'darwin' ? 78 : 56;
+  const shellStyle = {
+    '--ref-sidebar-width': `${sidebarCollapsed ? collapsedWidth : sidebarWidth}px`
+  } as CSSProperties;
+  const tooltip = (label: string) => sidebarCollapsed ? label : undefined;
+  const avatar = profileName.trim().charAt(0).toUpperCase() || 'L';
 
-  return <div className={`reference-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} surface-${surface}`} style={shellStyle}>
-    <aside className="reference-sidebar" aria-label="Local Coder">
+  return <div
+    className={`reference-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${autoCollapsed ? 'auto-sidebar-collapsed' : ''} surface-${surface}`}
+    style={shellStyle}
+    data-shell={isElectron ? 'electron' : 'web'}
+    data-platform={platform}
+  >
+    <aside className="reference-sidebar" aria-label="Local Coder" data-collapsed={sidebarCollapsed ? 'true' : 'false'}>
       <div className="reference-sidebar-titlebar">
         <div className="reference-product-mark" aria-label="Local Coder"><span><Sparkles size={15} /></span><strong>Local Coder</strong></div>
-        <button className="reference-sidebar-collapse" onClick={() => setSidebarCollapsed((value) => !value)} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-          <PanelLeft size={16} />
+        <button className="reference-sidebar-collapse" onClick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} data-tooltip={tooltip(sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar')}>
+          <PanelLeft size={16} aria-hidden="true" />
         </button>
       </div>
 
       <nav className="reference-primary-nav">
-        <button onClick={startNewTask}><Plus size={16} /><span>New chat</span></button>
-        <button onClick={() => setSearchOpen(true)}><Search size={15} /><span>Search</span><kbd>⌘K</kbd></button>
-        <button className={surface === 'agent' ? 'active' : ''} onClick={openChats}><MessageSquare size={15} /><span>Chats</span></button>
-        <button className={surface === 'projects' ? 'active' : ''} onClick={() => selectSurface('projects')}><Folder size={15} /><span>Projects</span></button>
-        <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')}><History size={15} /><span>Runs</span></button>
+        <button className="reference-new-chat" onClick={startNewTask} aria-label="New chat" data-tooltip={tooltip('New chat')}><Plus size={16} aria-hidden="true" /><span>New chat</span></button>
+        <button onClick={() => setSearchOpen(true)} aria-label="Search" data-tooltip={tooltip('Search')}><Search size={15} aria-hidden="true" /><span>Search</span><kbd>⌘K</kbd></button>
+        <button className={surface === 'agent' ? 'active' : ''} onClick={() => selectSurface('agent')} aria-label="Chats" data-tooltip={tooltip('Chats')}><MessageSquare size={15} aria-hidden="true" /><span>Chats</span></button>
+        <button className={surface === 'projects' ? 'active' : ''} onClick={() => selectSurface('projects')} aria-label="Projects" data-tooltip={tooltip('Projects')}><Folder size={15} aria-hidden="true" /><span>Projects</span></button>
+        <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')} aria-label="Runs" data-tooltip={tooltip('Runs')}><History size={15} aria-hidden="true" /><span>Runs</span></button>
       </nav>
 
       <div className="reference-sidebar-scroll">
@@ -238,9 +301,10 @@ export function ConsoleRoot() {
       </div>
 
       <div className="reference-sidebar-footer">
-        <button onClick={() => openAdvanced()}><Settings size={15} /><span>Settings</span></button>
-        <button className="reference-account-row" onClick={() => setSettingsOpen(true)}>
-          <span className="reference-account-avatar">L</span><span><strong>Local profile</strong><small>On-device workspace</small></span>
+        <div className={`reference-runtime-status ${runtimeOnline === false ? 'offline' : runtimeOnline === true ? 'online' : ''}`} title={runtimeOnline === false ? 'Local runtime unavailable' : 'Local runtime connected'}><i /><span>{runtimeOnline === false ? 'Runtime offline' : runtimeOnline === true ? 'Runtime connected' : 'Connecting…'}</span></div>
+        <button onClick={() => openSettings()} aria-label="Settings" data-tooltip={tooltip('Settings')}><Settings size={15} aria-hidden="true" /><span>Settings</span></button>
+        <button className="reference-account-row" onClick={() => setSettingsOpen(true)} aria-label={`${profileName} profile`} data-tooltip={tooltip(profileName)}>
+          <span className="reference-account-avatar">{avatar}</span><span><strong>{profileName}</strong><small>On-device workspace</small></span>
         </button>
       </div>
       <div className="reference-sidebar-resizer" onPointerDown={beginSidebarResize} aria-hidden="true" />
@@ -248,7 +312,7 @@ export function ConsoleRoot() {
 
     <main className="reference-content-shell">
       {surface === 'agent' ? <App key={agentEpoch} /> : null}
-      {surface === 'projects' ? <ProjectGallery onOpenProject={runProject} onAdvanced={openAdvanced} /> : null}
+      {surface === 'projects' ? <ProjectGallery onOpenProject={runProject} onAdvanced={openSettings} /> : null}
       {surface === 'runs' ? <RunInspector /> : null}
     </main>
 
