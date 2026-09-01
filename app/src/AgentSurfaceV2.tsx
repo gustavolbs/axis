@@ -101,6 +101,7 @@ interface Job {
     workspace: string;
     goal: string;
     context?: string;
+    interactionMode?: ComposerMode;
     modelSelection?: ModelSelection;
     reasoningEffort?: JobReasoningEffort;
   };
@@ -382,8 +383,6 @@ export function AgentSurfaceV2() {
   function chooseMode(next: ComposerMode) {
     localStorage.setItem('local-coder.composer-mode', next);
     setMode(next);
-    // Cowork cannot run without a folder, so ask for one straight away instead
-    // of failing on submit.
     if (next === 'cowork' && !selectedProject && !workspace.trim()) {
       setModelMenu('closed');
       if (projects.length > 0) setProjectMenu(true);
@@ -415,6 +414,7 @@ export function AgentSurfaceV2() {
           goal: goal.trim(),
           context: context.trim() || undefined,
           maxRepairRounds: 1,
+          interactionMode: mode,
           modelSelection: selectedProject ? parseModelValue(modelSelection) : undefined,
           reasoningEffort: selectedProject ? (thinkingEnabled ? effort : 'none') : undefined
         })
@@ -560,21 +560,15 @@ export function AgentSurfaceV2() {
         chooseMode={chooseMode}
       />
 
-      {/* Chat offers starting points; Cowork says which folder it will act on. */}
       {!active && mode === 'chat' ? <Suggestions onPick={setGoal} /> : null}
       {!active && mode === 'cowork' ? <p className="lc-agent-cowork-hint">
         {selectedProject ? `Cowork runs in ${selectedProject.name}.` : workspace.trim() ? `Cowork runs in ${workspace.trim()}.` : 'Pick a project or folder for Cowork to act on.'}
       </p> : null}
     </main>
-    {active ? <ProgressRail job={active} currentInference={currentInference} /> : null}
+    {active && active.input.interactionMode !== 'chat' ? <ProgressRail job={active} currentInference={currentInference} /> : null}
   </div>;
 }
 
-/**
- * Greeting only — the mark sits inline with the text, and there is no
- * breadcrumb or explanatory paragraph. The suggestions moved below the
- * composer, where they belong.
- */
 function EmptyStart({ selectedProject, profileName }: { selectedProject?: AdminProject; profileName?: string }) {
   return <section className="lc-agent-empty-start">
     <h1><Sparkles className="lc-agent-empty-mark" size={30} strokeWidth={1.4} aria-hidden="true" />{selectedProject ? selectedProject.name : greeting(profileName)}</h1>
@@ -669,7 +663,6 @@ function Composer(props: {
             </div> : null}
           </div>
 
-          {/* Chat or Cowork. Cowork is bound to a folder; Chat is not. */}
           <div className="composer-mode-switch" role="radiogroup" aria-label="Conversation mode">
             {(['chat', 'cowork'] as const).map((value) => <button
               key={value}
@@ -808,8 +801,8 @@ function TaskThread(props: {
       <div className={`assistant-mark ${working ? 'working' : ''}`}><Sparkles size={18} strokeWidth={1.55} /></div>
       <div className="assistant-body">
         {working ? <div className="assistant-stream-state">
-          <div className="assistant-stream-title"><LoaderCircle className="assistant-spinner" size={16} /><strong>{currentInference?.streamState === 'generating' ? 'Writing' : currentInference?.streamState === 'reasoning' ? 'Thinking' : 'Working'}</strong></div>
-          <p>{latestEvent?.title ?? 'Starting the task…'}</p>
+          <div className="assistant-stream-title"><LoaderCircle className="assistant-spinner" size={16} /><strong>{currentInference?.streamState === 'generating' ? 'Writing' : currentInference?.streamState === 'reasoning' ? 'Thinking' : job.input.interactionMode === 'chat' ? 'Replying' : 'Working'}</strong></div>
+          <p>{latestEvent?.title ?? (job.input.interactionMode === 'chat' ? 'Starting the response…' : 'Starting the task…')}</p>
           <div className="assistant-stream-meta">{currentInference?.stage ? <span>{currentInference.stage}</span> : null}{currentInference?.model ? <span>{currentInference.model}</span> : null}{currentInference?.runningMs ? <span>{duration(currentInference.runningMs)}</span> : null}</div>
         </div> : null}
         {job.status === 'waiting-decision' && job.decisionRequest ? <DecisionMessage request={job.decisionRequest} selections={props.decisionSelections} setSelections={props.setDecisionSelections} onContinue={props.sendDecision} /> : null}

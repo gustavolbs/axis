@@ -12,6 +12,7 @@ import type { ModelSelection, CreateProjectInput } from './project-store.js';
 import type { ProviderRuntimeSettingsPatch } from './provider-settings.js';
 import {
   StandaloneJobManager,
+  type StandaloneInteractionMode,
   type StandaloneJobInput,
   type StandaloneReasoningEffort
 } from './standalone-job-manager.js';
@@ -49,6 +50,12 @@ function optionalString(body: JsonObject, key: string): string | undefined {
   if (value === undefined || value === null || value === '') return undefined;
   if (typeof value !== 'string') throw new Error(`${key} must be a string.`);
   return value.trim() || undefined;
+}
+
+function parseInteractionMode(value: unknown): StandaloneInteractionMode {
+  if (value === undefined) return 'cowork';
+  if (value === 'chat' || value === 'cowork') return value;
+  throw new Error("interactionMode must be 'chat' or 'cowork'.");
 }
 
 export function parseModelSelection(value: unknown): ModelSelection | undefined {
@@ -122,9 +129,6 @@ export function normalizeBaseUrl(value: string): string {
   const raw = value.trim();
   if (!raw) throw new Error('ollamaBaseUrl is required.');
   const invalid = new Error(`"${value}" is not a valid URL. Expected something like http://127.0.0.1:11434`);
-  // `localhost:11434` is what people type; accept it rather than making them
-  // remember the scheme. Infer before trimming slashes, or a bare "http://"
-  // becomes the hostname.
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
   let parsed: URL;
   try {
@@ -136,8 +140,6 @@ export function normalizeBaseUrl(value: string): string {
     throw new Error('ollamaBaseUrl must use http or https.');
   }
   if (!parsed.hostname) throw invalid;
-  // Serialize from the parsed URL so the stored value is canonical, then drop
-  // the path: requests append their own (/api/tags, /api/chat, ...).
   return `${parsed.protocol}//${parsed.host}`;
 }
 
@@ -155,11 +157,6 @@ export class DesktopAppRuntime {
   );
   private workerTimer?: NodeJS.Timeout;
 
-  /**
-   * Merges into ~/.local-coder/settings.json instead of replacing it. loadConfig
-   * reads executionMode, remoteWorkerUrl, remoteWorkerCredentialRef and model
-   * from that same file, so writing a fresh object would silently drop them.
-   */
   private patchSettings(patch: RuntimeSettings): void {
     writeAppSettings({ ...readAppSettings(), ...patch });
   }
@@ -208,6 +205,7 @@ export class DesktopAppRuntime {
           typeof body.maxRepairRounds === 'number' && Number.isInteger(body.maxRepairRounds)
             ? Math.max(0, Math.min(body.maxRepairRounds, 2))
             : 1,
+        interactionMode: parseInteractionMode(body.interactionMode),
         modelSelection: parseModelSelection(body.modelSelection),
         reasoningEffort: parseReasoningEffort(body.reasoningEffort)
       };
@@ -320,8 +318,6 @@ export class DesktopAppRuntime {
 
       if (body.ollamaBaseUrl !== undefined) {
         const next = normalizeBaseUrl(requiredString(body, 'ollamaBaseUrl'));
-        // OllamaClient reads config.ollamaBaseUrl per request, so this applies
-        // to the next call without a restart.
         this.config.ollamaBaseUrl = next;
         patch.ollamaBaseUrl = next;
       }
@@ -331,8 +327,6 @@ export class DesktopAppRuntime {
         if (mode !== 'local' && mode !== 'remote' && mode !== 'auto') {
           throw new Error("executionMode must be 'local', 'remote' or 'auto'.");
         }
-        // The execution runtime is built once from this value, so unlike the
-        // endpoint it only takes effect on the next launch.
         patch.executionMode = mode;
       }
 
@@ -348,7 +342,6 @@ export class DesktopAppRuntime {
         }
       };
     }
-    /** Probes a URL without saving it, so Settings can show whether it works. */
     if (method === 'POST' && pathname === '/settings/probe-ollama') {
       const body = objectBody(request.body);
       const target = normalizeBaseUrl(requiredString(body, 'ollamaBaseUrl'));
