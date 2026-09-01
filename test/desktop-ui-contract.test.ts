@@ -4,34 +4,34 @@ import path from 'node:path';
 import test from 'node:test';
 
 const root = process.cwd();
-const agent = fs.readFileSync(path.join(root, 'console/src/claude-agent.css'), 'utf8');
-const fidelity = fs.readFileSync(path.join(root, 'console/src/claude-fidelity.css'), 'utf8');
-const reference = fs.readFileSync(path.join(root, 'console/src/reference-fidelity.css'), 'utf8');
-const overrides = fs.readFileSync(path.join(root, 'console/src/claude-reference-overrides.css'), 'utf8');
-const audit = fs.readFileSync(path.join(root, 'console/src/audit-v2.css'), 'utf8');
-const auditComponents = fs.readFileSync(path.join(root, 'console/src/audit-v2-components.css'), 'utf8');
-const agentSurface = fs.readFileSync(path.join(root, 'console/src/AgentSurfaceV2.tsx'), 'utf8');
-const consoleRoot = fs.readFileSync(path.join(root, 'console/src/ConsoleRoot.tsx'), 'utf8');
-const projectGallery = fs.readFileSync(path.join(root, 'console/src/ProjectGallery.tsx'), 'utf8');
-const folderField = fs.readFileSync(path.join(root, 'console/src/FolderField.tsx'), 'utf8');
-const settingsModal = fs.readFileSync(path.join(root, 'console/src/SettingsModal.tsx'), 'utf8');
-const settingsPanels = fs.readFileSync(path.join(root, 'console/src/SettingsPanels.tsx'), 'utf8');
-const uiSelect = fs.readFileSync(path.join(root, 'console/src/UiSelect.tsx'), 'utf8');
-const uiSelectCss = fs.readFileSync(path.join(root, 'console/src/ui-select.css'), 'utf8');
-const runInspector = fs.readFileSync(path.join(root, 'console/src/RunInspectorV2.tsx'), 'utf8');
-const main = fs.readFileSync(path.join(root, 'console/src/main.tsx'), 'utf8');
+const agent = fs.readFileSync(path.join(root, 'app/src/claude-agent.css'), 'utf8');
+const fidelity = fs.readFileSync(path.join(root, 'app/src/claude-fidelity.css'), 'utf8');
+const reference = fs.readFileSync(path.join(root, 'app/src/reference-fidelity.css'), 'utf8');
+const overrides = fs.readFileSync(path.join(root, 'app/src/claude-reference-overrides.css'), 'utf8');
+const audit = fs.readFileSync(path.join(root, 'app/src/audit-v2.css'), 'utf8');
+const auditComponents = fs.readFileSync(path.join(root, 'app/src/audit-v2-components.css'), 'utf8');
+const agentSurface = fs.readFileSync(path.join(root, 'app/src/AgentSurfaceV2.tsx'), 'utf8');
+const appRoot = fs.readFileSync(path.join(root, 'app/src/AppRoot.tsx'), 'utf8');
+const projectGallery = fs.readFileSync(path.join(root, 'app/src/ProjectGallery.tsx'), 'utf8');
+const folderField = fs.readFileSync(path.join(root, 'app/src/FolderField.tsx'), 'utf8');
+const settingsModal = fs.readFileSync(path.join(root, 'app/src/SettingsModal.tsx'), 'utf8');
+const settingsPanels = fs.readFileSync(path.join(root, 'app/src/SettingsPanels.tsx'), 'utf8');
+const uiSelect = fs.readFileSync(path.join(root, 'app/src/UiSelect.tsx'), 'utf8');
+const uiSelectCss = fs.readFileSync(path.join(root, 'app/src/ui-select.css'), 'utf8');
+const runInspector = fs.readFileSync(path.join(root, 'app/src/RunInspectorV2.tsx'), 'utf8');
+const main = fs.readFileSync(path.join(root, 'app/src/main.tsx'), 'utf8');
 const desktop = fs.readFileSync(path.join(root, 'desktop/main.mjs'), 'utf8');
-const preload = fs.readFileSync(path.join(root, 'desktop/preload.mjs'), 'utf8');
+const preload = fs.readFileSync(path.join(root, 'desktop/preload.cjs'), 'utf8');
 
 test('desktop chrome uses persistent responsive sidebar and safe native drag regions', () => {
   for (const required of ['reference-app-shell', 'reference-sidebar', 'reference-sidebar-titlebar', 'reference-sidebar-resizer', 'New chat', 'Search', 'Chats', 'Projects', 'Runs', 'Settings']) {
-    assert.equal(consoleRoot.includes(required), true, `missing global shell primitive: ${required}`);
+    assert.equal(appRoot.includes(required), true, `missing global shell primitive: ${required}`);
   }
-  assert.match(consoleRoot, /data-shell=/);
-  assert.match(consoleRoot, /data-platform=/);
-  assert.match(consoleRoot, /local-coder\.sidebar-width/);
-  assert.match(consoleRoot, /autoCollapsed/);
-  assert.match(consoleRoot, /window\.innerWidth < 900/);
+  assert.match(appRoot, /data-shell=/);
+  assert.match(appRoot, /data-platform=/);
+  assert.match(appRoot, /local-coder\.sidebar-width/);
+  assert.match(appRoot, /autoCollapsed/);
+  assert.match(appRoot, /window\.innerWidth < 900/);
   assert.match(audit, /-webkit-app-region:\s*drag/);
   assert.match(audit, /-webkit-app-region:\s*no-drag/);
   assert.match(audit, /overflow-x:\s*clip/);
@@ -40,24 +40,30 @@ test('desktop chrome uses persistent responsive sidebar and safe native drag reg
   assert.match(desktop, /trafficLightPosition/);
 });
 
-test('collapsed rail has accessible names, delayed tooltips and persistent profile footer', () => {
+test('collapsed rail has accessible names delayed tooltips and persistent profile footer', () => {
   for (const label of ['New chat', 'Search', 'Chats', 'Projects', 'Runs', 'Settings']) {
-    assert.match(consoleRoot, new RegExp(`aria-label=\\"${label}\\"`));
+    assert.match(appRoot, new RegExp(`aria-label=\\"${label}\\"`));
   }
-  assert.match(consoleRoot, /data-tooltip=/);
+  assert.match(appRoot, /data-tooltip=/);
   assert.match(audit, /transition:\s*opacity 120ms ease 400ms/);
-  assert.match(consoleRoot, /reference-account-avatar/);
+  assert.match(appRoot, /reference-account-avatar/);
   assert.match(audit, /sidebar-collapsed \.reference-account-avatar/);
 });
 
-test('global and native shortcuts cover core Claude-like navigation', () => {
-  for (const token of ["key === 'k'", "key === 'n'", "key === '\\\\'", "key === ','", "key === '1'", "key === '2'", "key === '3'"]) assert.match(consoleRoot, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  for (const accelerator of ['CommandOrControl+N', 'CommandOrControl+\\\\', 'CommandOrControl+,', 'CommandOrControl+1', 'CommandOrControl+2', 'CommandOrControl+3']) assert.equal(desktop.includes(accelerator), true, `missing native shortcut: ${accelerator}`);
+test('global and native shortcuts cover core Local Coder navigation', () => {
+  for (const token of ["key === 'k'", "key === 'n'", "key === '\\\\'", "key === ','", "key === '1'", "key === '2'", "key === '3'"]) {
+    assert.match(appRoot, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  for (const accelerator of ['CommandOrControl+N', 'CommandOrControl+\\\\', 'CommandOrControl+,', 'CommandOrControl+1', 'CommandOrControl+2', 'CommandOrControl+3']) {
+    assert.equal(desktop.includes(accelerator), true, `missing native shortcut: ${accelerator}`);
+  }
   assert.match(preload, /local-coder:command/);
 });
 
 test('desktop restores window bounds and avoids white boot flash', () => {
-  for (const required of ['window-state.json', 'screen.getAllDisplays()', 'screen.getDisplayMatching(requested)', 'screen.getPrimaryDisplay()', 'window.getNormalBounds()', 'window.isMaximized()']) assert.equal(desktop.includes(required), true, `missing desktop bounds behavior: ${required}`);
+  for (const required of ['window-state.json', 'screen.getAllDisplays()', 'screen.getDisplayMatching(requested)', 'screen.getPrimaryDisplay()', 'window.getNormalBounds()', 'window.isMaximized()']) {
+    assert.equal(desktop.includes(required), true, `missing desktop bounds behavior: ${required}`);
+  }
   assert.match(desktop, /MIN_WINDOW_WIDTH = 760/);
   assert.match(desktop, /MIN_WINDOW_HEIGHT = 560/);
   assert.match(desktop, /backgroundColor:\s*'#1f1e1b'/);
@@ -66,7 +72,8 @@ test('desktop restores window bounds and avoids white boot flash', () => {
   assert.match(desktop, /ready-to-show fallback fired/);
 });
 
-test('native bridge exposes only narrow folder theme profile login and command capabilities', () => {
+test('native bridge exposes only narrow runtime folder theme profile login and command capabilities', () => {
+  assert.match(desktop, /ipcMain\.handle\('local-coder:runtime-request'/);
   assert.match(desktop, /ipcMain\.handle\('local-coder:pick-directory'/);
   assert.match(desktop, /properties:\s*\['openDirectory', 'createDirectory'\]/);
   assert.match(desktop, /ipcMain\.handle\('local-coder:set-theme'/);
@@ -86,7 +93,7 @@ test('external https links are delegated to the system browser and renderer rema
   assert.match(desktop, /preload:\s*preloadScript\(\)/);
 });
 
-test('Agent v2 remains thread-first with lightweight streaming state', () => {
+test('agent remains thread-first with lightweight streaming state', () => {
   for (const required of ['claude-thread-pane', 'thread-user-turn', 'user-message', 'thread-assistant-turn', 'assistant-body', 'claude-composer', 'claude-prompt-input', 'claude-send-button', 'claude-stop-button', 'claude-progress-rail']) {
     assert.equal(agentSurface.includes(required), true, `missing Agent primitive: ${required}`);
   }
@@ -102,7 +109,7 @@ test('send affordance is text-driven and missing workspace opens context instead
   assert.match(agentSurface, /setExtrasOpen\(true\)/);
 });
 
-test('composer autogrows, uses outer focus ring and keeps bounded popovers', () => {
+test('composer autogrows uses outer focus ring and keeps bounded popovers', () => {
   assert.match(agentSurface, /useRef<HTMLTextAreaElement>/);
   assert.match(agentSurface, /element\.style\.height = 'auto'/);
   assert.match(agentSurface, /Math\.min\(element\.scrollHeight/);
@@ -143,7 +150,9 @@ test('empty state is personalized and quick actions remain available', () => {
 });
 
 test('Projects uses real folder picker and consistent primary-secondary hierarchy', () => {
-  for (const required of ['reference-projects-page', 'reference-project-grid', 'reference-project-card', 'reference-project-modal', 'New project', 'Last updated', 'Create a project', 'Search projects']) assert.equal(projectGallery.includes(required), true, `missing Projects primitive: ${required}`);
+  for (const required of ['reference-projects-page', 'reference-project-grid', 'reference-project-card', 'reference-project-modal', 'New project', 'Last updated', 'Create a project', 'Search projects']) {
+    assert.equal(projectGallery.includes(required), true, `missing Projects primitive: ${required}`);
+  }
   assert.match(projectGallery, /<Info size=\{14\}/);
   assert.match(projectGallery, /btn-secondary/);
   assert.match(projectGallery, /btn-primary/);
@@ -195,7 +204,7 @@ test('errors auto-dismiss and expose Retry plus Settings actions while infra sta
   assert.match(agentSurface, /setTimeout\(\(\) => setError\(undefined\), 8_000\)/);
   assert.match(agentSurface, />Retry<\/button>/);
   assert.match(agentSurface, />Settings<\/button>/);
-  assert.match(consoleRoot, /reference-runtime-status/);
+  assert.match(appRoot, /reference-runtime-status/);
 });
 
 test('final stylesheet ordering keeps audit fixes last and renderer zoom is not forced', () => {
