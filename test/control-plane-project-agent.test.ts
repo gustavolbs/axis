@@ -175,7 +175,7 @@ test('unregistered workspace keeps the exact legacy engineer backend', async () 
   assert.equal((result as ProjectEngineerResult).projectExecution, undefined);
 });
 
-test('registered speed-first Project invokes cloud directly from control-plane agent', async () => {
+test('registered speed-first Project invokes cloud directly from desktop app agent', async () => {
   const root = temp('project-agent-cloud');
   const workspace = path.join(root, 'repo');
   fs.mkdirSync(workspace);
@@ -261,14 +261,14 @@ test('registered speed-first Project invokes cloud directly from control-plane a
   assert.equal(cloudSecret, 'cloud-secret');
   assert.equal(cloudCalls, 1);
   assert.equal(remoteChatCalls, 0);
-  assert.equal(result.projectExecution?.agentHost, 'control-plane');
+  assert.equal(result.projectExecution?.agentHost, 'desktop-app');
   assert.equal(result.projectExecution?.projectId, project.id);
   assert.equal(result.projectExecution?.routingTrace[0]?.stage, 'planning');
   assert.equal(result.projectExecution?.routingTrace[0]?.providerId, 'anthropic');
   assert.equal(result.projectExecution?.routingTrace[0]?.fallbackUsed, false);
 });
 
-test('registered Local-only Project runs control-plane agent with Qwen chat on Windows worker', async () => {
+test('registered Local-only Project runs desktop app agent with Qwen chat on Windows worker', async () => {
   const root = temp('project-agent-worker');
   const workspace = path.join(root, 'repo');
   fs.mkdirSync(workspace);
@@ -301,7 +301,7 @@ test('registered Local-only Project runs control-plane agent with Qwen chat on W
   assert.equal(remoteChatCalls, 1);
   assert.equal(agentCapture.repoMemoryScopeKey, projectIsolationKey(project));
   assert.equal(result.modelCalls[0]?.model, 'qwen3.8:27b');
-  assert.equal(result.projectExecution?.agentHost, 'control-plane');
+  assert.equal(result.projectExecution?.agentHost, 'desktop-app');
   assert.equal(result.projectExecution?.localInference, 'windows-worker');
   // Strict Local-only bypass intentionally avoids router overhead.
   assert.deepEqual(result.projectExecution?.routingTrace, []);
