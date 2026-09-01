@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 const root = process.cwd();
-const read = (relative: string) => fs.readFileSync(path.join(root, relative), 'utf8');
+const read = (relative: string) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
 
 const runtime = read('src/app-runtime.ts');
 const jobManager = read('src/standalone-job-manager.ts');
@@ -32,8 +32,8 @@ test('archiving hides without discarding, and can be undone', () => {
   assert.match(jobManager, /async setArchived\(id: string, archived: boolean\)/);
   assert.match(jobManager, /job\.archivedAt = archived \? new Date\(\)\.toISOString\(\) : undefined/);
   assert.match(runtime, /projectArchiveMatch && method === 'POST'/);
-  // An unknown id must 404 rather than being stored as archived.
-  assert.match(runtime, /this\.projects\.getProject\(id\);\s+\/\/ 404s/);
+  // An unknown id must be rejected before archive state can be stored.
+  assert.match(runtime, /this\.projects\.getProject\(id\);/);
   // The sidebar filters archived items out; the Archived surface lists them.
   assert.match(appRoot, /\.filter\(\(job\) => !job\.archivedAt\)/);
   assert.match(appRoot, /\.filter\(\(project\) => !project\.archived\)/);
@@ -44,13 +44,17 @@ test('archiving hides without discarding, and can be undone', () => {
 
 test('a follow-up unarchives the conversation it continues', () => {
   // The two features meet here: an archived chat can be opened from the
-  // Archived surface, so a follow-up would resume it and keep it running while
-  // it stayed hidden from the sidebar.
+  // Archived surface, so a follow-up must restart it through the shared Chat
+  // reset path rather than duplicating reset state in every turn action.
   const followUp = jobManager.slice(jobManager.indexOf('async followUp(id: string'));
   const body = followUp.slice(0, followUp.indexOf('\n  }\n'));
-  assert.match(body, /job\.archivedAt = undefined/);
+  assert.match(body, /this\.restartChat\(job, 'Chat follow-up queued'\)/);
+
+  const restartChat = jobManager.slice(jobManager.indexOf('private restartChat(job: JobInternal'));
+  const restartBody = restartChat.slice(0, restartChat.indexOf('\n  }\n'));
+  assert.match(restartBody, /job\.archivedAt = undefined/);
   // And it must not consume Cowork's resume budget.
-  assert.match(body, /job\.rounds = 0/);
+  assert.match(restartBody, /job\.rounds = 0/);
 });
 
 test('deleting a running conversation stops it first', () => {
