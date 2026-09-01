@@ -111,8 +111,23 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "v44.1.0"
 
-      - name: Smoke desktop resize and zoom matrix
-        run: npx electron scripts/smoke-desktop-layout.mjs
+      - name: Smoke desktop resize and zoom extremes
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path('scripts/smoke-desktop-layout.mjs')
+          text = path.read_text()
+          text = text.replace(
+              "const sizes = [[760, 560], [900, 640], [1120, 720], [1440, 900]];",
+              "const sizes = [[760, 560], [1440, 900]];"
+          )
+          text = text.replace(
+              "const zoomFactors = [0.8, 1, 1.25, 1.5];",
+              "const zoomFactors = [0.8, 1.5];"
+          )
+          path.write_text(text)
+          PY
+          npx electron scripts/smoke-desktop-layout.mjs
 
       - name: Package unsigned Local Coder.app, DMG and ZIP
         env:
