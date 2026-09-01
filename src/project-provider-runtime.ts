@@ -2,14 +2,17 @@ import type { RoutingCandidate } from './cognitive-router.js';
 import type { InferenceStage } from './inference-status.js';
 import { CredentialManager } from './credential-store.js';
 import { ProviderBudgetManager } from './provider-budget.js';
+import { ProviderCapabilityPolicyManager } from './provider-capability-policy.js';
 import {
   assertProjectCredentialIsolation,
   type ModelSelection,
   type ProjectDefinition
 } from './project-store.js';
 import {
+  DEFAULT_PROVIDER_CAPABILITIES,
   ProviderSettingsStore,
-  type ModelRoutingProfile
+  type ModelRoutingProfile,
+  type ProviderRuntimeSettings
 } from './provider-settings.js';
 import { AnthropicInferenceProvider } from './providers/anthropic-provider.js';
 import { OpenAIInferenceProvider } from './providers/openai-provider.js';
@@ -45,6 +48,7 @@ export interface ProjectProviderRuntimeOptions {
   credentials?: CredentialManager;
   settings?: ProviderSettingsStore;
   budget?: ProviderBudgetManager;
+  capabilityPolicy?: ProviderCapabilityPolicyManager;
   cloudProviderFactories?: Record<string, CloudProviderFactory>;
   metrics?: RoutingMetricsSource;
 }
@@ -88,6 +92,14 @@ const defaultCloudFactories: Record<string, CloudProviderFactory> = {
   anthropic: (apiKey) => new AnthropicInferenceProvider({ apiKey }),
   openai: (apiKey) => new OpenAIInferenceProvider({ apiKey })
 };
+
+function defaultSettings(): ProviderRuntimeSettings {
+  return {
+    enabled: true,
+    capabilities: structuredClone(DEFAULT_PROVIDER_CAPABILITIES),
+    models: {}
+  };
+}
 
 function allowed(
   project: ProjectDefinition,
@@ -142,12 +154,14 @@ function orderPersonalChatModels(
 /**
  * Creates provider registries and model catalogs inside one Project isolation boundary.
  * Secrets are resolved only long enough to construct the provider and are never returned.
+ * Every provider is capability-wrapped; every cloud provider is additionally budget-wrapped.
  */
 export class ProjectProviderRuntime {
   private readonly localProvider?: InferenceProvider;
   private readonly credentials: CredentialManager;
   private readonly settings: ProviderSettingsStore;
   private readonly budget: ProviderBudgetManager;
+  private readonly capabilityPolicy: ProviderCapabilityPolicyManager;
   private readonly factories: Record<string, CloudProviderFactory>;
   private readonly metrics?: RoutingMetricsSource;
 
@@ -156,8 +170,13 @@ export class ProjectProviderRuntime {
     this.credentials = options.credentials ?? new CredentialManager();
     this.settings = options.settings ?? new ProviderSettingsStore();
     this.budget = options.budget ?? new ProviderBudgetManager({ settings: this.settings });
+    this.capabilityPolicy = options.capabilityPolicy ?? new ProviderCapabilityPolicyManager(this.settings);
     this.factories = { ...defaultCloudFactories, ...(options.cloudProviderFactories ?? {}) };
     this.metrics = options.metrics;
+  }
+
+  private governed(provider: InferenceProvider): InferenceProvider {
+    return this.capabilityPolicy.wrap(this.budget.wrap(provider));
   }
 
   buildRegistry(project: ProjectDefinition): ProviderRegistry {
@@ -167,7 +186,7 @@ export class ProjectProviderRuntime {
 
     if (this.localProvider && allowed(project, this.localProvider)) {
       const settings = this.settings.get(this.localProvider.id);
-      if (settings?.enabled !== false) providers.push(this.localProvider);
+      if (settings?.enabled !== false) providers.push(this.governed(this.localProvider));
     }
 
     for (const providerId of project.privacy.allowedProviderIds) {
@@ -186,7 +205,7 @@ export class ProjectProviderRuntime {
           `Provider factory ${providerId} returned inconsistent provider identity/kind.`
         );
       }
-      if (allowed(project, provider)) providers.push(this.budget.wrap(provider));
+      if (allowed(project, provider)) providers.push(this.governed(provider));
     }
 
     return new ProviderRegistry(providers);
@@ -203,7 +222,7 @@ export class ProjectProviderRuntime {
       if (!this.localProvider) return { reason: 'Local inference is not configured.' };
       const settings = this.settings.get(this.localProvider.id);
       if (settings?.enabled === false) return { reason: `${this.localProvider.id} is disabled in Model routing settings.` };
-      return { provider: this.localProvider };
+      return { provider: this.governed(this.localProvider) };
     }
 
     const factory = this.factories[providerId];
@@ -235,13 +254,13 @@ export class ProjectProviderRuntime {
     if (provider.id !== providerId || provider.kind !== 'cloud') {
       throw new Error(`Provider factory ${providerId} returned inconsistent provider identity/kind.`);
     }
-    return { provider: this.budget.wrap(provider) };
+    return { provider: this.governed(provider) };
   }
 
   /**
    * Personal Chat provider discovery is factory-driven, not hardcoded to Claude/GPT.
    * Registering a new cloud provider factory automatically enrolls it in the same
-   * credential-isolation and model-discovery path.
+   * credential-isolation, budget, capability-policy and model-discovery path.
    */
   async personalChatCatalog(): Promise<PersonalChatCatalog> {
     const providerIds = unique([
@@ -253,7 +272,7 @@ export class ProjectProviderRuntime {
     for (const providerId of providerIds) {
       const resolution = this.personalChatProvider(providerId);
       const provider = resolution.provider;
-      const settings = this.settings.get(providerId) ?? { enabled: true, models: {} };
+      const settings = this.settings.get(providerId) ?? defaultSettings();
       let models: ModelDefinition[] = [];
       let discoveryError: string | undefined;
       if (provider) {
@@ -338,7 +357,7 @@ export class ProjectProviderRuntime {
     const candidates: RoutingCandidate[] = [];
 
     for (const provider of registry.list()) {
-      const providerSettings = this.settings.get(provider.id) ?? { enabled: true, models: {} };
+      const providerSettings = this.settings.get(provider.id) ?? defaultSettings();
       let discovered: ModelDefinition[] = [];
       let discoveryOk = true;
       try {
