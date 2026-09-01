@@ -53,7 +53,7 @@ summary:focus-visible {
   cursor: pointer;
 }
 
-.claude-switch {
+.lc-agent-switch {
   position: relative;
   display: inline-block !important;
   flex: 0 0 30px;
@@ -65,7 +65,7 @@ summary:focus-visible {
   transition: background-color .12s ease, border-color .12s ease;
 }
 
-.claude-switch i {
+.lc-agent-switch i {
   position: absolute;
   top: 2px;
   left: 2px;
@@ -77,38 +77,38 @@ summary:focus-visible {
   transition: transform .12s ease;
 }
 
-.claude-switch.on {
+.lc-agent-switch.on {
   border-color: color-mix(in srgb, var(--lc-accent) 70%, var(--lc-border));
   background: var(--lc-accent);
 }
 
-.claude-switch.on i {
+.lc-agent-switch.on i {
   transform: translateX(12px);
 }
 
-.claude-send-button,
-.claude-stop-button,
+.lc-agent-send-button,
+.lc-agent-stop-button,
 .composer-icon-button,
 .composer-text-button,
 .model-effort-trigger,
 .new-task-button,
-.claude-session,
-.claude-popover button {
+.lc-agent-session,
+.lc-agent-popover button {
   transition: background-color .1s ease, border-color .1s ease, color .1s ease, opacity .1s ease;
 }
 
-.claude-send-button:active:not(:disabled),
+.lc-agent-send-button:active:not(:disabled),
 .composer-icon-button:active,
 .composer-text-button:active,
 .model-effort-trigger:active:not(:disabled) {
   transform: translateY(.5px);
 }
 
-.claude-prompt-input {
+.lc-agent-prompt-input {
   caret-color: var(--lc-accent);
 }
 
-.claude-thread-pane::after {
+.lc-agent-thread-pane::after {
   content: "";
   position: absolute;
   z-index: 60;
@@ -120,11 +120,11 @@ summary:focus-visible {
   background: linear-gradient(to bottom, transparent, var(--lc-bg) 75%);
 }
 
-.claude-composer-wrap {
+.lc-agent-composer-wrap {
   z-index: 85;
 }
 
-.claude-composer {
+.lc-agent-composer {
   isolation: isolate;
 }
 
@@ -151,16 +151,16 @@ summary:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .claude-switch,
-  .claude-switch i,
-  .claude-send-button,
-  .claude-stop-button,
+  .lc-agent-switch,
+  .lc-agent-switch i,
+  .lc-agent-send-button,
+  .lc-agent-stop-button,
   .composer-icon-button,
   .composer-text-button,
   .model-effort-trigger,
   .new-task-button,
-  .claude-session,
-  .claude-popover button {
+  .lc-agent-session,
+  .lc-agent-popover button {
     transition: none !important;
   }
 }

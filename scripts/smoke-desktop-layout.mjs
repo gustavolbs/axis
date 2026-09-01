@@ -11,9 +11,9 @@ const consoleDist = path.join(root, 'console-dist');
 const sizes = [[760, 560], [900, 640], [1120, 720], [1440, 900]];
 const zoomFactors = [0.8, 1, 1.25, 1.5];
 const surfaces = [
-  { label: 'Agent', nav: 'New chat', selector: '.claude-agent-shell' },
+  { label: 'Agent', nav: 'New chat', selector: '.lc-agent-agent-shell' },
   { label: 'Chats', nav: 'Chats', selector: '.chat-history-page' },
-  { label: 'Projects', nav: 'Projects', selector: '.reference-projects-page' },
+  { label: 'Projects', nav: 'Projects', selector: '.lc-shell-projects-page' },
   { label: 'Runs', nav: 'Runs', selector: '.runs-shell' }
 ];
 
@@ -38,7 +38,7 @@ const smokeCatalog = {
   defaultModel: { mode: 'auto' },
   providers: [
     { id: 'ollama', kind: 'local', enabled: true, ready: true, models: [{ id: 'qwen3.8:27b', displayName: 'Qwen 3.8 27B', available: true, routing: { enabled: true, qualityScore: 78 }, providerDefault: true, projectDefault: false }] },
-    { id: 'anthropic', kind: 'cloud', enabled: true, ready: true, models: [{ id: 'claude-sonnet-smoke', displayName: 'Claude Sonnet', available: true, routing: { enabled: true, frontier: true, qualityScore: 94 }, providerDefault: true, projectDefault: false }] }
+    { id: 'anthropic', kind: 'cloud', enabled: true, ready: true, models: [{ id: 'lc-agent-sonnet-smoke', displayName: 'Claude Sonnet', available: true, routing: { enabled: true, frontier: true, qualityScore: 94 }, providerDefault: true, projectDefault: false }] }
   ]
 };
 const usagePeriod = { events: 0, cloudEvents: 0, localEvents: 0, knownCostUsd: 0, unknownCostEvents: 0, inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, reasoningTokens: 0 };
@@ -124,7 +124,7 @@ async function clickByText(window, selector, text) {
 }
 
 async function selectSurface(window, surface) {
-  await clickByText(window, '.reference-primary-nav button', surface.nav);
+  await clickByText(window, '.lc-shell-primary-nav button', surface.nav);
   await waitFor(window, `document.querySelector(${JSON.stringify(surface.selector)})`);
   await delay(45);
 }
@@ -149,12 +149,12 @@ async function measure(window, surfaceSelector) {
       viewport: { width: window.innerWidth, height: window.innerHeight },
       documentScrollWidth: document.documentElement.scrollWidth,
       bodyScrollWidth: document.body.scrollWidth,
-      shell: rect('.reference-app-shell'),
-      sidebar: rect('.reference-sidebar'),
-      content: rect('.reference-content-shell'),
+      shell: rect('.lc-shell-app-shell'),
+      sidebar: rect('.lc-shell-sidebar'),
+      content: rect('.lc-shell-content-shell'),
       surfaceRoot: rect(${JSON.stringify(surfaceSelector)}),
-      composer: ${JSON.stringify(surfaceSelector)} === '.claude-agent-shell' ? rect('.claude-composer') : null,
-      threadPane: ${JSON.stringify(surfaceSelector)} === '.claude-agent-shell' ? rect('.claude-thread-pane') : null,
+      composer: ${JSON.stringify(surfaceSelector)} === '.lc-agent-agent-shell' ? rect('.lc-agent-composer') : null,
+      threadPane: ${JSON.stringify(surfaceSelector)} === '.lc-agent-agent-shell' ? rect('.lc-agent-thread-pane') : null,
       surfaceOverflowY: surfaceRoot ? getComputedStyle(surfaceRoot).overflowY : null
     };
   })()`, true);
@@ -187,7 +187,7 @@ function assertLayout(result, size, zoom, surface) {
   withinViewport('global sidebar', result.sidebar, result.viewport);
   withinViewport('content shell', result.content, result.viewport);
   withinViewport(`${surface.label} root`, result.surfaceRoot, result.viewport);
-  if (surface.selector === '.claude-agent-shell') {
+  if (surface.selector === '.lc-agent-agent-shell') {
     withinViewport('Agent composer', result.composer, result.viewport);
     withinViewport('Agent thread pane', result.threadPane, result.viewport);
   }
@@ -200,7 +200,7 @@ function assertPopover(result, label) {
 }
 
 async function closeOpenComposerMenu(window) {
-  await window.webContents.executeJavaScript("document.querySelector('.claude-prompt-input')?.click()", true);
+  await window.webContents.executeJavaScript("document.querySelector('.lc-agent-prompt-input')?.click()", true);
   await delay(30);
 }
 
@@ -215,7 +215,7 @@ async function checkAgentMenus(window, size, zoom) {
   assertPopover(await measurePopover(window, '.effort-popover'), `effort menu at ${size.join('x')} zoom ${zoom}`);
   await window.webContents.executeJavaScript("document.querySelector('.effort-popover .popover-back').click()", true);
   await waitFor(window, "document.querySelector('.model-popover') && !document.querySelector('.effort-popover')");
-  const thinkingVisible = await window.webContents.executeJavaScript("Boolean([...document.querySelectorAll('.model-popover button')].find((button) => button.textContent?.includes('Thinking'))?.querySelector('.claude-switch.on'))", true);
+  const thinkingVisible = await window.webContents.executeJavaScript("Boolean([...document.querySelectorAll('.model-popover button')].find((button) => button.textContent?.includes('Thinking'))?.querySelector('.lc-agent-switch.on'))", true);
   if (!thinkingVisible) throw new Error(`Thinking switch is not visibly enabled at ${size.join('x')} zoom ${zoom}.`);
   await closeOpenComposerMenu(window);
 
@@ -246,7 +246,7 @@ async function closeUiSelect(window) {
 }
 
 async function checkSettings(window, size, zoom) {
-  await clickByText(window, '.reference-sidebar-footer > button', 'Settings');
+  await clickByText(window, '.lc-shell-sidebar-footer > button', 'Settings');
   await waitFor(window, "document.querySelector('.settings-modal')");
   assertPopover(await measurePopover(window, '.settings-modal'), `settings modal at ${size.join('x')} zoom ${zoom}`);
 

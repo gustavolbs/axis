@@ -710,7 +710,7 @@ pre {
 }
 
 /* Project and Runs surfaces use the same fixed-shell scroll model. */
-.admin-shell,
+.lc-admin-shell,
 .runs-shell {
   width: 100% !important;
   max-width: none !important;
@@ -726,13 +726,13 @@ pre {
   background: var(--lc-bg);
 }
 
-.admin-shell > *,
+.lc-admin-shell > *,
 .runs-shell > * {
   width: min(1220px, 100%);
   margin-inline: auto;
 }
 
-.admin-toolbar h2,
+.lc-admin-toolbar h2,
 .runs-header h1,
 .project-hero h2,
 .run-hero h2 {
@@ -741,7 +741,7 @@ pre {
   letter-spacing: -.025em;
 }
 
-.admin-toolbar p,
+.lc-admin-toolbar p,
 .runs-header p,
 .project-hero p,
 .run-hero p,
@@ -757,7 +757,7 @@ pre {
   color: var(--lc-muted) !important;
 }
 
-.admin-layout,
+.lc-admin-layout,
 .runs-layout {
   grid-template-columns: minmax(210px, 250px) minmax(0, 1fr) !important;
   gap: 12px !important;
@@ -931,7 +931,7 @@ select {
     display: none;
   }
 
-  .admin-layout,
+  .lc-admin-layout,
   .runs-layout {
     grid-template-columns: 1fr !important;
   }
@@ -1053,12 +1053,12 @@ select {
     width: 100%;
   }
 
-  .admin-shell,
+  .lc-admin-shell,
   .runs-shell {
     padding: 16px 12px 24px !important;
   }
 
-  .admin-toolbar,
+  .lc-admin-toolbar,
   .project-hero,
   .runs-header,
   .run-hero,
@@ -1077,7 +1077,7 @@ select {
   :root { --lc-titlebar-h: 46px; }
 
   .main,
-  .admin-shell,
+  .lc-admin-shell,
   .runs-shell {
     padding-top: 14px !important;
   }

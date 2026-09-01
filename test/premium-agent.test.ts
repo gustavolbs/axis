@@ -37,7 +37,6 @@ function config(stateRoot: string): LocalCoderConfig {
     workerBootstrap: 'none',
     workerMaxConcurrentJobs: 1,
     researchEnabled: true,
-    microsoftLearnResearchEnabled: true
   };
 }
 
@@ -119,7 +118,7 @@ test('stops before mutation and asks a bounded material user decision when repos
     });
 
     assert.equal(calls, 1, 'only the local impact-analysis call should run before the user decision');
-    assert.equal(output.result.status, 'needs-claude');
+    assert.equal(output.result.status, 'needs-guidance');
     assert.equal(output.result.phase, 'planning');
     const premium = output.result as typeof output.result & {
       decisionRequest?: { questions: Array<{ id: string; options: Array<{ id: string }> }> };

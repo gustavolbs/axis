@@ -173,7 +173,7 @@ export function AppRoot() {
   }
 
   function openSettings(project?: AdminProject) {
-    if (project) localStorage.setItem('local-coder.admin-project', project.id);
+    if (project) localStorage.setItem('local-coder.settings-project', project.id);
     setSettingsOpen(true);
   }
 
@@ -251,65 +251,65 @@ export function AppRoot() {
   const hideMacCollapsedToggle = sidebarCollapsed && isElectron && platform === 'darwin';
 
   return <div
-    className={`reference-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${autoCollapsed ? 'auto-sidebar-collapsed' : ''} surface-${surface}`}
+    className={`lc-shell-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${autoCollapsed ? 'auto-sidebar-collapsed' : ''} surface-${surface}`}
     style={shellStyle}
     data-shell={isElectron ? 'electron' : 'web'}
     data-platform={platform}
   >
-    <aside className="reference-sidebar" aria-label="Local Coder" data-collapsed={sidebarCollapsed ? 'true' : 'false'}>
-      <div className="reference-sidebar-titlebar">
-        <div className="reference-product-mark" aria-label="Local Coder"><span><Sparkles size={15} /></span><strong>Local Coder</strong></div>
-        {!hideMacCollapsedToggle ? <button className="reference-sidebar-collapse" onClick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} data-tooltip={tooltip(sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar')}>
+    <aside className="lc-shell-sidebar" aria-label="Local Coder" data-collapsed={sidebarCollapsed ? 'true' : 'false'}>
+      <div className="lc-shell-sidebar-titlebar">
+        <div className="lc-shell-product-mark" aria-label="Local Coder"><span><Sparkles size={15} /></span><strong>Local Coder</strong></div>
+        {!hideMacCollapsedToggle ? <button className="lc-shell-sidebar-collapse" onClick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} data-tooltip={tooltip(sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar')}>
           <PanelLeft size={16} aria-hidden="true" />
         </button> : null}
       </div>
 
-      <nav className="reference-primary-nav">
-        <button className="reference-new-chat" onClick={startNewTask} aria-label="New chat" data-tooltip={tooltip('New chat')}><Plus size={16} aria-hidden="true" /><span>New chat</span></button>
+      <nav className="lc-shell-primary-nav">
+        <button className="lc-shell-new-chat" onClick={startNewTask} aria-label="New chat" data-tooltip={tooltip('New chat')}><Plus size={16} aria-hidden="true" /><span>New chat</span></button>
         <button onClick={() => setSearchOpen(true)} aria-label="Search" data-tooltip={tooltip('Search')}><Search size={15} aria-hidden="true" /><span>Search</span><kbd>⌘K</kbd></button>
         <button className={surface === 'chats' ? 'active' : ''} onClick={() => selectSurface('chats')} aria-label="Chats" data-tooltip={tooltip('Chats')}><MessageSquare size={15} aria-hidden="true" /><span>Chats</span></button>
         <button className={surface === 'projects' ? 'active' : ''} onClick={() => selectSurface('projects')} aria-label="Projects" data-tooltip={tooltip('Projects')}><Folder size={15} aria-hidden="true" /><span>Projects</span></button>
         <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')} aria-label="Runs" data-tooltip={tooltip('Runs')}><History size={15} aria-hidden="true" /><span>Runs</span></button>
       </nav>
 
-      <div className="reference-sidebar-scroll">
-        <section className="reference-sidebar-section">
-          <div className="reference-sidebar-section-title"><span>Recents</span></div>
-          {groupedJobs.map(([label, group]) => <div className="reference-recent-group" key={label}>
-            <div className="reference-recent-label">{label}</div>
-            {group.map((job) => <div className="reference-sidebar-row-wrap" key={job.id}>
-              <button className="reference-sidebar-row" onClick={() => openJob(job)} title={job.input.goal}>
-                <span className={`reference-status-dot status-${job.status}`} />
-                <span className="reference-sidebar-row-copy"><strong>{job.input.goal}</strong><small>{relative(job.updatedAt)}</small></span>
+      <div className="lc-shell-sidebar-scroll">
+        <section className="lc-shell-sidebar-section">
+          <div className="lc-shell-sidebar-section-title"><span>Recents</span></div>
+          {groupedJobs.map(([label, group]) => <div className="lc-shell-recent-group" key={label}>
+            <div className="lc-shell-recent-label">{label}</div>
+            {group.map((job) => <div className="lc-shell-sidebar-row-wrap" key={job.id}>
+              <button className="lc-shell-sidebar-row" onClick={() => openJob(job)} title={job.input.goal}>
+                <span className={`lc-shell-status-dot status-${job.status}`} />
+                <span className="lc-shell-sidebar-row-copy"><strong>{job.input.goal}</strong><small>{relative(job.updatedAt)}</small></span>
               </button>
-              <button className="reference-row-menu-button" aria-label={`More options for ${job.input.goal}`} onClick={(event) => { event.stopPropagation(); setJobMenuId((current) => current === job.id ? undefined : job.id); }}><MoreHorizontal size={14} /></button>
-              {jobMenuId === job.id ? <div className="reference-row-menu"><button onClick={() => openJob(job)}>Open chat</button><button onClick={() => { setJobMenuId(undefined); selectSurface('runs'); }}>View run details</button></div> : null}
+              <button className="lc-shell-row-menu-button" aria-label={`More options for ${job.input.goal}`} onClick={(event) => { event.stopPropagation(); setJobMenuId((current) => current === job.id ? undefined : job.id); }}><MoreHorizontal size={14} /></button>
+              {jobMenuId === job.id ? <div className="lc-shell-row-menu"><button onClick={() => openJob(job)}>Open chat</button><button onClick={() => { setJobMenuId(undefined); selectSurface('runs'); }}>View run details</button></div> : null}
             </div>)}
           </div>)}
-          {recentJobs.length === 0 ? <p className="reference-sidebar-empty">No chats yet</p> : null}
+          {recentJobs.length === 0 ? <p className="lc-shell-sidebar-empty">No chats yet</p> : null}
         </section>
 
-        <section className="reference-sidebar-section reference-project-tree">
-          <div className="reference-sidebar-section-title"><span>Projects</span><button onClick={() => selectSurface('projects')} aria-label="Open projects"><Plus size={14} /></button></div>
-          {visibleProjects.map((project) => <button className="reference-sidebar-row project-row" key={project.id} onClick={() => runProject(project)} title={project.workspace}>
+        <section className="lc-shell-sidebar-section lc-shell-project-tree">
+          <div className="lc-shell-sidebar-section-title"><span>Projects</span><button onClick={() => selectSurface('projects')} aria-label="Open projects"><Plus size={14} /></button></div>
+          {visibleProjects.map((project) => <button className="lc-shell-sidebar-row project-row" key={project.id} onClick={() => runProject(project)} title={project.workspace}>
             <Folder size={14} />
-            <span className="reference-sidebar-row-copy"><strong>{project.name}</strong><small>{project.defaultRoutingPolicy}</small></span>
-            <ChevronRight size={12} className="reference-row-chevron" />
+            <span className="lc-shell-sidebar-row-copy"><strong>{project.name}</strong><small>{project.defaultRoutingPolicy}</small></span>
+            <ChevronRight size={12} className="lc-shell-row-chevron" />
           </button>)}
         </section>
       </div>
 
-      <div className="reference-sidebar-footer">
-        <div className={`reference-runtime-status ${runtimeOnline === false ? 'offline' : runtimeOnline === true ? 'online' : ''}`} title={runtimeOnline === false ? 'Local runtime unavailable' : 'Local runtime connected'}><i /><span>{runtimeOnline === false ? 'Runtime offline' : runtimeOnline === true ? 'Runtime connected' : 'Connecting…'}</span></div>
+      <div className="lc-shell-sidebar-footer">
+        <div className={`lc-shell-runtime-status ${runtimeOnline === false ? 'offline' : runtimeOnline === true ? 'online' : ''}`} title={runtimeOnline === false ? 'Local runtime unavailable' : 'Local runtime connected'}><i /><span>{runtimeOnline === false ? 'Runtime offline' : runtimeOnline === true ? 'Runtime connected' : 'Connecting…'}</span></div>
         <button onClick={() => openSettings()} aria-label="Settings" data-tooltip={tooltip('Settings')}><Settings size={15} aria-hidden="true" /><span>Settings</span></button>
-        <button className="reference-account-row" onClick={() => setSettingsOpen(true)} aria-label={`${profileName} profile`} data-tooltip={tooltip(profileName)}>
-          <span className="reference-account-avatar">{avatar}</span><span><strong>{profileName}</strong><small>On-device workspace</small></span>
+        <button className="lc-shell-account-row" onClick={() => setSettingsOpen(true)} aria-label={`${profileName} profile`} data-tooltip={tooltip(profileName)}>
+          <span className="lc-shell-account-avatar">{avatar}</span><span><strong>{profileName}</strong><small>On-device workspace</small></span>
         </button>
       </div>
-      <div className="reference-sidebar-resizer" onPointerDown={beginSidebarResize} aria-hidden="true" />
+      <div className="lc-shell-sidebar-resizer" onPointerDown={beginSidebarResize} aria-hidden="true" />
     </aside>
 
-    <main className="reference-content-shell">
+    <main className="lc-shell-content-shell">
       {surface === 'agent' ? <App key={agentEpoch} /> : null}
       {surface === 'chats' ? <ChatHistory jobs={jobs} onOpen={openJob} onNew={startNewTask} /> : null}
       {surface === 'projects' ? <ProjectGallery onOpenProject={runProject} onAdvanced={openSettings} /> : null}

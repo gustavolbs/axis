@@ -25,7 +25,7 @@
 .path-field-status { position: absolute; left: 4px; top: calc(100% + 4px); font-size: 11px; color: var(--lc-muted); }
 .path-field-status.error { color: var(--lc-negative); }
 
-.reference-runtime-status {
+.lc-shell-runtime-status {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -34,29 +34,29 @@
   color: var(--lc-muted);
   font-size: 11px;
 }
-.reference-runtime-status i { width: 7px; height: 7px; border-radius: 999px; background: var(--lc-faint); }
-.reference-runtime-status.online i { background: #75a77a; }
-.reference-runtime-status.offline i { background: var(--lc-negative); }
-.sidebar-collapsed .reference-runtime-status { justify-content: center; }
-.sidebar-collapsed .reference-runtime-status span { display: none; }
-.reference-new-chat {
+.lc-shell-runtime-status i { width: 7px; height: 7px; border-radius: 999px; background: var(--lc-faint); }
+.lc-shell-runtime-status.online i { background: #75a77a; }
+.lc-shell-runtime-status.offline i { background: var(--lc-negative); }
+.sidebar-collapsed .lc-shell-runtime-status { justify-content: center; }
+.sidebar-collapsed .lc-shell-runtime-status span { display: none; }
+.lc-shell-new-chat {
   margin-bottom: 4px;
   border: 1px solid var(--lc-border) !important;
   background: var(--lc-surface-1) !important;
 }
-.reference-new-chat:hover { background: var(--lc-surface-2) !important; }
+.lc-shell-new-chat:hover { background: var(--lc-surface-2) !important; }
 
 .settings-card-column { display: grid !important; gap: 14px !important; align-items: stretch !important; }
 .settings-card-column .path-field { width: 100%; }
-.settings-card .claude-switch { flex: 0 0 auto; }
+.settings-card .lc-agent-switch { flex: 0 0 auto; }
 
-.claude-error-banner {
+.lc-agent-error-banner {
   display: flex !important;
   align-items: center !important;
   gap: 8px !important;
 }
-.claude-error-banner > span { flex: 1 1 auto; min-width: 0; }
-.claude-error-banner > button:not([aria-label='Dismiss']) {
+.lc-agent-error-banner > span { flex: 1 1 auto; min-width: 0; }
+.lc-agent-error-banner > button:not([aria-label='Dismiss']) {
   border: 0;
   background: transparent;
   color: var(--lc-text-soft);
@@ -64,7 +64,7 @@
   font-size: 12px;
   cursor: pointer;
 }
-.claude-error-banner > button:not([aria-label='Dismiss']):hover { color: var(--lc-text); text-decoration: underline; }
+.lc-agent-error-banner > button:not([aria-label='Dismiss']):hover { color: var(--lc-text); text-decoration: underline; }
 
 .runs-v2 { height: 100dvh; overflow-y: auto; padding-top: var(--lc-titlebar-h) !important; padding-bottom: 40px; }
 .runs-v2 .runs-header { margin-bottom: 22px; }
@@ -110,14 +110,14 @@
 .runs-attempts span { padding: 3px 6px; border-radius: 6px; background: var(--lc-surface-3); color: var(--lc-text-soft); font-size: 10px; }
 .runs-attempts span.error { color: #e5a09a; }
 
-.reference-app-shell.sidebar-collapsed .global-search-backdrop { padding-left: 56px !important; }
-[data-shell='electron'][data-platform='darwin'].reference-app-shell.sidebar-collapsed .global-search-backdrop { padding-left: 78px !important; }
-[data-shell='electron'][data-platform='darwin'].reference-app-shell.sidebar-collapsed .reference-sidebar { width: 78px !important; }
-[data-shell='electron'][data-platform='darwin'].reference-app-shell.sidebar-collapsed .reference-sidebar-titlebar { padding: 0 !important; min-height: var(--lc-titlebar-h); }
+.lc-shell-app-shell.sidebar-collapsed .global-search-backdrop { padding-left: 56px !important; }
+[data-shell='electron'][data-platform='darwin'].lc-shell-app-shell.sidebar-collapsed .global-search-backdrop { padding-left: 78px !important; }
+[data-shell='electron'][data-platform='darwin'].lc-shell-app-shell.sidebar-collapsed .lc-shell-sidebar { width: 78px !important; }
+[data-shell='electron'][data-platform='darwin'].lc-shell-app-shell.sidebar-collapsed .lc-shell-sidebar-titlebar { padding: 0 !important; min-height: var(--lc-titlebar-h); }
 :where(button, a, input, textarea):focus-visible { border-radius: inherit; }
 
 @media (max-width: 900px) {
   .runs-detail-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .reference-project-actions { width: 100%; }
-  .reference-project-search { flex: 1 1 220px !important; }
+  .lc-shell-project-actions { width: 100%; }
+  .lc-shell-project-search { flex: 1 1 220px !important; }
 }

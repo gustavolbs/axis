@@ -208,7 +208,6 @@ function repoIntelligenceStatus(): Record<string, unknown> {
 function researchStatus(): Record<string, unknown> {
   return {
     enabled: config.researchEnabled !== false,
-    microsoftLearn: config.microsoftLearnResearchEnabled !== false,
     searxngConfigured: Boolean(config.searxngUrl),
     policy: 'local-first'
   };
@@ -395,7 +394,7 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
           context: request.input.context ?? null,
           constraints: request.input.constraints ?? [],
           language: request.input.language ?? null,
-          claudeGuidance: request.input.claudeGuidance ?? null,
+          userGuidance: request.input.userGuidance ?? null,
           maxRepairRounds: request.input.maxRepairRounds ?? null,
           repositoryUrl: request.workspace.repositoryUrl,
           baseSha: request.workspace.baseSha

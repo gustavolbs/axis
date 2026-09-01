@@ -100,47 +100,47 @@ export function ProjectGallery({
     }
   }
 
-  return <section className="reference-projects-page page-shell" aria-label="Projects">
-    <header className="reference-projects-header page-header">
+  return <section className="lc-shell-projects-page page-shell" aria-label="Projects">
+    <header className="lc-shell-projects-header page-header">
       <h1 className="page-title">Projects</h1>
-      <div className="reference-project-actions">
-        <label className="reference-project-search">
+      <div className="lc-shell-project-actions">
+        <label className="lc-shell-project-search">
           <Search size={16} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects" aria-label="Search projects" />
         </label>
-        <div className="reference-sort-anchor">
-          <button className="reference-sort-button" type="button" onClick={() => setSortOpen((value) => !value)}>Sort by <strong>{sort === 'updated' ? 'Last updated' : 'Name'}</strong><ChevronDown size={13} /></button>
-          {sortOpen ? <div className="reference-sort-menu">
+        <div className="lc-shell-sort-anchor">
+          <button className="lc-shell-sort-button" type="button" onClick={() => setSortOpen((value) => !value)}>Sort by <strong>{sort === 'updated' ? 'Last updated' : 'Name'}</strong><ChevronDown size={13} /></button>
+          {sortOpen ? <div className="lc-shell-sort-menu">
             <button className={sort === 'updated' ? 'selected' : ''} onClick={() => { setSort('updated'); setSortOpen(false); }}><span>Last updated</span>{sort === 'updated' ? <Check size={14} /> : null}</button>
             <button className={sort === 'name' ? 'selected' : ''} onClick={() => { setSort('name'); setSortOpen(false); }}><span>Name</span>{sort === 'name' ? <Check size={14} /> : null}</button>
           </div> : null}
         </div>
-        <button className="reference-primary-button btn-primary" type="button" onClick={() => setCreating(true)}>New project</button>
+        <button className="lc-shell-primary-button btn-primary" type="button" onClick={() => setCreating(true)}>New project</button>
       </div>
     </header>
 
-    {error ? <div className="reference-inline-error">{error}</div> : null}
+    {error ? <div className="lc-shell-inline-error">{error}</div> : null}
 
-    <div className="reference-project-grid">
-      {visible.map((project) => <article className="reference-project-card" key={project.id}>
-        <button className="reference-project-card-main" onClick={() => onOpenProject(project)}>
-          <span className="reference-project-card-title"><Folder size={15} /><strong>{project.name}</strong><Pin size={12} className="reference-project-pin" /></span>
-          <span className="reference-project-card-workspace">{project.workspace}</span>
-          <span className="reference-project-card-time">{relative(project.updatedAt)}</span>
+    <div className="lc-shell-project-grid">
+      {visible.map((project) => <article className="lc-shell-project-card" key={project.id}>
+        <button className="lc-shell-project-card-main" onClick={() => onOpenProject(project)}>
+          <span className="lc-shell-project-card-title"><Folder size={15} /><strong>{project.name}</strong><Pin size={12} className="lc-shell-project-pin" /></span>
+          <span className="lc-shell-project-card-workspace">{project.workspace}</span>
+          <span className="lc-shell-project-card-time">{relative(project.updatedAt)}</span>
         </button>
-        <button className="reference-project-more" aria-label={`Configure ${project.name}`} onClick={() => onAdvanced(project)}><MoreHorizontal size={17} /></button>
+        <button className="lc-shell-project-more" aria-label={`Configure ${project.name}`} onClick={() => onAdvanced(project)}><MoreHorizontal size={17} /></button>
       </article>)}
-      {visible.length === 0 ? <div className="reference-project-empty">No projects found.</div> : null}
+      {visible.length === 0 ? <div className="lc-shell-project-empty">No projects found.</div> : null}
     </div>
 
-    {creating ? <div className="reference-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) closeCreate(); }}>
-      <form className="reference-project-modal" onSubmit={(event) => void createProject(event)}>
-        <div className="reference-modal-title"><h2 className="dialog-title">Create a project</h2><button type="button" onClick={closeCreate} aria-label="Close"><X size={18} /></button></div>
+    {creating ? <div className="lc-shell-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) closeCreate(); }}>
+      <form className="lc-shell-project-modal" onSubmit={(event) => void createProject(event)}>
+        <div className="lc-shell-modal-title"><h2 className="dialog-title">Create a project</h2><button type="button" onClick={closeCreate} aria-label="Close"><X size={18} /></button></div>
         <label><span>What are you working on?</span><input name="name" required autoFocus placeholder="Give your project a name" /></label>
         <label><span>Project folder</span><FolderField value={workspace} onChange={setWorkspace} name="workspace" required /></label>
-        <label className="reference-modal-optional"><span>Organization <small>optional</small></span><input name="organizationId" placeholder="e.g. acme" /></label>
-        <div className="reference-modal-folder-hint"><Info size={14} /><span>The folder is used as the agent's isolated workspace.</span></div>
-        <div className="reference-modal-actions"><button className="btn-secondary" type="button" onClick={closeCreate}>Cancel</button><button className="reference-primary-button btn-primary" disabled={busy || !workspace.trim()}>{busy ? 'Creating…' : 'Create project'}</button></div>
+        <label className="lc-shell-modal-optional"><span>Organization <small>optional</small></span><input name="organizationId" placeholder="e.g. acme" /></label>
+        <div className="lc-shell-modal-folder-hint"><Info size={14} /><span>The folder is used as the agent's isolated workspace.</span></div>
+        <div className="lc-shell-modal-actions"><button className="btn-secondary" type="button" onClick={closeCreate}>Cancel</button><button className="lc-shell-primary-button btn-primary" disabled={busy || !workspace.trim()}>{busy ? 'Creating…' : 'Create project'}</button></div>
       </form>
     </div> : null}
   </section>;

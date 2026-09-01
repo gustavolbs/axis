@@ -140,7 +140,7 @@ export function RunInspectorV2() {
       </div>
     </header>
 
-    {error ? <div className="reference-inline-error">{error}</div> : null}
+    {error ? <div className="lc-shell-inline-error">{error}</div> : null}
 
     <div className="runs-table-wrap">
       <table className="runs-table">

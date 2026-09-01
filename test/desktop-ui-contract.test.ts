@@ -4,10 +4,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 const root = process.cwd();
-const agent = fs.readFileSync(path.join(root, 'app/src/claude-agent.css'), 'utf8');
-const fidelity = fs.readFileSync(path.join(root, 'app/src/claude-fidelity.css'), 'utf8');
-const reference = fs.readFileSync(path.join(root, 'app/src/reference-fidelity.css'), 'utf8');
-const overrides = fs.readFileSync(path.join(root, 'app/src/claude-reference-overrides.css'), 'utf8');
+const agent = fs.readFileSync(path.join(root, 'app/src/lc-agent.css'), 'utf8');
+const fidelity = fs.readFileSync(path.join(root, 'app/src/lc-agent-fidelity.css'), 'utf8');
+const reference = fs.readFileSync(path.join(root, 'app/src/lc-shell-fidelity.css'), 'utf8');
+const overrides = fs.readFileSync(path.join(root, 'app/src/lc-layout-overrides.css'), 'utf8');
 const audit = fs.readFileSync(path.join(root, 'app/src/audit-v2.css'), 'utf8');
 const auditComponents = fs.readFileSync(path.join(root, 'app/src/audit-v2-components.css'), 'utf8');
 const agentSurface = fs.readFileSync(path.join(root, 'app/src/AgentSurfaceV2.tsx'), 'utf8');
@@ -24,7 +24,7 @@ const desktop = fs.readFileSync(path.join(root, 'desktop/main.mjs'), 'utf8');
 const preload = fs.readFileSync(path.join(root, 'desktop/preload.cjs'), 'utf8');
 
 test('desktop chrome uses persistent responsive sidebar and safe native drag regions', () => {
-  for (const required of ['reference-app-shell', 'reference-sidebar', 'reference-sidebar-titlebar', 'reference-sidebar-resizer', 'New chat', 'Search', 'Chats', 'Projects', 'Runs', 'Settings']) {
+  for (const required of ['lc-shell-app-shell', 'lc-shell-sidebar', 'lc-shell-sidebar-titlebar', 'lc-shell-sidebar-resizer', 'New chat', 'Search', 'Chats', 'Projects', 'Runs', 'Settings']) {
     assert.equal(appRoot.includes(required), true, `missing global shell primitive: ${required}`);
   }
   assert.match(appRoot, /data-shell=/);
@@ -46,8 +46,8 @@ test('collapsed rail has accessible names delayed tooltips and persistent profil
   }
   assert.match(appRoot, /data-tooltip=/);
   assert.match(audit, /transition:\s*opacity 120ms ease 400ms/);
-  assert.match(appRoot, /reference-account-avatar/);
-  assert.match(audit, /sidebar-collapsed \.reference-account-avatar/);
+  assert.match(appRoot, /lc-shell-account-avatar/);
+  assert.match(audit, /sidebar-collapsed \.lc-shell-account-avatar/);
 });
 
 test('global and native shortcuts cover core Local Coder navigation', () => {
@@ -94,7 +94,7 @@ test('external https links are delegated to the system browser and renderer rema
 });
 
 test('agent remains thread-first with lightweight streaming state', () => {
-  for (const required of ['claude-thread-pane', 'thread-user-turn', 'user-message', 'thread-assistant-turn', 'assistant-body', 'claude-composer', 'claude-prompt-input', 'claude-send-button', 'claude-stop-button', 'claude-progress-rail']) {
+  for (const required of ['lc-agent-thread-pane', 'thread-user-turn', 'user-message', 'thread-assistant-turn', 'assistant-body', 'lc-agent-composer', 'lc-agent-prompt-input', 'lc-agent-send-button', 'lc-agent-stop-button', 'lc-agent-progress-rail']) {
     assert.equal(agentSurface.includes(required), true, `missing Agent primitive: ${required}`);
   }
   for (const state of ['Working', 'Thinking', 'Writing']) assert.match(agentSurface, new RegExp(state));
@@ -114,8 +114,8 @@ test('composer autogrows uses outer focus ring and keeps bounded popovers', () =
   assert.match(agentSurface, /element\.style\.height = 'auto'/);
   assert.match(agentSurface, /Math\.min\(element\.scrollHeight/);
   assert.match(agentSurface, /rows=\{1\}/);
-  assert.match(audit, /\.claude-prompt-input:focus[\s\S]*?outline:\s*none/);
-  assert.match(audit, /\.claude-composer:focus-within/);
+  assert.match(audit, /\.lc-agent-prompt-input:focus[\s\S]*?outline:\s*none/);
+  assert.match(audit, /\.lc-agent-composer:focus-within/);
   assert.match(audit, /max-height:\s*min\(360px/);
   assert.match(audit, /\.project-popover,[\s\S]*?left:\s*0/);
 });
@@ -137,20 +137,20 @@ test('model menu exposes real provider groups plus Effort and Thinking', () => {
   assert.match(agentSurface, /<strong>Thinking<\/strong>/);
   for (const label of ['Low', 'Medium', 'High', 'Extra high', 'Max']) assert.match(agentSurface, new RegExp(`label: '${label}'`));
   assert.match(agentSurface, /reasoningEffort:\s*selectedProject \? \(thinkingEnabled \? effort : 'none'\)/);
-  assert.match(fidelity, /\.claude-switch\.on/);
+  assert.match(fidelity, /\.lc-agent-switch\.on/);
 });
 
 test('empty state is personalized and quick actions remain available', () => {
   assert.match(agentSurface, /function greeting/);
   assert.match(agentSurface, /getProfile\(\)/);
-  assert.match(agentSurface, /claude-quick-actions/);
+  assert.match(agentSurface, /lc-agent-quick-actions/);
   for (const label of ['Review this code', 'Fix a bug', 'Improve the tests', 'Explain this project']) assert.match(agentSurface, new RegExp(label));
   assert.match(audit, /justify-content:\s*center/);
   assert.match(audit, /padding-top:\s*var\(--lc-titlebar-h\)/);
 });
 
 test('Projects uses real folder picker and consistent primary-secondary hierarchy', () => {
-  for (const required of ['reference-projects-page', 'reference-project-grid', 'reference-project-card', 'reference-project-modal', 'New project', 'Last updated', 'Create a project', 'Search projects']) {
+  for (const required of ['lc-shell-projects-page', 'lc-shell-project-grid', 'lc-shell-project-card', 'lc-shell-project-modal', 'New project', 'Last updated', 'Create a project', 'Search projects']) {
     assert.equal(projectGallery.includes(required), true, `missing Projects primitive: ${required}`);
   }
   assert.match(projectGallery, /<Info size=\{14\}/);
@@ -204,7 +204,7 @@ test('errors auto-dismiss and expose Retry plus Settings actions while infra sta
   assert.match(agentSurface, /setTimeout\(\(\) => setError\(undefined\), 8_000\)/);
   assert.match(agentSurface, />Retry<\/button>/);
   assert.match(agentSurface, />Settings<\/button>/);
-  assert.match(appRoot, /reference-runtime-status/);
+  assert.match(appRoot, /lc-shell-runtime-status/);
 });
 
 test('final stylesheet ordering keeps audit fixes last and renderer zoom is not forced', () => {
@@ -212,7 +212,7 @@ test('final stylesheet ordering keeps audit fixes last and renderer zoom is not 
   assert.equal(imports.at(-1), "import './audit-v2-components.css';");
   assert.match(main, /dataset\.lcTheme/);
   assert.doesNotMatch(desktop, /setZoomFactor\(/);
-  assert.match(agent, /\.claude-thread\s*\{[\s\S]*?overflow-y:\s*auto/);
-  assert.match(reference, /\.reference-content-shell \.claude-sidebar\s*\{[\s\S]*?display:\s*none !important/);
+  assert.match(agent, /\.lc-agent-thread\s*\{[\s\S]*?overflow-y:\s*auto/);
+  assert.match(reference, /\.lc-shell-content-shell \.lc-agent-sidebar\s*\{[\s\S]*?display:\s*none !important/);
   assert.match(overrides, /--ref-bg:\s*#1f1e1b/);
 });

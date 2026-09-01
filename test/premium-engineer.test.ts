@@ -130,7 +130,7 @@ test('short-circuits before planning when read-only investigation needs external
       goal: 'Investigação read-only (NÃO alterar código): documente como conectar Microsoft 365 Calendar.'
     });
 
-    assert.equal(output.result.status, 'needs-claude');
+    assert.equal(output.result.status, 'needs-guidance');
     assert.equal(output.result.phase, 'investigation');
     assert.equal(output.result.escalation?.kind, 'external-research');
     assert.equal(model.calls.length, 1, 'the implementation planner must not run');

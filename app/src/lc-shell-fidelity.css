@@ -31,7 +31,7 @@ body {
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
 }
 
-.reference-app-shell {
+.lc-shell-app-shell {
   display: grid;
   grid-template-columns: var(--ref-sidebar-width) minmax(0, 1fr);
   width: 100%;
@@ -42,7 +42,7 @@ body {
   background: var(--ref-bg);
 }
 
-.reference-sidebar {
+.lc-shell-sidebar {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -53,7 +53,7 @@ body {
   background: var(--ref-sidebar);
 }
 
-.reference-sidebar-titlebar {
+.lc-shell-sidebar-titlebar {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -63,16 +63,16 @@ body {
   -webkit-app-region: drag;
 }
 
-.reference-sidebar-titlebar button,
-.reference-sidebar button,
-.reference-content-shell button,
-.reference-content-shell input,
-.reference-content-shell textarea,
-.reference-content-shell select {
+.lc-shell-sidebar-titlebar button,
+.lc-shell-sidebar button,
+.lc-shell-content-shell button,
+.lc-shell-content-shell input,
+.lc-shell-content-shell textarea,
+.lc-shell-content-shell select {
   -webkit-app-region: no-drag;
 }
 
-.reference-sidebar-collapse {
+.lc-shell-sidebar-collapse {
   display: grid;
   width: 28px;
   height: 28px;
@@ -84,19 +84,19 @@ body {
   color: var(--ref-muted);
 }
 
-.reference-sidebar-collapse:hover {
+.lc-shell-sidebar-collapse:hover {
   background: var(--ref-surface-hover);
   color: var(--ref-text);
 }
 
-.reference-primary-nav {
+.lc-shell-primary-nav {
   display: grid;
   gap: 2px;
   padding: 1px 8px 10px;
 }
 
-.reference-primary-nav button,
-.reference-sidebar-footer > button {
+.lc-shell-primary-nav button,
+.lc-shell-sidebar-footer > button {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -112,15 +112,15 @@ body {
   text-align: left;
 }
 
-.reference-primary-nav button:hover,
-.reference-primary-nav button.active,
-.reference-sidebar-footer > button:hover,
-.reference-sidebar-footer > button.active {
+.lc-shell-primary-nav button:hover,
+.lc-shell-primary-nav button.active,
+.lc-shell-sidebar-footer > button:hover,
+.lc-shell-sidebar-footer > button.active {
   background: var(--ref-surface-active);
   color: var(--ref-text);
 }
 
-.reference-sidebar-scroll {
+.lc-shell-sidebar-scroll {
   flex: 1;
   min-height: 0;
   padding: 0 8px 10px;
@@ -130,11 +130,11 @@ body {
   scrollbar-color: #5a5752 transparent;
 }
 
-.reference-sidebar-section {
+.lc-shell-sidebar-section {
   margin-top: 10px;
 }
 
-.reference-sidebar-section-title {
+.lc-shell-sidebar-section-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -145,7 +145,7 @@ body {
   font-weight: 520;
 }
 
-.reference-sidebar-section-title button {
+.lc-shell-sidebar-section-title button {
   display: grid;
   width: 24px;
   height: 24px;
@@ -157,12 +157,12 @@ body {
   color: inherit;
 }
 
-.reference-sidebar-section-title button:hover {
+.lc-shell-sidebar-section-title button:hover {
   background: var(--ref-surface-hover);
   color: var(--ref-text);
 }
 
-.reference-sidebar-row {
+.lc-shell-sidebar-row {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr);
   gap: 7px;
@@ -178,15 +178,15 @@ body {
   text-align: left;
 }
 
-.reference-sidebar-row.project-row {
+.lc-shell-sidebar-row.project-row {
   grid-template-columns: 16px minmax(0, 1fr) 12px;
 }
 
-.reference-sidebar-row:hover {
+.lc-shell-sidebar-row:hover {
   background: #242321;
 }
 
-.reference-sidebar-row-copy {
+.lc-shell-sidebar-row-copy {
   display: flex;
   min-width: 0;
   align-items: baseline;
@@ -194,7 +194,7 @@ body {
   gap: 8px;
 }
 
-.reference-sidebar-row-copy strong {
+.lc-shell-sidebar-row-copy strong {
   min-width: 0;
   overflow: hidden;
   color: inherit;
@@ -205,51 +205,51 @@ body {
   white-space: nowrap;
 }
 
-.reference-sidebar-row-copy small {
+.lc-shell-sidebar-row-copy small {
   flex: 0 0 auto;
   color: var(--ref-faint);
   font-size: 9.5px;
   white-space: nowrap;
 }
 
-.reference-status-dot {
+.lc-shell-status-dot {
   width: 5px;
   height: 5px;
   border: 1px solid #5d5953;
   border-radius: 50%;
 }
 
-.reference-status-dot.status-running,
-.reference-status-dot.status-queued,
-.reference-status-dot.status-waiting-decision,
-.reference-status-dot.status-waiting-guidance {
+.lc-shell-status-dot.status-running,
+.lc-shell-status-dot.status-queued,
+.lc-shell-status-dot.status-waiting-decision,
+.lc-shell-status-dot.status-waiting-guidance {
   border-color: #5597f1;
   background: #5597f1;
 }
 
-.reference-row-chevron {
+.lc-shell-row-chevron {
   color: var(--ref-faint);
   opacity: 0;
 }
 
-.reference-sidebar-row:hover .reference-row-chevron {
+.lc-shell-sidebar-row:hover .lc-shell-row-chevron {
   opacity: 1;
 }
 
-.reference-sidebar-empty {
+.lc-shell-sidebar-empty {
   margin: 4px 7px;
   color: var(--ref-faint);
   font-size: 10.5px;
 }
 
-.reference-sidebar-footer {
+.lc-shell-sidebar-footer {
   display: grid;
   gap: 4px;
   padding: 8px;
   border-top: 1px solid var(--ref-border-soft);
 }
 
-.reference-account-row {
+.lc-shell-account-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -257,7 +257,7 @@ body {
   padding: 7px 8px 4px;
 }
 
-.reference-account-avatar {
+.lc-shell-account-avatar {
   display: grid;
   width: 22px;
   height: 22px;
@@ -268,12 +268,12 @@ body {
   color: var(--ref-text-soft);
 }
 
-.reference-account-row > span:last-child {
+.lc-shell-account-row > span:last-child {
   display: grid;
   min-width: 0;
 }
 
-.reference-account-row strong {
+.lc-shell-account-row strong {
   overflow: hidden;
   color: var(--ref-text-soft);
   font-size: 10.5px;
@@ -282,60 +282,60 @@ body {
   white-space: nowrap;
 }
 
-.reference-account-row small {
+.lc-shell-account-row small {
   color: var(--ref-faint);
   font-size: 9px;
 }
 
-.reference-content-shell {
+.lc-shell-content-shell {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: var(--ref-bg);
 }
 
-.reference-content-shell .claude-agent-shell {
+.lc-shell-content-shell .lc-agent-agent-shell {
   grid-template-columns: minmax(0, 1fr) minmax(238px, 306px);
   height: 100%;
   background: var(--ref-bg);
 }
 
-.reference-content-shell .claude-sidebar {
+.lc-shell-content-shell .lc-agent-sidebar {
   display: none !important;
 }
 
-.reference-content-shell .claude-thread-pane,
-.reference-content-shell .claude-empty-start,
-.reference-content-shell .claude-thread {
+.lc-shell-content-shell .lc-agent-thread-pane,
+.lc-shell-content-shell .lc-agent-empty-start,
+.lc-shell-content-shell .lc-agent-thread {
   background: var(--ref-bg);
 }
 
-.reference-content-shell .claude-empty-start {
+.lc-shell-content-shell .lc-agent-empty-start {
   justify-content: center;
   padding-bottom: 142px;
 }
 
-.reference-content-shell .claude-empty-mark {
+.lc-shell-content-shell .lc-agent-empty-mark {
   color: var(--ref-accent);
 }
 
-.reference-content-shell .claude-empty-start h1 {
+.lc-shell-content-shell .lc-agent-empty-start h1 {
   color: var(--ref-text);
   font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
   font-size: clamp(30px, 3.4vw, 43px);
   font-weight: 500;
 }
 
-.reference-content-shell .claude-empty-start p {
+.lc-shell-content-shell .lc-agent-empty-start p {
   display: none;
 }
 
-.reference-content-shell .claude-composer-wrap {
+.lc-shell-content-shell .lc-agent-composer-wrap {
   width: min(720px, calc(100% - 42px));
   margin: 0 auto 22px;
 }
 
-.reference-content-shell .claude-composer {
+.lc-shell-content-shell .lc-agent-composer {
   overflow: visible;
   border: 1px solid #474541;
   border-radius: 15px;
@@ -343,7 +343,7 @@ body {
   box-shadow: none;
 }
 
-.reference-content-shell .claude-prompt-input {
+.lc-shell-content-shell .lc-agent-prompt-input {
   min-height: 76px;
   padding: 16px 18px 8px;
   color: var(--ref-text);
@@ -351,68 +351,68 @@ body {
   line-height: 1.45;
 }
 
-.reference-content-shell .claude-prompt-input::placeholder {
+.lc-shell-content-shell .lc-agent-prompt-input::placeholder {
   color: #9a958c;
 }
 
-.reference-content-shell .composer-toolbar {
+.lc-shell-content-shell .composer-toolbar {
   padding: 5px 10px 10px;
 }
 
-.reference-content-shell .composer-icon-button,
-.reference-content-shell .composer-text-button,
-.reference-content-shell .model-effort-trigger {
+.lc-shell-content-shell .composer-icon-button,
+.lc-shell-content-shell .composer-text-button,
+.lc-shell-content-shell .model-effort-trigger {
   color: var(--ref-text-soft);
 }
 
-.reference-content-shell .composer-icon-button:hover,
-.reference-content-shell .composer-text-button:hover,
-.reference-content-shell .model-effort-trigger:hover {
+.lc-shell-content-shell .composer-icon-button:hover,
+.lc-shell-content-shell .composer-text-button:hover,
+.lc-shell-content-shell .model-effort-trigger:hover {
   background: #343330;
 }
 
-.reference-content-shell .model-trigger-dot {
+.lc-shell-content-shell .model-trigger-dot {
   opacity: .42;
 }
 
-.reference-content-shell .claude-send-button {
+.lc-shell-content-shell .lc-agent-send-button {
   background: #ece9e3;
   color: #1b1b1a;
 }
 
-.reference-content-shell .claude-send-button:disabled {
+.lc-shell-content-shell .lc-agent-send-button:disabled {
   background: #3b3936;
   color: #77736c;
 }
 
-.reference-content-shell .claude-popover {
+.lc-shell-content-shell .lc-agent-popover {
   border: 1px solid #45433f;
   background: #262522;
   box-shadow: 0 18px 48px rgba(0, 0, 0, .45);
 }
 
-.reference-content-shell .claude-popover button:hover,
-.reference-content-shell .claude-popover button.selected {
+.lc-shell-content-shell .lc-agent-popover button:hover,
+.lc-shell-content-shell .lc-agent-popover button.selected {
   background: #353330;
 }
 
-.reference-content-shell .user-message {
+.lc-shell-content-shell .user-message {
   border: 0;
   border-radius: 13px;
   background: #2a2926;
   color: var(--ref-text);
 }
 
-.reference-content-shell .assistant-body,
-.reference-content-shell .assistant-result-message {
+.lc-shell-content-shell .assistant-body,
+.lc-shell-content-shell .assistant-result-message {
   color: var(--ref-text);
 }
 
-.reference-content-shell .assistant-mark {
+.lc-shell-content-shell .assistant-mark {
   color: var(--ref-accent);
 }
 
-.reference-projects-page {
+.lc-shell-projects-page {
   width: min(920px, calc(100% - 72px));
   height: 100%;
   margin: 0 auto;
@@ -420,7 +420,7 @@ body {
   overflow-y: auto;
 }
 
-.reference-projects-header {
+.lc-shell-projects-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -428,7 +428,7 @@ body {
   margin-bottom: 44px;
 }
 
-.reference-projects-header h1 {
+.lc-shell-projects-header h1 {
   margin: 0;
   color: var(--ref-text);
   font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
@@ -437,13 +437,13 @@ body {
   letter-spacing: -.02em;
 }
 
-.reference-project-actions {
+.lc-shell-project-actions {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.reference-project-search {
+.lc-shell-project-search {
   display: flex;
   align-items: center;
   width: 34px;
@@ -456,11 +456,11 @@ body {
   transition: width .16s ease;
 }
 
-.reference-project-search:focus-within {
+.lc-shell-project-search:focus-within {
   width: 180px;
 }
 
-.reference-project-search input {
+.lc-shell-project-search input {
   width: 145px;
   min-width: 0;
   margin-left: 7px;
@@ -471,9 +471,9 @@ body {
   font-size: 11px;
 }
 
-.reference-sort-button,
-.reference-primary-button,
-.reference-modal-actions > button {
+.lc-shell-sort-button,
+.lc-shell-primary-button,
+.lc-shell-modal-actions > button {
   height: 34px;
   padding: 0 12px;
   border: 0;
@@ -481,29 +481,29 @@ body {
   font-size: 11px;
 }
 
-.reference-sort-button {
+.lc-shell-sort-button {
   background: #2a2927;
   color: var(--ref-muted);
 }
 
-.reference-sort-button strong {
+.lc-shell-sort-button strong {
   color: var(--ref-text-soft);
   font-weight: 520;
 }
 
-.reference-primary-button {
+.lc-shell-primary-button {
   background: #f1eee8 !important;
   color: #181817 !important;
   font-weight: 620;
 }
 
-.reference-project-grid {
+.lc-shell-project-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
 }
 
-.reference-project-card {
+.lc-shell-project-card {
   position: relative;
   min-height: 116px;
   overflow: hidden;
@@ -512,12 +512,12 @@ body {
   background: transparent;
 }
 
-.reference-project-card:hover {
+.lc-shell-project-card:hover {
   border-color: #45433f;
   background: #1b1b19;
 }
 
-.reference-project-card-main {
+.lc-shell-project-card-main {
   display: grid;
   width: 100%;
   height: 100%;
@@ -529,14 +529,14 @@ body {
   text-align: left;
 }
 
-.reference-project-card-title {
+.lc-shell-project-card-title {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
 
-.reference-project-card-title strong {
+.lc-shell-project-card-title strong {
   overflow: hidden;
   font-size: 12px;
   font-weight: 570;
@@ -544,11 +544,11 @@ body {
   white-space: nowrap;
 }
 
-.reference-project-pin {
+.lc-shell-project-pin {
   color: var(--ref-muted);
 }
 
-.reference-project-card-workspace {
+.lc-shell-project-card-workspace {
   align-self: end;
   overflow: hidden;
   color: var(--ref-muted);
@@ -557,14 +557,14 @@ body {
   white-space: nowrap;
 }
 
-.reference-project-card-time {
+.lc-shell-project-card-time {
   align-self: end;
   margin-top: 5px;
   color: var(--ref-faint);
   font-size: 10px;
 }
 
-.reference-project-more {
+.lc-shell-project-more {
   position: absolute;
   top: 12px;
   right: 12px;
@@ -580,23 +580,23 @@ body {
   opacity: 0;
 }
 
-.reference-project-card:hover .reference-project-more {
+.lc-shell-project-card:hover .lc-shell-project-more {
   opacity: 1;
 }
 
-.reference-project-more:hover {
+.lc-shell-project-more:hover {
   background: var(--ref-surface-hover);
   color: var(--ref-text);
 }
 
-.reference-project-empty {
+.lc-shell-project-empty {
   grid-column: 1 / -1;
   padding: 50px 20px;
   color: var(--ref-muted);
   text-align: center;
 }
 
-.reference-inline-error {
+.lc-shell-inline-error {
   margin: -24px 0 24px;
   padding: 9px 11px;
   border: 1px solid #72423b;
@@ -606,7 +606,7 @@ body {
   font-size: 11px;
 }
 
-.reference-modal-backdrop {
+.lc-shell-modal-backdrop {
   position: fixed;
   z-index: 1000;
   inset: 0;
@@ -617,7 +617,7 @@ body {
   backdrop-filter: blur(7px);
 }
 
-.reference-project-modal {
+.lc-shell-project-modal {
   display: grid;
   gap: 21px;
   width: min(520px, calc(100vw - 48px));
@@ -628,20 +628,20 @@ body {
   box-shadow: 0 24px 80px rgba(0,0,0,.55);
 }
 
-.reference-modal-title {
+.lc-shell-modal-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-.reference-modal-title h2 {
+.lc-shell-modal-title h2 {
   margin: 0;
   font-size: 20px;
   font-weight: 570;
   letter-spacing: -.02em;
 }
 
-.reference-modal-title button {
+.lc-shell-modal-title button {
   display: grid;
   width: 28px;
   height: 28px;
@@ -653,7 +653,7 @@ body {
   color: var(--ref-text-soft);
 }
 
-.reference-project-modal label {
+.lc-shell-project-modal label {
   display: grid;
   gap: 8px;
   color: var(--ref-text);
@@ -661,12 +661,12 @@ body {
   font-weight: 530;
 }
 
-.reference-project-modal label small {
+.lc-shell-project-modal label small {
   color: var(--ref-faint);
   font-weight: 400;
 }
 
-.reference-project-modal input {
+.lc-shell-project-modal input {
   width: 100%;
   height: 36px;
   padding: 0 11px;
@@ -678,15 +678,15 @@ body {
   font-size: 11.5px;
 }
 
-.reference-project-modal input:focus {
+.lc-shell-project-modal input:focus {
   border-color: #68645e;
 }
 
-.reference-project-modal input::placeholder {
+.lc-shell-project-modal input::placeholder {
   color: #77736c;
 }
 
-.reference-modal-folder-hint {
+.lc-shell-modal-folder-hint {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -695,31 +695,31 @@ body {
   font-size: 10.5px;
 }
 
-.reference-modal-actions {
+.lc-shell-modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
   margin-top: 4px;
 }
 
-.reference-modal-actions > button:not(.reference-primary-button) {
+.lc-shell-modal-actions > button:not(.lc-shell-primary-button) {
   background: #3b3936;
   color: var(--ref-text-soft);
 }
 
-.surface-settings .admin-shell {
+.surface-settings .lc-admin-shell {
   height: 100%;
   padding: 28px 34px 50px;
   overflow-y: auto;
   background: var(--ref-bg);
 }
 
-.surface-settings .admin-toolbar .eyebrow,
-.surface-settings .admin-toolbar > div > p {
+.surface-settings .lc-admin-toolbar .eyebrow,
+.surface-settings .lc-admin-toolbar > div > p {
   display: none;
 }
 
-.surface-settings .admin-toolbar h2 {
+.surface-settings .lc-admin-toolbar h2 {
   margin: 0;
   color: var(--ref-text);
   font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
@@ -729,45 +729,45 @@ body {
 
 @media (max-width: 1120px) {
   :root { --ref-sidebar-width: 220px; }
-  .reference-content-shell .claude-agent-shell { grid-template-columns: minmax(0, 1fr); }
-  .reference-content-shell .progress-rail,
-  .reference-content-shell .claude-progress-rail { display: none !important; }
-  .reference-projects-page { width: min(780px, calc(100% - 50px)); }
+  .lc-shell-content-shell .lc-agent-agent-shell { grid-template-columns: minmax(0, 1fr); }
+  .lc-shell-content-shell .progress-rail,
+  .lc-shell-content-shell .lc-agent-progress-rail { display: none !important; }
+  .lc-shell-projects-page { width: min(780px, calc(100% - 50px)); }
 }
 
 @media (max-width: 820px) {
   :root { --ref-sidebar-width: 190px; }
-  .reference-sidebar-row-copy small { display: none; }
-  .reference-projects-page { width: calc(100% - 36px); padding-top: 34px; }
-  .reference-projects-header { align-items: flex-start; flex-direction: column; margin-bottom: 26px; }
-  .reference-project-grid { grid-template-columns: 1fr; }
-  .reference-project-actions { width: 100%; flex-wrap: wrap; }
-  .reference-content-shell .claude-composer-wrap { width: calc(100% - 28px); }
+  .lc-shell-sidebar-row-copy small { display: none; }
+  .lc-shell-projects-page { width: calc(100% - 36px); padding-top: 34px; }
+  .lc-shell-projects-header { align-items: flex-start; flex-direction: column; margin-bottom: 26px; }
+  .lc-shell-project-grid { grid-template-columns: 1fr; }
+  .lc-shell-project-actions { width: 100%; flex-wrap: wrap; }
+  .lc-shell-content-shell .lc-agent-composer-wrap { width: calc(100% - 28px); }
 }
 
-.reference-app-shell.sidebar-collapsed {
+.lc-shell-app-shell.sidebar-collapsed {
   grid-template-columns: 54px minmax(0, 1fr);
 }
 
-.sidebar-collapsed .reference-sidebar-titlebar {
+.sidebar-collapsed .lc-shell-sidebar-titlebar {
   padding-left: 12px;
   justify-content: center;
 }
 
-.sidebar-collapsed .reference-primary-nav button,
-.sidebar-collapsed .reference-sidebar-footer > button {
+.sidebar-collapsed .lc-shell-primary-nav button,
+.sidebar-collapsed .lc-shell-sidebar-footer > button {
   justify-content: center;
   padding-inline: 0;
 }
 
-.sidebar-collapsed .reference-primary-nav span,
-.sidebar-collapsed .reference-sidebar-scroll,
-.sidebar-collapsed .reference-sidebar-footer > button span,
-.sidebar-collapsed .reference-account-row > span:last-child {
+.sidebar-collapsed .lc-shell-primary-nav span,
+.sidebar-collapsed .lc-shell-sidebar-scroll,
+.sidebar-collapsed .lc-shell-sidebar-footer > button span,
+.sidebar-collapsed .lc-shell-account-row > span:last-child {
   display: none;
 }
 
-.sidebar-collapsed .reference-account-row {
+.sidebar-collapsed .lc-shell-account-row {
   justify-content: center;
   padding-inline: 0;
 }

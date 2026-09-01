@@ -89,7 +89,7 @@ export function SettingsModal({
           </div>
           {window.lc ? <div className="settings-card">
             <div><strong>Start on login</strong><p>Open Local Coder automatically when you sign in to macOS.</p></div>
-            <button className={`claude-switch ${openAtLogin ? 'on' : ''}`} aria-pressed={openAtLogin} onClick={() => void toggleOpenAtLogin()}><i /></button>
+            <button className={`lc-agent-switch ${openAtLogin ? 'on' : ''}`} aria-pressed={openAtLogin} onClick={() => void toggleOpenAtLogin()}><i /></button>
           </div> : null}
           <div className="settings-card">
             <div><strong>Control plane</strong><p>{window.location.origin}</p></div>

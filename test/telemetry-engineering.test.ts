@@ -26,7 +26,7 @@ test('summarizes local-engineer success, Claude escalation and repair rounds', a
     });
     await store.record({
       kind: 'engineering',
-      status: 'needs-claude',
+      status: 'needs-guidance',
       model: 'qwen3.6',
       repairRounds: 0,
       tasks: 0,

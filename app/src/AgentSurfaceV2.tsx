@@ -403,10 +403,10 @@ export function AgentSurfaceV2() {
     }
   }
 
-  return <div className="claude-agent-shell lc-agent-shell">
+  return <div className="lc-agent-agent-shell lc-agent-shell">
     <button className="new-task-button agent-new-task-proxy" hidden onClick={startNewTask}>New chat</button>
-    <main className="claude-thread-pane lc-thread-pane">
-      {error ? <div className="claude-error-banner" role="status" aria-live="polite">
+    <main className="lc-agent-thread-pane lc-thread-pane">
+      {error ? <div className="lc-agent-error-banner" role="status" aria-live="polite">
         <span>{error}</span>
         <button onClick={() => void retryRuntime()}>Retry</button>
         <button onClick={() => window.dispatchEvent(new CustomEvent('local-coder:open-settings'))}>Settings</button>
@@ -463,12 +463,12 @@ export function AgentSurfaceV2() {
 
 function EmptyStart({ selectedProject, profileName, onSuggestion }: { selectedProject?: AdminProject; profileName?: string; onSuggestion: (value: string) => void }) {
   const suggestions = ['Review this code', 'Fix a bug', 'Improve the tests', 'Explain this project'];
-  return <section className="claude-empty-start">
+  return <section className="lc-agent-empty-start">
     {selectedProject ? <div className="empty-project-breadcrumb">Projects <span>›</span> {selectedProject.name}</div> : null}
-    <div className="claude-empty-mark"><Sparkles size={26} strokeWidth={1.4} /></div>
+    <div className="lc-agent-empty-mark"><Sparkles size={26} strokeWidth={1.4} /></div>
     <h1>{selectedProject ? selectedProject.name : greeting(profileName)}</h1>
     <p>{selectedProject ? 'Start a chat in this project. Local Coder will use its isolated workspace and routing policy.' : 'Describe what you want to build, change, investigate or understand.'}</p>
-    <div className="claude-quick-actions">{suggestions.map((label) => <button key={label} onClick={() => onSuggestion(label)}>{label}</button>)}</div>
+    <div className="lc-agent-quick-actions">{suggestions.map((label) => <button key={label} onClick={() => onSuggestion(label)}>{label}</button>)}</div>
   </section>;
 }
 
@@ -512,8 +512,8 @@ function Composer(props: {
     element.style.height = `${Math.min(element.scrollHeight, Math.min(320, window.innerHeight * 0.4))}px`;
   }, [props.goal]);
 
-  return <div className="claude-composer-wrap">
-    <div className="claude-composer">
+  return <div className="lc-agent-composer-wrap">
+    <div className="lc-agent-composer">
       {(props.selectedProject || props.workspace || props.context) ? <div className="composer-context-chips">
         {props.selectedProject ? <span><FolderGit2 size={13} />{props.selectedProject.name}</span> : props.workspace ? <span><FolderGit2 size={13} />{props.workspace}<button aria-label="Remove workspace" onClick={() => props.setWorkspace('')}><X size={11} /></button></span> : null}
         {props.context ? <span><FileText size={13} />Context<button aria-label="Remove context" onClick={() => props.setContext('')}><X size={11} /></button></span> : null}
@@ -521,7 +521,7 @@ function Composer(props: {
 
       <textarea
         ref={inputRef}
-        className="claude-prompt-input"
+        className="lc-agent-prompt-input"
         value={props.goal}
         onChange={(event) => props.setGoal(event.target.value)}
         onKeyDown={props.onKeyDown}
@@ -536,7 +536,7 @@ function Composer(props: {
             <button className={`composer-icon-button ${props.extrasOpen ? 'active' : ''}`} onClick={() => { props.setProjectMenu(false); props.setModelMenu('closed'); props.setExtrasOpen(!props.extrasOpen); }} aria-label="Add context" aria-expanded={props.extrasOpen}>
               <Plus size={19} strokeWidth={1.7} />
             </button>
-            {props.extrasOpen ? <div className="claude-popover composer-add-popover" role="menu">
+            {props.extrasOpen ? <div className="lc-agent-popover composer-add-popover" role="menu">
               {!props.selectedProject ? <label className="composer-popover-field"><span><FolderGit2 size={14} /><strong>Workspace</strong></span><FolderField value={props.workspace} onChange={props.setWorkspace} placeholder="/Users/you/project" /></label> : null}
               <label className="composer-popover-field"><span><FileText size={14} /><strong>Context</strong></span><textarea value={props.context} onChange={(event) => props.setContext(event.target.value)} rows={3} placeholder="Add optional context or constraints" /></label>
             </div> : null}
@@ -548,7 +548,7 @@ function Composer(props: {
               <span>{props.selectedProject?.name ?? 'Choose project'}</span>
               <ChevronDown size={13} strokeWidth={1.6} />
             </button>
-            {props.projectMenu ? <div className="claude-popover project-popover" role="menu">
+            {props.projectMenu ? <div className="lc-agent-popover project-popover" role="menu">
               <button className={!props.selectedProject ? 'selected' : ''} onClick={() => props.chooseProject('')}>
                 <span><strong>No project</strong><small>Use a workspace path directly</small></span>
                 {!props.selectedProject ? <Check size={15} /> : null}
@@ -571,8 +571,8 @@ function Composer(props: {
             {props.modelMenu !== 'closed' ? <ModelMenu {...props} /> : null}
           </div>
 
-          {props.activeWorking ? <button className="claude-stop-button" onClick={() => void props.cancelActive()} aria-label="Stop task"><CircleStop size={18} strokeWidth={1.65} /></button>
-            : <button className="claude-send-button" disabled={props.submitting || !props.canSubmit} onClick={() => void props.createJob()} aria-label="Send task"><ArrowUp size={18} strokeWidth={2} /></button>}
+          {props.activeWorking ? <button className="lc-agent-stop-button" onClick={() => void props.cancelActive()} aria-label="Stop task"><CircleStop size={18} strokeWidth={1.65} /></button>
+            : <button className="lc-agent-send-button" disabled={props.submitting || !props.canSubmit} onClick={() => void props.createJob()} aria-label="Send task"><ArrowUp size={18} strokeWidth={2} /></button>}
         </div>
       </div>
     </div>
@@ -592,7 +592,7 @@ function ModelMenu(props: {
   setThinkingEnabled: (value: boolean) => void;
 }) {
   if (props.modelMenu === 'effort') {
-    return <div className="claude-popover model-popover effort-popover" role="menu">
+    return <div className="lc-agent-popover model-popover effort-popover" role="menu">
       <button className="popover-back" onClick={() => props.setModelMenu('models')}><ChevronLeft size={16} /><strong>Effort</strong></button>
       <div className="popover-separator" />
       {effortOptions.map((option) => <button key={option.id} className={props.effort === option.id ? 'selected' : ''} onClick={() => { props.setEffort(option.id); props.setModelMenu('models'); }}>
@@ -603,7 +603,7 @@ function ModelMenu(props: {
   }
 
   const providers = [...new Set(props.modelOptions.map((model) => model.providerId))];
-  return <div className="claude-popover model-popover" role="menu">
+  return <div className="lc-agent-popover model-popover" role="menu">
     <button className={props.modelSelection === 'auto' ? 'selected' : ''} onClick={() => { props.setModelSelection('auto'); props.setModelMenu('closed'); }}>
       <span><strong>Auto</strong><small>Route each stage to the best allowed model</small></span>
       {props.modelSelection === 'auto' ? <Check size={16} /> : null}
@@ -623,7 +623,7 @@ function ModelMenu(props: {
     </button>
     <button className="popover-row-link thinking-row" aria-pressed={props.thinkingEnabled} onClick={() => props.setThinkingEnabled(!props.thinkingEnabled)}>
       <span><strong>Thinking</strong><small>Allow extended reasoning when supported</small></span>
-      <span className={`claude-switch ${props.thinkingEnabled ? 'on' : ''}`} aria-hidden="true"><i /></span>
+      <span className={`lc-agent-switch ${props.thinkingEnabled ? 'on' : ''}`} aria-hidden="true"><i /></span>
     </button>
   </div>;
 }
@@ -642,7 +642,7 @@ function TaskThread(props: {
   const working = isWorking(job.status);
   const latestEvent = job.events.at(-1);
   const result = job.result;
-  return <div className="claude-thread" aria-live="polite">
+  return <div className="lc-agent-thread" aria-live="polite">
     <div className="thread-user-turn"><div className="user-message">{job.input.goal}</div>{job.input.context ? <div className="user-context-note">Context attached</div> : null}</div>
     <div className="thread-assistant-turn">
       <div className={`assistant-mark ${working ? 'working' : ''}`}><Sparkles size={18} strokeWidth={1.55} /></div>
@@ -666,13 +666,13 @@ function DecisionMessage(props: { request: DecisionRequest; selections: Record<s
   return <div className="assistant-decision-message">
     <h2>{props.request.message}</h2>
     {props.request.questions.map((question) => <div className="inline-decision" key={question.id}><strong>{question.question}</strong><p>{question.rationale}</p><div className="inline-choice-list">{question.options.map((option) => <button key={option.id} className={props.selections[question.id] === option.id ? 'selected' : ''} onClick={() => props.setSelections((current) => ({ ...current, [question.id]: option.id }))}><span>{option.label}</span>{option.id === question.recommendedOptionId ? <small>Recommended</small> : null}</button>)}</div></div>)}
-    <button className="claude-secondary-action" onClick={() => void props.onContinue()}>Continue</button>
+    <button className="lc-agent-secondary-action" onClick={() => void props.onContinue()}>Continue</button>
   </div>;
 }
 
 function GuidanceMessage(props: { result: EngineerResult; guidance: string; setGuidance: (value: string) => void; onContinue: () => Promise<void> }) {
   const escalation = props.result.escalation!;
-  return <div className="assistant-decision-message"><h2>{escalation.reason}</h2>{escalation.questions.map((question) => <p key={question}>{question}</p>)}<textarea className="inline-guidance-input" rows={3} value={props.guidance} onChange={(event) => props.setGuidance(event.target.value)} placeholder="Add the missing decision or evidence…" /><button className="claude-secondary-action" disabled={!props.guidance.trim()} onClick={() => void props.onContinue()}>Resume</button></div>;
+  return <div className="assistant-decision-message"><h2>{escalation.reason}</h2>{escalation.questions.map((question) => <p key={question}>{question}</p>)}<textarea className="inline-guidance-input" rows={3} value={props.guidance} onChange={(event) => props.setGuidance(event.target.value)} placeholder="Add the missing decision or evidence…" /><button className="lc-agent-secondary-action" disabled={!props.guidance.trim()} onClick={() => void props.onContinue()}>Resume</button></div>;
 }
 
 function ResultMessage({ result }: { result: EngineerResult }) {
@@ -690,7 +690,7 @@ function ProgressRail({ job, currentInference }: { job: Job; currentInference?: 
   const result = job.result;
   const thinking = job.input.reasoningEffort === 'none' ? 'Off' : 'On';
   const effort = job.input.reasoningEffort === 'none' ? '—' : job.input.reasoningEffort === 'auto' || !job.input.reasoningEffort ? result?.preflight?.cognitive?.effort ?? 'Auto' : job.input.reasoningEffort;
-  return <aside className="claude-progress-rail" aria-label="Task progress">
+  return <aside className="lc-agent-progress-rail" aria-label="Task progress">
     <details className="progress-panel" open><summary>Progress <ChevronDown size={14} /></summary><div className="progress-list">{events.length === 0 ? <p>No progress yet.</p> : events.slice(0, 12).map((event, index) => <div className="progress-row" key={event.id}><span className={`progress-index ${index === 0 && isWorking(job.status) ? 'active' : ''}`}>{index === 0 && isWorking(job.status) ? <LoaderCircle size={11} /> : events.length - index}</span><div><strong>{event.title}</strong><small>{time(event.timestamp)}</small></div></div>)}</div></details>
     <details className="progress-panel"><summary>Context <ChevronDown size={14} /></summary><div className="context-list"><div><span>Workspace</span><code>{job.input.workspace}</code></div><div><span>Model</span><strong>{currentInference?.model ?? result?.modelCalls?.at(-1)?.model ?? 'Auto'}</strong></div><div><span>Effort</span><strong>{effort}</strong></div><div><span>Thinking</span><strong>{thinking}</strong></div><div><span>Round</span><strong>{job.rounds}</strong></div></div></details>
   </aside>;

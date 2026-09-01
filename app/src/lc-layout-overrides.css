@@ -99,21 +99,21 @@ select {
 }
 
 /* Global shell ------------------------------------------------------------ */
-.reference-app-shell {
+.lc-shell-app-shell {
   grid-template-columns: clamp(220px, var(--ref-sidebar-width), 320px) minmax(0, 1fr);
   background: var(--ref-bg);
 }
 
-.reference-app-shell.sidebar-collapsed {
+.lc-shell-app-shell.sidebar-collapsed {
   grid-template-columns: 56px minmax(0, 1fr);
 }
 
-.reference-sidebar {
+.lc-shell-sidebar {
   border-right-color: color-mix(in srgb, var(--ref-border-soft) 65%, transparent);
   background: var(--ref-sidebar);
 }
 
-.reference-sidebar-titlebar {
+.lc-shell-sidebar-titlebar {
   justify-content: space-between;
   height: 52px;
   min-height: 52px;
@@ -121,7 +121,7 @@ select {
   -webkit-app-region: drag;
 }
 
-.reference-product-mark {
+.lc-shell-product-mark {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -130,7 +130,7 @@ select {
   -webkit-app-region: no-drag;
 }
 
-.reference-product-mark > span {
+.lc-shell-product-mark > span {
   display: grid;
   width: 25px;
   height: 25px;
@@ -140,7 +140,7 @@ select {
   color: var(--ref-accent);
 }
 
-.reference-product-mark strong {
+.lc-shell-product-mark strong {
   overflow: hidden;
   font-size: 12px;
   font-weight: 500;
@@ -148,9 +148,9 @@ select {
   white-space: nowrap;
 }
 
-.reference-primary-nav button,
-.reference-sidebar-footer > button,
-.reference-account-row {
+.lc-shell-primary-nav button,
+.lc-shell-sidebar-footer > button,
+.lc-shell-account-row {
   position: relative;
   min-width: 0;
   border-radius: 7px;
@@ -159,20 +159,20 @@ select {
   font-weight: 450;
 }
 
-.reference-primary-nav button:hover,
-.reference-sidebar-footer > button:hover,
-.reference-account-row:hover {
+.lc-shell-primary-nav button:hover,
+.lc-shell-sidebar-footer > button:hover,
+.lc-shell-account-row:hover {
   background: var(--ref-surface-hover);
   color: var(--ref-text);
 }
 
-.reference-primary-nav button.active,
-.reference-sidebar-footer > button.active {
+.lc-shell-primary-nav button.active,
+.lc-shell-sidebar-footer > button.active {
   background: var(--ref-surface-active);
   color: var(--ref-text);
 }
 
-.reference-primary-nav kbd {
+.lc-shell-primary-nav kbd {
   margin-left: auto;
   color: var(--ref-faint);
   font-family: inherit;
@@ -180,8 +180,8 @@ select {
   font-weight: 450;
 }
 
-.reference-sidebar-section-title,
-.reference-recent-label {
+.lc-shell-sidebar-section-title,
+.lc-shell-recent-label {
   color: var(--ref-muted);
   font-size: 11px;
   font-weight: 500;
@@ -189,25 +189,25 @@ select {
   text-transform: none;
 }
 
-.reference-recent-group + .reference-recent-group {
+.lc-shell-recent-group + .lc-shell-recent-group {
   margin-top: 8px;
 }
 
-.reference-recent-label {
+.lc-shell-recent-label {
   padding: 5px 7px 3px;
   color: var(--ref-faint);
   font-size: 10px;
 }
 
-.reference-sidebar-row-wrap {
+.lc-shell-sidebar-row-wrap {
   position: relative;
 }
 
-.reference-sidebar-row-wrap .reference-sidebar-row {
+.lc-shell-sidebar-row-wrap .lc-shell-sidebar-row {
   padding-right: 30px;
 }
 
-.reference-row-menu-button {
+.lc-shell-row-menu-button {
   position: absolute;
   top: 50%;
   right: 4px;
@@ -224,17 +224,17 @@ select {
   opacity: 0;
 }
 
-.reference-sidebar-row-wrap:hover .reference-row-menu-button,
-.reference-row-menu-button:focus-visible {
+.lc-shell-sidebar-row-wrap:hover .lc-shell-row-menu-button,
+.lc-shell-row-menu-button:focus-visible {
   opacity: 1;
 }
 
-.reference-row-menu-button:hover {
+.lc-shell-row-menu-button:hover {
   background: var(--ref-surface-active);
   color: var(--ref-text);
 }
 
-.reference-row-menu {
+.lc-shell-row-menu {
   position: absolute;
   z-index: 120;
   top: 27px;
@@ -247,7 +247,7 @@ select {
   box-shadow: 0 12px 36px rgba(0, 0, 0, .28);
 }
 
-.reference-row-menu button {
+.lc-shell-row-menu button {
   width: 100%;
   padding: 7px 8px;
   border: 0;
@@ -258,16 +258,16 @@ select {
   text-align: left;
 }
 
-.reference-row-menu button:hover {
+.lc-shell-row-menu button:hover {
   background: var(--ref-surface-hover);
   color: var(--ref-text);
 }
 
-.reference-sidebar-footer {
+.lc-shell-sidebar-footer {
   border-top-color: color-mix(in srgb, var(--ref-border-soft) 65%, transparent);
 }
 
-.reference-account-row {
+.lc-shell-account-row {
   display: flex;
   width: 100%;
   align-items: center;
@@ -278,14 +278,14 @@ select {
   text-align: left;
 }
 
-.reference-account-avatar {
+.lc-shell-account-avatar {
   background: var(--ref-surface-active);
   color: var(--ref-text);
   font-size: 10px;
   font-weight: 550;
 }
 
-.reference-sidebar-resizer {
+.lc-shell-sidebar-resizer {
   position: absolute;
   z-index: 50;
   top: 0;
@@ -296,7 +296,7 @@ select {
   -webkit-app-region: no-drag;
 }
 
-.reference-sidebar-resizer:hover::after {
+.lc-shell-sidebar-resizer:hover::after {
   position: absolute;
   top: 0;
   right: 2px;
@@ -306,46 +306,46 @@ select {
   content: '';
 }
 
-.sidebar-collapsed .reference-product-mark strong,
-.sidebar-collapsed .reference-primary-nav span,
-.sidebar-collapsed .reference-primary-nav kbd,
-.sidebar-collapsed .reference-sidebar-section,
-.sidebar-collapsed .reference-sidebar-footer button > span:not(.reference-account-avatar),
-.sidebar-collapsed .reference-account-row > span:last-child {
+.sidebar-collapsed .lc-shell-product-mark strong,
+.sidebar-collapsed .lc-shell-primary-nav span,
+.sidebar-collapsed .lc-shell-primary-nav kbd,
+.sidebar-collapsed .lc-shell-sidebar-section,
+.sidebar-collapsed .lc-shell-sidebar-footer button > span:not(.lc-shell-account-avatar),
+.sidebar-collapsed .lc-shell-account-row > span:last-child {
   display: none;
 }
 
-.sidebar-collapsed .reference-sidebar-titlebar {
+.sidebar-collapsed .lc-shell-sidebar-titlebar {
   justify-content: center;
   padding: 0;
 }
 
-.sidebar-collapsed .reference-product-mark {
+.sidebar-collapsed .lc-shell-product-mark {
   display: none;
 }
 
-.sidebar-collapsed .reference-primary-nav,
-.sidebar-collapsed .reference-sidebar-footer {
+.sidebar-collapsed .lc-shell-primary-nav,
+.sidebar-collapsed .lc-shell-sidebar-footer {
   padding-inline: 8px;
 }
 
-.sidebar-collapsed .reference-primary-nav button,
-.sidebar-collapsed .reference-sidebar-footer > button,
-.sidebar-collapsed .reference-account-row {
+.sidebar-collapsed .lc-shell-primary-nav button,
+.sidebar-collapsed .lc-shell-sidebar-footer > button,
+.sidebar-collapsed .lc-shell-account-row {
   justify-content: center;
   padding-inline: 0;
 }
 
-.sidebar-collapsed .reference-sidebar-resizer {
+.sidebar-collapsed .lc-shell-sidebar-resizer {
   display: none;
 }
 
 /* Agent layout ------------------------------------------------------------ */
-.reference-content-shell {
+.lc-shell-content-shell {
   background: var(--ref-bg);
 }
 
-.reference-content-shell .claude-agent-shell {
+.lc-shell-content-shell .lc-agent-agent-shell {
   position: relative;
   grid-template-columns: minmax(0, 1fr);
   width: 100%;
@@ -354,24 +354,24 @@ select {
   background: var(--ref-bg);
 }
 
-.reference-content-shell .claude-agent-shell:has(> .claude-progress-rail) {
+.lc-shell-content-shell .lc-agent-agent-shell:has(> .lc-agent-progress-rail) {
   grid-template-columns: minmax(0, 1fr) minmax(238px, 306px);
 }
 
-.reference-content-shell .claude-thread-pane {
+.lc-shell-content-shell .lc-agent-thread-pane {
   width: 100%;
   height: 100%;
   min-height: 0;
   background: var(--ref-bg);
 }
 
-.reference-content-shell .claude-thread,
-.reference-content-shell .claude-empty-start {
+.lc-shell-content-shell .lc-agent-thread,
+.lc-shell-content-shell .lc-agent-empty-start {
   width: min(760px, calc(100% - 44px));
   margin-inline: auto;
 }
 
-.reference-content-shell .claude-empty-start {
+.lc-shell-content-shell .lc-agent-empty-start {
   justify-content: center;
   padding: 0 0 150px;
 }
@@ -388,8 +388,8 @@ select {
   color: var(--ref-faint);
 }
 
-.reference-content-shell .claude-empty-start h1,
-.reference-projects-header h1,
+.lc-shell-content-shell .lc-agent-empty-start h1,
+.lc-shell-projects-header h1,
 .settings-simple-page h1 {
   font-family: Charter, "Iowan Old Style", "Palatino Linotype", ui-serif, serif;
   font-size: clamp(29px, 3vw, 32px);
@@ -397,7 +397,7 @@ select {
   letter-spacing: -.025em;
 }
 
-.reference-content-shell .claude-empty-start p {
+.lc-shell-content-shell .lc-agent-empty-start p {
   display: block;
   max-width: 520px;
   margin: 8px auto 0;
@@ -407,7 +407,7 @@ select {
   text-align: center;
 }
 
-.claude-quick-actions {
+.lc-agent-quick-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -415,7 +415,7 @@ select {
   margin-top: 20px;
 }
 
-.claude-quick-actions button {
+.lc-agent-quick-actions button {
   padding: 7px 11px;
   border: 1px solid var(--ref-border-soft);
   border-radius: 999px;
@@ -424,19 +424,19 @@ select {
   font-size: 11px;
 }
 
-.claude-quick-actions button:hover {
+.lc-agent-quick-actions button:hover {
   border-color: var(--ref-border);
   background: var(--ref-surface-2);
   color: var(--ref-text-soft);
 }
 
 /* Composer --------------------------------------------------------------- */
-.reference-content-shell .claude-composer-wrap {
+.lc-shell-content-shell .lc-agent-composer-wrap {
   width: min(760px, calc(100% - 40px));
   margin: 0 auto 22px;
 }
 
-.reference-content-shell .claude-composer {
+.lc-shell-content-shell .lc-agent-composer {
   position: relative;
   overflow: visible;
   border: 1px solid var(--ref-border);
@@ -445,12 +445,12 @@ select {
   box-shadow: 0 2px 8px rgba(0, 0, 0, .16), 0 10px 34px rgba(0, 0, 0, .10);
 }
 
-.reference-content-shell .claude-composer:focus-within {
+.lc-shell-content-shell .lc-agent-composer:focus-within {
   border-color: color-mix(in srgb, var(--ref-border) 55%, var(--ref-text-soft));
   box-shadow: 0 2px 8px rgba(0, 0, 0, .18), 0 12px 38px rgba(0, 0, 0, .12);
 }
 
-.reference-content-shell .claude-prompt-input {
+.lc-shell-content-shell .lc-agent-prompt-input {
   min-height: 82px;
   max-height: min(280px, 34vh);
   padding: 15px 18px 8px;
@@ -459,7 +459,7 @@ select {
   line-height: 1.5;
 }
 
-.reference-content-shell .claude-prompt-input::placeholder {
+.lc-shell-content-shell .lc-agent-prompt-input::placeholder {
   color: var(--ref-muted);
 }
 
@@ -498,70 +498,70 @@ select {
   color: var(--ref-muted);
 }
 
-.reference-content-shell .composer-toolbar {
+.lc-shell-content-shell .composer-toolbar {
   padding: 4px 10px 10px;
 }
 
-.reference-content-shell .composer-menu-anchor {
+.lc-shell-content-shell .composer-menu-anchor {
   position: static;
 }
 
-.reference-content-shell .composer-icon-button,
-.reference-content-shell .composer-text-button,
-.reference-content-shell .model-effort-trigger {
+.lc-shell-content-shell .composer-icon-button,
+.lc-shell-content-shell .composer-text-button,
+.lc-shell-content-shell .model-effort-trigger {
   color: var(--ref-text-soft);
 }
 
-.reference-content-shell .composer-icon-button:hover,
-.reference-content-shell .composer-icon-button.active,
-.reference-content-shell .composer-text-button:hover,
-.reference-content-shell .model-effort-trigger:hover {
+.lc-shell-content-shell .composer-icon-button:hover,
+.lc-shell-content-shell .composer-icon-button.active,
+.lc-shell-content-shell .composer-text-button:hover,
+.lc-shell-content-shell .model-effort-trigger:hover {
   background: var(--ref-surface-hover);
   color: var(--ref-text);
 }
 
-.reference-content-shell .claude-send-button,
-.reference-content-shell .claude-stop-button {
+.lc-shell-content-shell .lc-agent-send-button,
+.lc-shell-content-shell .lc-agent-stop-button {
   width: 32px;
   height: 32px;
   border-radius: 999px;
 }
 
-.reference-content-shell .claude-send-button {
+.lc-shell-content-shell .lc-agent-send-button {
   background: var(--ref-accent);
   color: #fff8f4;
 }
 
-.reference-content-shell .claude-send-button:hover:not(:disabled) {
+.lc-shell-content-shell .lc-agent-send-button:hover:not(:disabled) {
   background: color-mix(in srgb, var(--ref-accent) 86%, white);
 }
 
-.reference-content-shell .claude-send-button:disabled {
+.lc-shell-content-shell .lc-agent-send-button:disabled {
   background: var(--ref-surface-active);
   color: var(--ref-faint);
 }
 
-.reference-content-shell .claude-stop-button {
+.lc-shell-content-shell .lc-agent-stop-button {
   border-color: var(--ref-border);
   background: var(--ref-surface-2);
 }
 
-.reference-content-shell .claude-popover {
+.lc-shell-content-shell .lc-agent-popover {
   border-color: var(--ref-border);
   border-radius: 14px;
   background: var(--ref-surface);
   box-shadow: 0 18px 48px rgba(0, 0, 0, .38);
 }
 
-.reference-content-shell .project-popover,
-.reference-content-shell .composer-add-popover {
+.lc-shell-content-shell .project-popover,
+.lc-shell-content-shell .composer-add-popover {
   right: auto;
   bottom: calc(100% + 9px);
   left: 8px;
   width: min(350px, calc(100vw - 64px));
 }
 
-.reference-content-shell .model-popover {
+.lc-shell-content-shell .model-popover {
   right: 8px;
   bottom: calc(100% + 9px);
   left: auto;
@@ -630,7 +630,7 @@ select {
 }
 
 /* Toast errors ------------------------------------------------------------ */
-.reference-content-shell .claude-error-banner {
+.lc-shell-content-shell .lc-agent-error-banner {
   position: fixed;
   z-index: 500;
   right: 24px;
@@ -650,39 +650,39 @@ select {
 }
 
 /* Projects --------------------------------------------------------------- */
-.reference-projects-page {
+.lc-shell-projects-page {
   width: min(980px, calc(100% - 72px));
   background: var(--ref-bg);
 }
 
-.reference-projects-header h1 {
+.lc-shell-projects-header h1 {
   color: var(--ref-text);
 }
 
-.reference-project-search {
+.lc-shell-project-search {
   width: 220px !important;
   min-width: 220px;
   border: 1px solid transparent;
   background: var(--ref-surface-2);
 }
 
-.reference-project-search:focus-within {
+.lc-shell-project-search:focus-within {
   width: 220px !important;
   border-color: var(--ref-border);
 }
 
-.reference-project-search input {
+.lc-shell-project-search input {
   width: 100%;
   min-width: 0;
   color: var(--ref-text);
   font-size: 11.5px;
 }
 
-.reference-sort-anchor {
+.lc-shell-sort-anchor {
   position: relative;
 }
 
-.reference-sort-button {
+.lc-shell-sort-button {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -690,7 +690,7 @@ select {
   color: var(--ref-muted);
 }
 
-.reference-sort-menu {
+.lc-shell-sort-menu {
   position: absolute;
   z-index: 120;
   top: 40px;
@@ -703,7 +703,7 @@ select {
   box-shadow: 0 14px 36px rgba(0, 0, 0, .28);
 }
 
-.reference-sort-menu button {
+.lc-shell-sort-menu button {
   display: flex;
   width: 100%;
   align-items: center;
@@ -716,33 +716,33 @@ select {
   font-size: 11px;
 }
 
-.reference-sort-menu button:hover,
-.reference-sort-menu button.selected {
+.lc-shell-sort-menu button:hover,
+.lc-shell-sort-menu button.selected {
   background: var(--ref-surface-hover);
 }
 
-.reference-primary-button {
+.lc-shell-primary-button {
   background: var(--ref-surface-2) !important;
   color: var(--ref-text) !important;
   font-weight: 500;
 }
 
-.reference-primary-button:hover:not(:disabled) {
+.lc-shell-primary-button:hover:not(:disabled) {
   background: var(--ref-surface-active) !important;
 }
 
-.reference-project-card {
+.lc-shell-project-card {
   border-color: var(--ref-border-soft);
   background: transparent;
 }
 
-.reference-project-card:hover {
+.lc-shell-project-card:hover {
   border-color: var(--ref-border);
   background: color-mix(in srgb, var(--ref-surface-2) 55%, transparent);
 }
 
-.reference-project-modal,
-.reference-modal-backdrop {
+.lc-shell-project-modal,
+.lc-shell-modal-backdrop {
   color: var(--ref-text);
 }
 
@@ -1077,7 +1077,7 @@ select {
   overflow: auto;
 }
 
-.settings-admin-view .admin-shell {
+.settings-admin-view .lc-admin-shell {
   min-height: 100%;
   padding: 46px 28px 36px;
   background: var(--ref-bg) !important;
@@ -1087,8 +1087,8 @@ select {
   display: none;
 }
 
-.settings-view-credentials .admin-toolbar,
-.settings-view-credentials .admin-layout {
+.settings-view-credentials .lc-admin-toolbar,
+.settings-view-credentials .lc-admin-layout {
   display: none;
 }
 
@@ -1129,32 +1129,32 @@ select {
 
 /* Responsive -------------------------------------------------------------- */
 @media (max-width: 980px) {
-  .reference-content-shell .claude-agent-shell:has(> .claude-progress-rail) {
+  .lc-shell-content-shell .lc-agent-agent-shell:has(> .lc-agent-progress-rail) {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .reference-content-shell .claude-progress-rail {
+  .lc-shell-content-shell .lc-agent-progress-rail {
     display: none;
   }
 
-  .reference-projects-header {
+  .lc-shell-projects-header {
     align-items: flex-start;
     flex-direction: column;
     gap: 16px;
   }
 
-  .reference-project-actions {
+  .lc-shell-project-actions {
     width: 100%;
     flex-wrap: wrap;
   }
 
-  .reference-project-search {
+  .lc-shell-project-search {
     flex: 1 1 220px;
   }
 }
 
 @media (max-width: 760px) {
-  .reference-app-shell:not(.sidebar-collapsed) {
+  .lc-shell-app-shell:not(.sidebar-collapsed) {
     grid-template-columns: 220px minmax(0, 1fr);
   }
 
