@@ -19,6 +19,7 @@ test('desktop launcher strips Node-mode variables before spawning Electron GUI',
   assert.match(desktopLauncher, /delete env\.ELECTRON_NO_ATTACH_CONSOLE/);
   assert.match(desktopLauncher, /const forwarded = process\.argv\.slice\(2\)/);
   assert.match(desktopLauncher, /const args = forwarded\.length > 0 \? forwarded : \['\.'\]/);
+  assert.match(desktopLauncher, /entry:/);
   assert.match(desktopLauncher, /spawn\(electronPath, args/);
   assert.match(desktopLauncher, /stdio:\s*'inherit'/);
 });
