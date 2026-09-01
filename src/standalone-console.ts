@@ -304,5 +304,11 @@ const statusTimer = setInterval(() => {
 statusTimer.unref();
 
 server.listen(config.consolePort ?? 7557, config.consoleHost ?? '127.0.0.1', () => {
-  console.log(`Local Coder Console: http://${config.consoleHost ?? '127.0.0.1'}:${config.consolePort ?? 7557}`);
+  const address = `http://${config.consoleHost ?? '127.0.0.1'}:${config.consolePort ?? 7557}`;
+  console.error(`Local Coder Console listening at ${address}`);
+  if ((config.consoleHost ?? '127.0.0.1') !== '127.0.0.1' && (config.consoleHost ?? '') !== '::1') {
+    console.error(
+      'WARNING: standalone job/health APIs are not authenticated on network binds. Administrative Project/provider/credential/pricing APIs remain loopback-only.'
+    );
+  }
 });
