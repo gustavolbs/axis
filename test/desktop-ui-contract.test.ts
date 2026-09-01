@@ -4,20 +4,30 @@ import path from 'node:path';
 import test from 'node:test';
 
 const root = process.cwd();
-const shell = fs.readFileSync(path.join(root, 'console/src/claude-shell.css'), 'utf8');
 const agent = fs.readFileSync(path.join(root, 'console/src/claude-agent.css'), 'utf8');
 const fidelity = fs.readFileSync(path.join(root, 'console/src/claude-fidelity.css'), 'utf8');
+const reference = fs.readFileSync(path.join(root, 'console/src/reference-fidelity.css'), 'utf8');
 const agentSurface = fs.readFileSync(path.join(root, 'console/src/AgentSurface.tsx'), 'utf8');
 const consoleRoot = fs.readFileSync(path.join(root, 'console/src/ConsoleRoot.tsx'), 'utf8');
+const projectGallery = fs.readFileSync(path.join(root, 'console/src/ProjectGallery.tsx'), 'utf8');
 const main = fs.readFileSync(path.join(root, 'console/src/main.tsx'), 'utf8');
 const desktop = fs.readFileSync(path.join(root, 'desktop/main.mjs'), 'utf8');
 
-test('desktop chrome exposes a real draggable titlebar with interactive no-drag controls', () => {
-  assert.match(consoleRoot, /className="desktop-titlebar"/);
-  assert.match(shell, /\.desktop-titlebar\s*\{[\s\S]*?-webkit-app-region:\s*drag;/);
-  assert.match(shell, /\.surface-switcher,[\s\S]*?-webkit-app-region:\s*no-drag;/);
+test('desktop chrome uses a persistent Claude-like sidebar and native drag region', () => {
+  for (const required of [
+    'reference-app-shell',
+    'reference-sidebar',
+    'reference-sidebar-titlebar',
+    'reference-primary-nav',
+    'Conversas e tarefas',
+    'Projetos',
+    'Configurações'
+  ]) assert.equal(consoleRoot.includes(required), true, `missing global shell primitive: ${required}`);
+  assert.match(reference, /\.reference-sidebar-titlebar\s*\{[\s\S]*?-webkit-app-region:\s*drag;/);
+  assert.match(reference, /reference-sidebar button,[\s\S]*?-webkit-app-region:\s*no-drag/);
   assert.match(desktop, /titleBarStyle:\s*process\.platform === 'darwin' \? 'hiddenInset'/);
   assert.match(desktop, /trafficLightPosition:\s*\{ x: 18, y: 18 \}/);
+  assert.doesNotMatch(consoleRoot, /surface-switcher/);
 });
 
 test('desktop restores window bounds safely across display changes', () => {
@@ -30,25 +40,20 @@ test('desktop restores window bounds safely across display changes', () => {
     'window.isMaximized()',
     "window.on('resize'",
     "window.on('move'"
-  ]) {
-    assert.equal(desktop.includes(required), true, `missing desktop bounds behavior: ${required}`);
-  }
+  ]) assert.equal(desktop.includes(required), true, `missing desktop bounds behavior: ${required}`);
   assert.match(desktop, /MIN_WINDOW_WIDTH = 760/);
   assert.match(desktop, /MIN_WINDOW_HEIGHT = 560/);
 });
 
-test('standalone shell uses an internal desktop viewport rather than page-level scrolling', () => {
-  assert.match(shell, /height:\s*100dvh/);
-  assert.match(shell, /\.surface-viewport\s*\{[\s\S]*?height:\s*calc\(100dvh - var\(--lc-titlebar-h\)\)/);
-  assert.match(agent, /\.claude-agent-shell\s*\{[\s\S]*?height:\s*100%/);
+test('standalone shell keeps scrolling internal and removes duplicate Agent sidebar', () => {
+  assert.match(reference, /height:\s*100dvh/);
+  assert.match(reference, /\.reference-sidebar-scroll\s*\{[\s\S]*?overflow-y:\s*auto/);
+  assert.match(reference, /\.reference-content-shell \.claude-sidebar\s*\{[\s\S]*?display:\s*none !important/);
   assert.match(agent, /\.claude-thread\s*\{[\s\S]*?overflow-y:\s*auto/);
-  assert.match(agent, /\.claude-session-list\s*\{[\s\S]*?overflow-y:\s*auto/);
 });
 
-test('Agent surface is thread-first with Claude-like message and composer hierarchy', () => {
+test('Agent surface remains thread-first with Claude-like message and composer hierarchy', () => {
   for (const required of [
-    'claude-sidebar',
-    'new-task-button',
     'claude-thread-pane',
     'thread-user-turn',
     'user-message',
@@ -59,9 +64,7 @@ test('Agent surface is thread-first with Claude-like message and composer hierar
     'claude-send-button',
     'claude-stop-button',
     'claude-progress-rail'
-  ]) {
-    assert.equal(agentSurface.includes(required), true, `missing Claude-like Agent primitive: ${required}`);
-  }
+  ]) assert.equal(agentSurface.includes(required), true, `missing Agent primitive: ${required}`);
   assert.match(agentSurface, /'Working'/);
   assert.match(agentSurface, /'Thinking'/);
   assert.match(agentSurface, /'Writing'/);
@@ -73,46 +76,43 @@ test('model menu exposes Auto, explicit models, Effort and Thinking next to Send
   assert.match(agentSurface, /<strong>Auto<\/strong>/);
   assert.match(agentSurface, /<strong>Effort<\/strong>/);
   assert.match(agentSurface, /<strong>Thinking<\/strong>/);
-  assert.match(agentSurface, /label: 'Low'/);
-  assert.match(agentSurface, /label: 'Medium'/);
-  assert.match(agentSurface, /label: 'High'/);
-  assert.match(agentSurface, /label: 'Extra high'/);
-  assert.match(agentSurface, /label: 'Max'/);
+  for (const label of ['Low', 'Medium', 'High', 'Extra high', 'Max']) assert.match(agentSurface, new RegExp(`label: '${label}'`));
   assert.match(agentSurface, /reasoningEffort:\s*selectedProject \? \(thinkingEnabled \? effort : 'none'\)/);
   assert.match(fidelity, /\.claude-switch\.on/);
 });
 
-test('new task state does not silently reopen the most recent task', () => {
-  assert.match(agentSurface, /const NEW_TASK_ID = '__new__'/);
-  assert.match(agentSurface, /activeId === NEW_TASK_ID[\s\S]*?\? undefined/);
-  assert.match(agentSurface, /setActiveId\(NEW_TASK_ID\)/);
+test('Projects surface mirrors the familiar card grid and modal interaction', () => {
+  for (const required of [
+    'reference-projects-page',
+    'reference-project-grid',
+    'reference-project-card',
+    'reference-project-modal',
+    'Novo projeto',
+    'Última atualização',
+    'Criar um projeto'
+  ]) assert.equal(projectGallery.includes(required), true, `missing Projects primitive: ${required}`);
+  assert.match(reference, /\.reference-project-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2/);
+  assert.match(reference, /\.reference-modal-backdrop/);
 });
 
-test('responsive layout covers progress rail collapse and narrow desktop fallback widths', () => {
-  assert.match(agent, /@media \(max-width: 1180px\)/);
-  assert.match(agent, /@media \(max-width: 980px\)/);
-  assert.match(agent, /@media \(max-width: 760px\)/);
-  assert.match(agent, /@media \(max-height: 640px\)/);
-  assert.match(agent, /\.claude-progress-rail\s*\{[\s\S]*?display:\s*none/);
-  assert.match(agent, /grid-template-columns:\s*1fr/);
-  assert.match(fidelity, /max-width:\s*calc\(100vw - 20px\)/);
+test('reference palette and composer geometry load after legacy styles', () => {
+  const imports = main.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith("import './"));
+  assert.equal(imports.at(-1), "import './reference-fidelity.css';");
+  assert.match(reference, /--ref-bg:\s*#171716/);
+  assert.match(reference, /--ref-sidebar:\s*#111110/);
+  assert.match(reference, /--ref-accent:\s*#d97757/);
+  assert.match(reference, /\.reference-content-shell \.claude-composer\s*\{[\s\S]*?border-radius:\s*15px/);
+  assert.doesNotMatch(reference, /radial-gradient/);
 });
 
-test('final Claude fidelity styles load after all legacy console styles', () => {
-  const imports = main
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("import './"));
-  assert.equal(imports.at(-1), "import './claude-fidelity.css';");
-  assert.match(shell, /--lc-accent:\s*#c86442/);
-  assert.match(shell, /--lc-bg:\s*#f7f6f2/);
-  assert.doesNotMatch(agent, /radial-gradient/);
-  assert.doesNotMatch(fidelity, /radial-gradient/);
+test('responsive layout covers progress collapse and narrow desktop widths', () => {
+  assert.match(reference, /@media \(max-width: 1120px\)/);
+  assert.match(reference, /@media \(max-width: 820px\)/);
+  assert.match(reference, /sidebar-collapsed/);
+  assert.match(reference, /grid-template-columns:\s*1fr/);
 });
 
-test('accessibility preferences preserve focus while reducing optional motion', () => {
-  assert.match(shell, /@media \(prefers-color-scheme: dark\)/);
-  assert.match(agent, /@media \(prefers-reduced-motion: reduce\)/);
+test('accessibility preferences preserve focus and renderer zoom is not forced by the app', () => {
   assert.match(fidelity, /button:focus-visible/);
   assert.match(fidelity, /@media \(prefers-reduced-motion: reduce\)/);
   assert.doesNotMatch(desktop, /setZoomFactor\(/);
