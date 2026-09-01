@@ -37,8 +37,11 @@ export interface ProjectBudgetPolicy {
 export interface ProjectDefinition {
   id: string;
   name: string;
+  /** Optional default folder. Empty means this Project is conversation-only. */
   workspace: string;
-  /** Stable isolation boundary for a company/account. */
+  /** Instructions injected into every Chat/Cowork execution explicitly scoped to this Project. */
+  instructions?: string;
+  /** Stable isolation boundary for credentials/accounting. */
   organizationId: string;
   organizationName?: string;
   defaultRoutingPolicy: RoutingPolicy;
@@ -56,7 +59,10 @@ export interface ProjectDefinition {
 export interface CreateProjectInput {
   id?: string;
   name: string;
-  workspace: string;
+  /** Optional default folder. Cowork still requires some folder at execution time. */
+  workspace?: string;
+  /** Shared instructions for every conversation in this Project. */
+  instructions?: string;
   organizationId: string;
   organizationName?: string;
   defaultRoutingPolicy?: RoutingPolicy;
@@ -77,6 +83,7 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const ROUTING_POLICIES = new Set<RoutingPolicy>([
   'auto', 'local-first', 'balanced', 'speed-first', 'deep', 'frontier-only'
 ]);
+const MAX_PROJECT_INSTRUCTIONS = 40_000;
 
 function safeId(value: string, label: string): string {
   const trimmed = value.trim();
@@ -88,6 +95,22 @@ function text(value: string, label: string, max = 160): string {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > max) throw new Error(`${label} must be 1-${max} characters.`);
   return trimmed;
+}
+
+function optionalInstructions(value: string | undefined): string | undefined {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed) return undefined;
+  if (trimmed.length > MAX_PROJECT_INSTRUCTIONS) {
+    throw new Error(`Project instructions must be at most ${MAX_PROJECT_INSTRUCTIONS} characters.`);
+  }
+  return trimmed;
+}
+
+function normalizeWorkspace(value: string | undefined): string {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed) return '';
+  if (trimmed.length > 4096) throw new Error('Project workspace must be at most 4096 characters.');
+  return path.resolve(trimmed);
 }
 
 function positiveMoney(value: number | undefined, label: string): number | undefined {
@@ -175,7 +198,8 @@ function normalizeProject(
   return {
     id: safeId(input.id ?? existing?.id ?? randomUUID(), 'Project id'),
     name: text(input.name, 'Project name'),
-    workspace: path.resolve(text(input.workspace, 'Project workspace', 4096)),
+    workspace: normalizeWorkspace(input.workspace ?? existing?.workspace),
+    instructions: optionalInstructions(input.instructions ?? existing?.instructions),
     organizationId: safeId(input.organizationId, 'Organization id'),
     organizationName: input.organizationName ? text(input.organizationName, 'Organization name') : undefined,
     defaultRoutingPolicy: routing,
@@ -197,7 +221,8 @@ function parseProject(value: unknown): ProjectDefinition | undefined {
     if (
       typeof item.id !== 'string' ||
       typeof item.name !== 'string' ||
-      typeof item.workspace !== 'string' ||
+      (item.workspace !== undefined && typeof item.workspace !== 'string') ||
+      (item.instructions !== undefined && typeof item.instructions !== 'string') ||
       typeof item.organizationId !== 'string' ||
       typeof item.defaultRoutingPolicy !== 'string' ||
       !item.defaultModel || typeof item.defaultModel !== 'object' ||
@@ -208,11 +233,15 @@ function parseProject(value: unknown): ProjectDefinition | undefined {
       typeof item.createdAt !== 'string' ||
       typeof item.updatedAt !== 'string'
     ) return undefined;
-    const existing = item as unknown as ProjectDefinition;
+    const existing = {
+      ...(item as unknown as ProjectDefinition),
+      workspace: typeof item.workspace === 'string' ? item.workspace : ''
+    };
     return normalizeProject({
       id: existing.id,
       name: existing.name,
       workspace: existing.workspace,
+      instructions: existing.instructions,
       organizationId: existing.organizationId,
       organizationName: existing.organizationName,
       defaultRoutingPolicy: existing.defaultRoutingPolicy,
@@ -232,8 +261,10 @@ function assertWorkspaceOrganizationIsolation(
   candidate: ProjectDefinition,
   ignoreProjectId?: string
 ): void {
+  if (!candidate.workspace) return;
   const conflict = projects.find((project) =>
     project.id !== ignoreProjectId &&
+    Boolean(project.workspace) &&
     project.workspace === candidate.workspace &&
     project.organizationId !== candidate.organizationId
   );
@@ -256,6 +287,21 @@ export function projectIsolationKey(project: Pick<ProjectDefinition, 'id' | 'org
     .update('\0')
     .update(project.id)
     .digest('hex');
+}
+
+/**
+ * Repository intelligence must never bleed between two folders merely because they
+ * live in the same folderless Project. Bound Projects keep their existing stable key;
+ * ad-hoc Cowork folders receive a Project+workspace-scoped key.
+ */
+export function projectRepoMemoryScopeKey(
+  project: Pick<ProjectDefinition, 'id' | 'organizationId' | 'workspace'>,
+  workspace: string
+): string {
+  const base = projectIsolationKey(project);
+  if (project.workspace) return base;
+  const resolved = path.resolve(workspace);
+  return createHash('sha256').update(base).update('\0').update(resolved).digest('hex');
 }
 
 export function assertProjectProviderAllowed(
@@ -328,6 +374,7 @@ export class ProjectStore {
       id: current.id,
       name: patch.name ?? current.name,
       workspace: patch.workspace ?? current.workspace,
+      instructions: patch.instructions ?? current.instructions,
       organizationId: patch.organizationId ?? current.organizationId,
       organizationName: patch.organizationName ?? current.organizationName,
       defaultRoutingPolicy: patch.defaultRoutingPolicy ?? current.defaultRoutingPolicy,
