@@ -27,7 +27,15 @@ function log(message, detail) {
   console.log(`[Local Coder desktop] ${message}${suffix}`);
 }
 
-log('main module loaded', { pid: process.pid, platform: process.platform, arch: process.arch, electron: process.versions.electron });
+// Register lifecycle diagnostics immediately, before any desktop setup. The Electron
+// main module must finish evaluating before we wait for app readiness; using a
+// top-level `await app.whenReady()` here can deadlock ESM main-process startup.
+log('main module loaded', {
+  pid: process.pid,
+  platform: process.platform,
+  arch: process.arch,
+  electron: process.versions.electron
+});
 app.once('will-finish-launching', () => log('will-finish-launching'));
 app.once('ready', () => log('ready event received'));
 
@@ -98,8 +106,14 @@ function normalizedWindowState(saved) {
 
   const displays = screen.getAllDisplays();
   const intersectsDisplay = displays.some(({ workArea }) => {
-    const overlapWidth = Math.max(0, Math.min(requested.x + requested.width, workArea.x + workArea.width) - Math.max(requested.x, workArea.x));
-    const overlapHeight = Math.max(0, Math.min(requested.y + requested.height, workArea.y + workArea.height) - Math.max(requested.y, workArea.y));
+    const overlapWidth = Math.max(
+      0,
+      Math.min(requested.x + requested.width, workArea.x + workArea.width) - Math.max(requested.x, workArea.x)
+    );
+    const overlapHeight = Math.max(
+      0,
+      Math.min(requested.y + requested.height, workArea.y + workArea.height) - Math.max(requested.y, workArea.y)
+    );
     return overlapWidth >= 80 && overlapHeight >= 80;
   });
 
@@ -132,7 +146,11 @@ function persistWindowState(window) {
     fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     fs.renameSync(temp, target);
   } catch {
-    try { fs.rmSync(temp, { force: true }); } catch { /* best effort only */ }
+    try {
+      fs.rmSync(temp, { force: true });
+    } catch {
+      // Window state persistence is best-effort only.
+    }
   }
 }
 
@@ -381,6 +399,53 @@ async function recoverBackendAfterExit() {
   }
 }
 
+function configureSingleInstanceBehavior() {
+  if (process.platform === 'darwin') {
+    log('macOS startup: relying on Launch Services for normal app single-instance behavior');
+    return true;
+  }
+
+  log('requesting explicit single-instance lock');
+  const acquired = app.requestSingleInstanceLock();
+  log('single-instance lock result', { acquired });
+  if (!acquired) {
+    log('another Local Coder desktop instance already owns the single-instance lock');
+    app.quit();
+    return false;
+  }
+
+  app.on('second-instance', () => {
+    log('second instance requested; focusing existing window');
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+  return true;
+}
+
+async function initializeDesktop() {
+  app.setName('Local Coder');
+  log('Electron ready', { packaged: app.isPackaged, version: process.versions.electron });
+
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
+
+  if (!configureSingleInstanceBehavior()) return;
+
+  const url = await startWithRecovery();
+  if (!url) {
+    app.quit();
+    return;
+  }
+
+  backendUrl = url;
+  mainWindow = createMainWindow(url);
+  mainWindow.on('closed', () => {
+    mainWindow = undefined;
+  });
+}
+
 app.on('before-quit', () => {
   quitting = true;
   if (saveBoundsTimer) {
@@ -399,43 +464,13 @@ app.on('activate', () => {
   if (!mainWindow && backendUrl) mainWindow = createMainWindow(backendUrl);
 });
 
-await app.whenReady();
-app.setName('Local Coder');
-log('Electron ready', { packaged: app.isPackaged, version: process.versions.electron });
-session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-session.defaultSession.setPermissionCheckHandler(() => false);
-
-let continueStartup = true;
-if (process.platform !== 'darwin') {
-  log('requesting explicit single-instance lock');
-  const hasSingleInstanceLock = app.requestSingleInstanceLock();
-  log('single-instance lock result', { acquired: hasSingleInstanceLock });
-  if (!hasSingleInstanceLock) {
-    continueStartup = false;
-    log('another Local Coder desktop instance already owns the single-instance lock');
-    app.quit();
-  } else {
-    app.on('second-instance', () => {
-      log('second instance requested; focusing existing window');
-      if (!mainWindow) return;
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
-    });
-  }
-} else {
-  log('macOS startup: relying on Launch Services for normal app single-instance behavior');
-}
-
-if (continueStartup) {
-  const url = await startWithRecovery();
-  if (!url) {
-    app.quit();
-  } else {
-    backendUrl = url;
-    mainWindow = createMainWindow(url);
-    mainWindow.on('closed', () => {
-      mainWindow = undefined;
-    });
-  }
-}
+// Important: do not top-level await this promise. Electron can only progress to
+// `will-finish-launching` / `ready` after the ESM main module has finished
+// evaluating. This callback form mirrors the minimal Electron startup test.
+void app.whenReady()
+  .then(initializeDesktop)
+  .catch((error) => {
+    const message = error instanceof Error ? error.stack || error.message : String(error);
+    console.error('[Local Coder desktop] fatal startup error', message);
+    app.exit(1);
+  });
