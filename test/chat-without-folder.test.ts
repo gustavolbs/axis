@@ -5,6 +5,7 @@ import test from 'node:test';
 
 const root = process.cwd();
 const read = (relative: string) => fs.readFileSync(path.join(root, relative), 'utf8');
+const lf = (value: string) => value.replace(/\r\n/g, '\n');
 
 const runtime = read('src/app-runtime.ts');
 const jobManager = read('src/standalone-job-manager.ts');
@@ -21,7 +22,11 @@ const fixesCss = read('app/src/lc-fixes.css');
  */
 
 test('the chat fast path does not read the workspace', () => {
-  const chat = premiumAgent.slice(premiumAgent.indexOf('async function executeDirectChat'));
+  // GitHub Actions checks out CRLF on Windows. Normalize before slicing the
+  // TypeScript function so this contract test describes source semantics rather
+  // than the runner's line-ending policy.
+  const normalized = lf(premiumAgent);
+  const chat = normalized.slice(normalized.indexOf('async function executeDirectChat'));
   const body = chat.slice(0, chat.indexOf('\n}\n'));
   // The only mention is echoing it into the result payload.
   assert.equal((body.match(/input\.workspace/g) ?? []).length, 1);
