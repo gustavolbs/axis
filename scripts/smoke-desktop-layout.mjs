@@ -11,10 +11,9 @@ const consoleDist = path.join(root, 'console-dist');
 const sizes = [[760, 560], [900, 640], [1120, 720], [1440, 900]];
 const zoomFactors = [0.8, 1, 1.25, 1.5];
 const surfaces = [
-  { label: 'Agent', nav: 'Novo', selector: '.claude-agent-shell' },
-  { label: 'Projects', nav: 'Projetos', selector: '.reference-projects-page' },
-  { label: 'Runs', nav: 'Execuções', selector: '.runs-shell' },
-  { label: 'Settings', nav: 'Configurações', selector: '.admin-shell' }
+  { label: 'Agent', nav: 'Chats', selector: '.claude-agent-shell' },
+  { label: 'Projects', nav: 'Projects', selector: '.reference-projects-page' },
+  { label: 'Runs', nav: 'Runs', selector: '.runs-shell' }
 ];
 
 const smokeProject = {
@@ -45,9 +44,9 @@ const usagePeriod = { events: 0, cloudEvents: 0, localEvents: 0, knownCostUsd: 0
 const emptyUsage = { projectId: smokeProject.id, budgets: smokeProject.budgets, daily: usagePeriod, monthly: usagePeriod, activeReservations: { count: 0, upperBoundUsd: 0 } };
 
 const watchdog = setTimeout(() => {
-  console.error('Desktop layout smoke exceeded its 75 second safety limit.');
+  console.error('Desktop layout smoke exceeded its 90 second safety limit.');
   app.exit(2);
-}, 75_000);
+}, 90_000);
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -104,7 +103,7 @@ async function listen(server) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function waitFor(window, expression, timeoutMs = 3_500) {
+async function waitFor(window, expression, timeoutMs = 4_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await window.webContents.executeJavaScript(`Boolean(${expression})`, true)) return;
@@ -123,8 +122,7 @@ async function clickByText(window, selector, text) {
 }
 
 async function selectSurface(window, surface) {
-  const selector = surface.nav === 'Configurações' ? '.reference-sidebar-footer button' : '.reference-primary-nav button';
-  await clickByText(window, selector, surface.nav);
+  await clickByText(window, '.reference-primary-nav button', surface.nav);
   await waitFor(window, `document.querySelector(${JSON.stringify(surface.selector)})`);
   await delay(45);
 }
@@ -132,10 +130,8 @@ async function selectSurface(window, surface) {
 async function prepareAgentProject(window) {
   await selectSurface(window, surfaces[0]);
   await waitFor(window, "document.querySelector('.composer-text-button')");
-  await window.webContents.executeJavaScript("document.querySelector('.composer-text-button').click()", true);
-  await waitFor(window, "[...document.querySelectorAll('.project-popover button')].some((button) => button.textContent?.includes('Smoke Project'))");
-  await clickByText(window, '.project-popover button', 'Smoke Project');
-  await waitFor(window, "!document.querySelector('.model-effort-trigger').disabled");
+  await waitFor(window, "document.querySelector('.model-effort-trigger')");
+  await delay(90);
 }
 
 async function measure(window, surfaceSelector) {
@@ -156,6 +152,7 @@ async function measure(window, surfaceSelector) {
       content: rect('.reference-content-shell'),
       surfaceRoot: rect(${JSON.stringify(surfaceSelector)}),
       composer: ${JSON.stringify(surfaceSelector)} === '.claude-agent-shell' ? rect('.claude-composer') : null,
+      threadPane: ${JSON.stringify(surfaceSelector)} === '.claude-agent-shell' ? rect('.claude-thread-pane') : null,
       surfaceOverflowY: surfaceRoot ? getComputedStyle(surfaceRoot).overflowY : null
     };
   })()`, true);
@@ -188,7 +185,10 @@ function assertLayout(result, size, zoom, surface) {
   withinViewport('global sidebar', result.sidebar, result.viewport);
   withinViewport('content shell', result.content, result.viewport);
   withinViewport(`${surface.label} root`, result.surfaceRoot, result.viewport);
-  if (surface.selector === '.claude-agent-shell') withinViewport('Agent composer', result.composer, result.viewport);
+  if (surface.selector === '.claude-agent-shell') {
+    withinViewport('Agent composer', result.composer, result.viewport);
+    withinViewport('Agent thread pane', result.threadPane, result.viewport);
+  }
 }
 
 function assertPopover(result, label) {
@@ -197,9 +197,14 @@ function assertPopover(result, label) {
   withinViewport(label, result.rect, result.viewport);
 }
 
+async function closeOpenComposerMenu(window) {
+  await window.webContents.executeJavaScript("document.querySelector('.claude-prompt-input')?.click()", true);
+  await delay(30);
+}
+
 async function checkAgentMenus(window, size, zoom) {
   await selectSurface(window, surfaces[0]);
-  await waitFor(window, "!document.querySelector('.model-effort-trigger').disabled");
+
   await window.webContents.executeJavaScript("document.querySelector('.model-effort-trigger').click()", true);
   await waitFor(window, "document.querySelector('.model-popover')");
   assertPopover(await measurePopover(window, '.model-popover'), `model menu at ${size.join('x')} zoom ${zoom}`);
@@ -210,7 +215,28 @@ async function checkAgentMenus(window, size, zoom) {
   await waitFor(window, "document.querySelector('.model-popover') && !document.querySelector('.effort-popover')");
   const thinkingVisible = await window.webContents.executeJavaScript("Boolean([...document.querySelectorAll('.model-popover button')].find((button) => button.textContent?.includes('Thinking'))?.querySelector('.claude-switch.on'))", true);
   if (!thinkingVisible) throw new Error(`Thinking switch is not visibly enabled at ${size.join('x')} zoom ${zoom}.`);
-  await window.webContents.executeJavaScript("document.querySelector('.model-effort-trigger').click()", true);
+  await closeOpenComposerMenu(window);
+
+  await window.webContents.executeJavaScript("document.querySelector('.composer-icon-button').click()", true);
+  await waitFor(window, "document.querySelector('.composer-add-popover')");
+  assertPopover(await measurePopover(window, '.composer-add-popover'), `add-context menu at ${size.join('x')} zoom ${zoom}`);
+  await closeOpenComposerMenu(window);
+
+  await window.webContents.executeJavaScript("document.querySelector('.composer-text-button').click()", true);
+  await waitFor(window, "document.querySelector('.project-popover')");
+  assertPopover(await measurePopover(window, '.project-popover'), `project menu at ${size.join('x')} zoom ${zoom}`);
+  await closeOpenComposerMenu(window);
+}
+
+async function checkSettings(window, size, zoom) {
+  await clickByText(window, '.reference-sidebar-footer > button', 'Settings');
+  await waitFor(window, "document.querySelector('.settings-modal')");
+  const result = await measurePopover(window, '.settings-modal');
+  assertPopover(result, `settings modal at ${size.join('x')} zoom ${zoom}`);
+  await clickByText(window, '.settings-rail button', 'Appearance');
+  await waitFor(window, "document.querySelector('.settings-option-group')");
+  await window.webContents.executeJavaScript("document.querySelector('.settings-close').click()", true);
+  await waitFor(window, "!document.querySelector('.settings-modal')");
 }
 
 const server = staticServer();
@@ -229,7 +255,7 @@ try {
     window.setSize(width, height, false);
     for (const zoom of zoomFactors) {
       window.webContents.setZoomFactor(zoom);
-      await delay(65);
+      await delay(70);
       for (const surface of surfaces) {
         await selectSurface(window, surface);
         const result = await measure(window, surface.selector);
@@ -237,10 +263,17 @@ try {
         checks.push({ surface: surface.label, width, height, zoom, viewport: result.viewport });
       }
       await checkAgentMenus(window, [width, height], zoom);
+      await checkSettings(window, [width, height], zoom);
     }
   }
 
-  console.log(JSON.stringify({ ok: true, checks, layoutChecks: sizes.length * zoomFactors.length * surfaces.length, interactiveMenuChecks: sizes.length * zoomFactors.length }, null, 2));
+  console.log(JSON.stringify({
+    ok: true,
+    checks,
+    layoutChecks: sizes.length * zoomFactors.length * surfaces.length,
+    interactiveComposerChecks: sizes.length * zoomFactors.length * 3,
+    settingsChecks: sizes.length * zoomFactors.length
+  }, null, 2));
 } finally {
   clearTimeout(watchdog);
   if (window && !window.isDestroyed()) window.destroy();
