@@ -128,15 +128,15 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
       : localThinkingLevel(this.options.reasoningEffort);
 
     if (isStrictLegacyLocal(this.project)) {
-      const explicit = this.options.modelSelection?.mode === 'explicit'
-        ? this.options.modelSelection
-        : undefined;
+      const selection = this.options.modelSelection;
+      const explicit = selection?.mode === 'explicit' ? selection : undefined;
+      const localFirst = selection?.mode === 'local-first' ? selection : undefined;
       if (explicit && explicit.providerId !== 'ollama') {
         throw new Error(
           `Local-only Project ${this.project.id} cannot execute explicit provider ${explicit.providerId}.`
         );
       }
-      const modelId = explicit?.modelId ?? runtime.model ?? 'ollama-local';
+      const modelId = localFirst?.modelId ?? explicit?.modelId ?? runtime.model ?? 'ollama-local';
       const effectiveRuntime: OllamaChatOptions = {
         ...runtime,
         model: modelId,
