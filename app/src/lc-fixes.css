@@ -1417,6 +1417,44 @@
   color: var(--lc-negative);
 }
 
+/* --------------------------------------------------------------------------
+   21. Chat message geometry. The thread used its own horizontal padding on top
+       of the 760px row width, so assistant content started noticeably inside
+       the composer edge. User bubbles also owned an 88% max-width while their
+       action row owned the whole shell, which made the copy icon drift farther
+       away as a message got longer. One shared rail fixes all three defects.
+   ----------------------------------------------------------------------- */
+
+.lc-shell-content-shell .lc-agent-thread {
+  padding-inline: 0;
+}
+
+.lc-shell-content-shell .thread-user-turn,
+.lc-shell-content-shell .thread-assistant-turn {
+  width: min(760px, calc(100% - 40px));
+}
+
+.user-turn-shell {
+  display: flex;
+  width: fit-content;
+  max-width: min(88%, 650px);
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.user-turn-shell .user-message {
+  width: 100%;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: normal;
+  hyphens: none;
+}
+
+.user-turn-shell .message-actions {
+  width: 100%;
+  justify-content: flex-end;
+}
+
 @media (max-width: 760px) {
   .conversation-context-badge {
     max-width: 94px;
@@ -1426,5 +1464,14 @@
 
   .message-actions {
     opacity: .72;
+  }
+
+  .lc-shell-content-shell .thread-user-turn,
+  .lc-shell-content-shell .thread-assistant-turn {
+    width: calc(100% - 20px);
+  }
+
+  .user-turn-shell {
+    max-width: 94%;
   }
 }
