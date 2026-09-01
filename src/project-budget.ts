@@ -275,88 +275,40 @@ export class ProjectBudgetSession {
         const period = utcDayPeriod(now);
         const daily = this.ledger.summarize(this.project.id, period.from, period.to);
         if (daily.unknownCostEvents > 0) {
-          throw new BudgetGuardError(
-            'historical-cost-unknown',
-            this.project.id,
-            'Daily cloud spend contains unpriced usage; refusing another budgeted cloud call.',
-            { scope: 'daily', unknownCostEvents: daily.unknownCostEvents }
-          );
+          throw new BudgetGuardError('historical-cost-unknown', this.project.id, 'Daily cloud spend contains unpriced usage; refusing another budgeted cloud call.', { scope: 'daily', unknownCostEvents: daily.unknownCostEvents });
         }
         const current = daily.knownCostUsd + reservedProjectUsd;
         const projected = current + upperCostUsd;
         if (projected > threshold(this.project.budgets.dailyUsd, this.project.budgets.hardStopFraction)) {
-          throw new BudgetGuardError(
-            'daily-budget-exceeded',
-            this.project.id,
-            `Cloud call could exceed the Project daily hard stop (${projected.toFixed(4)} > ${threshold(this.project.budgets.dailyUsd, this.project.budgets.hardStopFraction).toFixed(4)} USD).`,
-            { currentUsd: current, projectedUsd: projected, limitUsd: this.project.budgets.dailyUsd }
-          );
+          throw new BudgetGuardError('daily-budget-exceeded', this.project.id, `Cloud call could exceed the Project daily hard stop (${projected.toFixed(4)} > ${threshold(this.project.budgets.dailyUsd, this.project.budgets.hardStopFraction).toFixed(4)} USD).`, { currentUsd: current, projectedUsd: projected, limitUsd: this.project.budgets.dailyUsd });
         }
-        warnings.push(...warningEvents(
-          'daily',
-          current,
-          projected,
-          this.project.budgets.dailyUsd,
-          this.project.budgets.warningFractions
-        ));
+        warnings.push(...warningEvents('daily', current, projected, this.project.budgets.dailyUsd, this.project.budgets.warningFractions));
       }
 
       if (this.project.budgets.monthlyUsd !== undefined) {
         const period = utcMonthPeriod(now);
         const monthly = this.ledger.summarize(this.project.id, period.from, period.to);
         if (monthly.unknownCostEvents > 0) {
-          throw new BudgetGuardError(
-            'historical-cost-unknown',
-            this.project.id,
-            'Monthly cloud spend contains unpriced usage; refusing another budgeted cloud call.',
-            { scope: 'monthly', unknownCostEvents: monthly.unknownCostEvents }
-          );
+          throw new BudgetGuardError('historical-cost-unknown', this.project.id, 'Monthly cloud spend contains unpriced usage; refusing another budgeted cloud call.', { scope: 'monthly', unknownCostEvents: monthly.unknownCostEvents });
         }
         const current = monthly.knownCostUsd + reservedProjectUsd;
         const projected = current + upperCostUsd;
         if (projected > threshold(this.project.budgets.monthlyUsd, this.project.budgets.hardStopFraction)) {
-          throw new BudgetGuardError(
-            'monthly-budget-exceeded',
-            this.project.id,
-            `Cloud call could exceed the Project monthly hard stop (${projected.toFixed(4)} > ${threshold(this.project.budgets.monthlyUsd, this.project.budgets.hardStopFraction).toFixed(4)} USD).`,
-            { currentUsd: current, projectedUsd: projected, limitUsd: this.project.budgets.monthlyUsd }
-          );
+          throw new BudgetGuardError('monthly-budget-exceeded', this.project.id, `Cloud call could exceed the Project monthly hard stop (${projected.toFixed(4)} > ${threshold(this.project.budgets.monthlyUsd, this.project.budgets.hardStopFraction).toFixed(4)} USD).`, { currentUsd: current, projectedUsd: projected, limitUsd: this.project.budgets.monthlyUsd });
         }
-        warnings.push(...warningEvents(
-          'monthly',
-          current,
-          projected,
-          this.project.budgets.monthlyUsd,
-          this.project.budgets.warningFractions
-        ));
+        warnings.push(...warningEvents('monthly', current, projected, this.project.budgets.monthlyUsd, this.project.budgets.warningFractions));
       }
 
       if (this.project.budgets.perJobUsd !== undefined) {
         if (this.jobUnknownCostEvents > 0) {
-          throw new BudgetGuardError(
-            'historical-cost-unknown',
-            this.project.id,
-            'This job already contains unpriced cloud usage; refusing another budgeted cloud call.',
-            { scope: 'job', unknownCostEvents: this.jobUnknownCostEvents }
-          );
+          throw new BudgetGuardError('historical-cost-unknown', this.project.id, 'This job already contains unpriced cloud usage; refusing another budgeted cloud call.', { scope: 'job', unknownCostEvents: this.jobUnknownCostEvents });
         }
         const current = this.jobKnownCostUsd + reservedJobUsd;
         const projected = current + upperCostUsd;
         if (projected > threshold(this.project.budgets.perJobUsd, this.project.budgets.hardStopFraction)) {
-          throw new BudgetGuardError(
-            'job-budget-exceeded',
-            this.project.id,
-            `Cloud call could exceed the Project per-job hard stop (${projected.toFixed(4)} > ${threshold(this.project.budgets.perJobUsd, this.project.budgets.hardStopFraction).toFixed(4)} USD).`,
-            { currentUsd: current, projectedUsd: projected, limitUsd: this.project.budgets.perJobUsd }
-          );
+          throw new BudgetGuardError('job-budget-exceeded', this.project.id, `Cloud call could exceed the Project per-job hard stop (${projected.toFixed(4)} > ${threshold(this.project.budgets.perJobUsd, this.project.budgets.hardStopFraction).toFixed(4)} USD).`, { currentUsd: current, projectedUsd: projected, limitUsd: this.project.budgets.perJobUsd });
         }
-        warnings.push(...warningEvents(
-          'job',
-          current,
-          projected,
-          this.project.budgets.perJobUsd,
-          this.project.budgets.warningFractions
-        ));
+        warnings.push(...warningEvents('job', current, projected, this.project.budgets.perJobUsd, this.project.budgets.warningFractions));
       }
 
       this.rememberWarnings(warnings);
@@ -372,21 +324,11 @@ export class ProjectBudgetSession {
         timestamp: now.toISOString()
       });
       this.rememberAttempt(attemptId, candidate, reservation.id, modelPricing);
-      return {
-        attemptId,
-        providerId: candidate.providerId,
-        modelId: candidate.modelId,
-        expectedCostUsd: roundUsd(expectedCostUsd),
-        upperBoundCostUsd: roundUsd(upperCostUsd),
-        reservationId: reservation.id,
-        warnings
-      };
+      return { attemptId, providerId: candidate.providerId, modelId: candidate.modelId, expectedCostUsd: roundUsd(expectedCostUsd), upperBoundCostUsd: roundUsd(upperCostUsd), reservationId: reservation.id, warnings };
     });
   }
 
-  releaseAttempt(
-    attempt: Pick<BudgetAdmission, 'attemptId'> | Pick<RoutingCandidate, 'providerId' | 'modelId'>
-  ): void {
+  releaseAttempt(attempt: Pick<BudgetAdmission, 'attemptId'> | Pick<RoutingCandidate, 'providerId' | 'modelId'>): void {
     const attemptId = this.resolveAttemptId(attempt);
     if (!attemptId) return;
     const pending = this.pendingAttempts.get(attemptId);
@@ -403,14 +345,8 @@ export class ProjectBudgetSession {
   ): UsageLedgerEvent {
     const attemptId = admission?.attemptId ?? this.findPendingAttempt(candidate);
     const pending = attemptId ? this.pendingAttempts.get(attemptId) : undefined;
-    const modelPricing = candidate.providerKind === 'cloud'
-      ? pending?.pricing ?? this.pricing.get(candidate.providerId, candidate.modelId)
-      : undefined;
-    const costUsd = candidate.providerKind === 'local'
-      ? 0
-      : modelPricing && hasCompleteBillableUsage(result)
-        ? calculateUsageCostUsd(result.usage, modelPricing)
-        : undefined;
+    const modelPricing = candidate.providerKind === 'cloud' ? pending?.pricing ?? this.pricing.get(candidate.providerId, candidate.modelId) : undefined;
+    const costUsd = candidate.providerKind === 'local' ? 0 : modelPricing && hasCompleteBillableUsage(result) ? calculateUsageCostUsd(result.usage, modelPricing) : undefined;
     const event = this.ledger.append({
       jobId: this.jobId,
       projectId: this.project.id,
@@ -424,6 +360,7 @@ export class ProjectBudgetSession {
       costUsd,
       pricingSource: modelPricing?.source,
       pricingVerifiedAt: modelPricing?.verifiedAt,
+      billingId: result.billingId,
       fallbackUsed,
       timestamp: this.now().toISOString()
     });
@@ -437,11 +374,7 @@ export class ProjectBudgetSession {
   recordLocalGeneration(
     stage: InferenceStage,
     modelId: string,
-    generation: {
-      promptTokens?: number;
-      completionTokens?: number;
-      totalDurationNs?: number;
-    }
+    generation: { promptTokens?: number; completionTokens?: number; totalDurationNs?: number }
   ): UsageLedgerEvent {
     return this.record(
       stage,
@@ -454,10 +387,7 @@ export class ProjectBudgetSession {
         usage: {
           inputTokens: generation.promptTokens,
           outputTokens: generation.completionTokens,
-          totalTokens:
-            generation.promptTokens !== undefined || generation.completionTokens !== undefined
-              ? (generation.promptTokens ?? 0) + (generation.completionTokens ?? 0)
-              : undefined
+          totalTokens: generation.promptTokens !== undefined || generation.completionTokens !== undefined ? (generation.promptTokens ?? 0) + (generation.completionTokens ?? 0) : undefined
         }
       },
       false
@@ -506,9 +436,7 @@ export class ProjectBudgetSession {
     });
   }
 
-  private findPendingAttempt(
-    candidate: Pick<RoutingCandidate, 'providerId' | 'modelId'>
-  ): string | undefined {
+  private findPendingAttempt(candidate: Pick<RoutingCandidate, 'providerId' | 'modelId'>): string | undefined {
     const key = candidateKey(candidate);
     for (const [attemptId, pending] of this.pendingAttempts) {
       if (pending.candidateKey === key) return attemptId;
@@ -516,9 +444,7 @@ export class ProjectBudgetSession {
     return undefined;
   }
 
-  private resolveAttemptId(
-    attempt: Pick<BudgetAdmission, 'attemptId'> | Pick<RoutingCandidate, 'providerId' | 'modelId'>
-  ): string | undefined {
+  private resolveAttemptId(attempt: Pick<BudgetAdmission, 'attemptId'> | Pick<RoutingCandidate, 'providerId' | 'modelId'>): string | undefined {
     return 'attemptId' in attempt ? attempt.attemptId : this.findPendingAttempt(attempt);
   }
 }

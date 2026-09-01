@@ -16,6 +16,7 @@ import {
   type LocalExecutionPlan,
   type LocalExecutionPlanResult
 } from './orchestrator.js';
+import { PersonalUsageRecorder } from './personal-usage.js';
 import { executePremiumLocalAgent } from './premium-agent.js';
 import {
   ProjectAwareEngineerBackend,
@@ -93,12 +94,26 @@ function streamProgress(
   };
 }
 
+function recordUsageSafely(run: () => void): void {
+  try {
+    run();
+  } catch (error) {
+    // The provider has already completed. Never turn a telemetry write failure into
+    // a retry that could duplicate a billable cloud request.
+    console.error(
+      `Could not persist personal Chat usage: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 /** One exact provider/model for a projectless Chat conversation. */
 class SelectedProviderChatClient implements ChatClient {
   constructor(
     private readonly provider: InferenceProvider,
     private readonly model: ModelDefinition,
-    private readonly configuredEffort?: ProjectEngineerInput['reasoningEffort']
+    private readonly configuredEffort: ProjectEngineerInput['reasoningEffort'] | undefined,
+    private readonly usage: PersonalUsageRecorder,
+    private readonly jobId?: string
   ) {}
 
   async chat(
@@ -142,6 +157,13 @@ class SelectedProviderChatClient implements ChatClient {
           )
         : undefined
     });
+    recordUsageSafely(() => this.usage.recordInference({
+      jobId: this.jobId,
+      providerId: this.provider.id,
+      providerKind: this.provider.kind,
+      modelId: this.model.id,
+      result
+    }));
     return {
       content: result.content,
       model: result.model,
@@ -150,6 +172,32 @@ class SelectedProviderChatClient implements ChatClient {
       promptTokens: result.usage.inputTokens,
       completionTokens: result.usage.outputTokens
     };
+  }
+}
+
+/** Adds projectless Ollama/worker Chat calls to the global usage ledger. */
+class RecordedPersonalChatClient implements ChatClient {
+  constructor(
+    private readonly inner: ChatClient,
+    private readonly usage: PersonalUsageRecorder,
+    private readonly jobId?: string
+  ) {}
+
+  async chat(
+    systemPrompt: string,
+    userPrompt: string,
+    format?: 'json' | Record<string, unknown>,
+    runtime?: OllamaChatOptions
+  ): Promise<OllamaGeneration> {
+    const generation = await this.inner.chat(systemPrompt, userPrompt, format, runtime);
+    recordUsageSafely(() => this.usage.recordLocalGeneration({
+      jobId: this.jobId,
+      modelId: generation.model,
+      promptTokens: generation.promptTokens,
+      completionTokens: generation.completionTokens,
+      totalDurationNs: generation.totalDurationNs
+    }));
+    return generation;
   }
 }
 
@@ -232,6 +280,7 @@ class AutoExecutionBackend implements ExecutionBackend {
 class ProjectAwareExecutionBackend implements ExecutionBackend {
   private readonly engineer: ProjectAwareEngineerBackend;
   private readonly personalProviders: ProjectProviderRuntime;
+  private readonly personalUsage = new PersonalUsageRecorder();
 
   constructor(
     private readonly legacy: ExecutionBackend,
@@ -267,6 +316,7 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
           selection.providerId,
           selection.modelId
         );
+        const jobId = input.budgetJobId;
         const {
           projectId: _projectId,
           budgetJobId: _budgetJobId,
@@ -278,7 +328,13 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
         } = input;
         return (
           await executePremiumLocalAgent(
-            new SelectedProviderChatClient(resolved.provider, resolved.model, input.reasoningEffort),
+            new SelectedProviderChatClient(
+              resolved.provider,
+              resolved.model,
+              input.reasoningEffort,
+              this.personalUsage,
+              jobId
+            ),
             this.config,
             {
               ...chatInput,
@@ -302,6 +358,7 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
       if (input.reasoningEffort !== undefined && input.reasoningEffort !== 'auto') {
         throw new Error('Choose a model before overriding effort in personal Chat.');
       }
+      const jobId = input.budgetJobId;
       const {
         projectId: _projectId,
         budgetJobId: _budgetJobId,
@@ -312,15 +369,19 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
         ...chatInput
       } = input;
       return (
-        await executePremiumLocalAgent(this.directChat, this.config, {
-          ...chatInput,
-          workspace: '',
-          chatModelLimits: {
-            providerId: 'ollama',
-            providerKind: 'local',
-            contextWindow: this.config.ollamaNumCtx ?? 16_384
+        await executePremiumLocalAgent(
+          new RecordedPersonalChatClient(this.directChat, this.personalUsage, jobId),
+          this.config,
+          {
+            ...chatInput,
+            workspace: '',
+            chatModelLimits: {
+              providerId: 'ollama',
+              providerKind: 'local',
+              contextWindow: this.config.ollamaNumCtx ?? 16_384
+            }
           }
-        })
+        )
       ).result;
     }
     return await this.engineer.executeEngineer(input);

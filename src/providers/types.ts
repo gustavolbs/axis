@@ -2,6 +2,18 @@ export type ProviderKind = 'local' | 'cloud';
 
 export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+/** Provider-agnostic capability classes controlled centrally in Settings. */
+export type ProviderCapabilityKind = 'skills' | 'abilities' | 'mcps' | 'plugins' | 'tools';
+
+/**
+ * An inference must explicitly declare every external capability it intends to use.
+ * The provider policy wrapper rejects undeclared/blocked access before inference.
+ */
+export interface ProviderCapabilityRequest {
+  kind: ProviderCapabilityKind;
+  id: string;
+}
+
 export interface ProviderCapabilities {
   modelDiscovery: boolean;
   streaming: boolean;
@@ -49,6 +61,8 @@ export interface InferenceRequest {
   reasoning?: { effort: ReasoningEffort };
   maxOutputTokens?: number;
   timeoutMs?: number;
+  /** Capabilities requested by this inference. Empty/undefined means model-only inference. */
+  capabilityRequests?: ProviderCapabilityRequest[];
   /**
    * Opaque, namespaced provider hints. Runtime/router code must not inspect them.
    * Example: `{ ollama: { numCtx, keepAlive } }`. This preserves provider-specific
@@ -75,6 +89,12 @@ export interface InferenceResult {
   stopReason?: string;
   latencyMs: number;
   usage: InferenceUsage;
+  /**
+   * Host-generated correlation id for a potentially billable cloud call. It is
+   * persisted into the usage ledger before the global provider reservation can
+   * be released, preventing accounting failures from silently freeing budget.
+   */
+  billingId?: string;
 }
 
 export interface ProviderProgress {

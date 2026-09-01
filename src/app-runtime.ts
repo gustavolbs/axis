@@ -17,6 +17,7 @@ import {
   type StandaloneJobInput,
   type StandaloneReasoningEffort
 } from './standalone-job-manager.js';
+import { UsageDashboard, parseUsageDashboardPeriod } from './usage-dashboard.js';
 
 export interface AppRuntimeRequest {
   method?: string;
@@ -174,6 +175,7 @@ export class DesktopAppRuntime {
   private readonly localProvider = createLocalInferenceProvider(this.config, this.ollama);
   private readonly personalProviders = new ProjectProviderRuntime({ localProvider: this.localProvider });
   private readonly projects = new ProjectAdminService({ localProvider: this.localProvider });
+  private readonly usage = new UsageDashboard();
   private readonly jobs = new StandaloneJobManager(
     this.execution.execution,
     path.join(path.dirname(this.config.runStorePath), 'sessions')
@@ -343,6 +345,10 @@ export class DesktopAppRuntime {
 
     if (method === 'GET' && pathname === '/chat/catalog') {
       return { catalog: await this.personalProviders.personalChatCatalog() };
+    }
+    if (method === 'GET' && pathname === '/usage') {
+      const period = parseUsageDashboardPeriod(url.searchParams.get('period'));
+      return { usage: this.usage.summary(period) };
     }
 
     if (method === 'GET' && pathname === '/projects') {

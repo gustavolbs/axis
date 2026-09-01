@@ -57,7 +57,12 @@ export function ProjectGallery({
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const filtered = projects.filter((project) => !needle || project.name.toLowerCase().includes(needle) || project.workspace.toLowerCase().includes(needle));
+    const filtered = projects.filter((project) =>
+      !needle ||
+      project.name.toLowerCase().includes(needle) ||
+      project.workspace.toLowerCase().includes(needle) ||
+      (project.instructions ?? '').toLowerCase().includes(needle)
+    );
     return [...filtered].sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : b.updatedAt.localeCompare(a.updatedAt));
   }, [projects, query, sort]);
 
@@ -70,17 +75,18 @@ export function ProjectGallery({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const name = String(form.get('name') ?? '').trim();
-    const folder = workspace.trim();
-    if (!name || !folder) return;
+    if (!name) return;
     setBusy(true);
     setError(undefined);
     try {
       const organizationId = slug(String(form.get('organizationId') ?? '').trim() || name);
+      const instructions = String(form.get('instructions') ?? '').trim();
       const { project } = await api<{ project: AdminProject }>('/api/projects', {
         method: 'POST',
         body: JSON.stringify({
           name,
-          workspace: folder,
+          workspace: workspace.trim() || undefined,
+          instructions: instructions || undefined,
           organizationId,
           organizationName: name,
           defaultRoutingPolicy: 'local-first',
@@ -125,7 +131,7 @@ export function ProjectGallery({
       {visible.map((project) => <article className="lc-shell-project-card" key={project.id}>
         <button className="lc-shell-project-card-main" onClick={() => onOpenProject(project)}>
           <span className="lc-shell-project-card-title"><Folder size={15} /><strong>{project.name}</strong><Pin size={12} className="lc-shell-project-pin" /></span>
-          <span className="lc-shell-project-card-workspace">{project.workspace}</span>
+          <span className="lc-shell-project-card-workspace">{project.workspace || 'No default folder'}</span>
           <span className="lc-shell-project-card-time">{relative(project.updatedAt)}</span>
         </button>
         <button className="lc-shell-project-more" aria-label={`Configure ${project.name}`} onClick={() => onAdvanced(project)}><MoreHorizontal size={17} /></button>
@@ -137,10 +143,11 @@ export function ProjectGallery({
       <form className="lc-shell-project-modal" onSubmit={(event) => void createProject(event)}>
         <div className="lc-shell-modal-title"><h2 className="dialog-title">Create a project</h2><button type="button" onClick={closeCreate} aria-label="Close"><X size={18} /></button></div>
         <label><span>What are you working on?</span><input name="name" required autoFocus placeholder="Give your project a name" /></label>
-        <label><span>Project folder</span><FolderField value={workspace} onChange={setWorkspace} name="workspace" required /></label>
+        <label className="lc-shell-modal-optional"><span>Default Cowork folder <small>optional</small></span><FolderField value={workspace} onChange={setWorkspace} name="workspace" /></label>
+        <label className="lc-shell-modal-optional"><span>Project instructions <small>optional</small></span><textarea name="instructions" rows={5} placeholder="Instructions that apply to every chat and Cowork run in this project" /></label>
         <label className="lc-shell-modal-optional"><span>Organization <small>optional</small></span><input name="organizationId" placeholder="e.g. acme" /></label>
-        <div className="lc-shell-modal-folder-hint"><Info size={14} /><span>The folder is used as the agent's isolated workspace.</span></div>
-        <div className="lc-shell-modal-actions"><button className="btn-secondary" type="button" onClick={closeCreate}>Cancel</button><button className="lc-shell-primary-button btn-primary" disabled={busy || !workspace.trim()}>{busy ? 'Creating…' : 'Create project'}</button></div>
+        <div className="lc-shell-modal-folder-hint"><Info size={14} /><span>Projects organize conversations. Chat never needs a folder; Cowork always does and will use this default when set.</span></div>
+        <div className="lc-shell-modal-actions"><button className="btn-secondary" type="button" onClick={closeCreate}>Cancel</button><button className="lc-shell-primary-button btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create project'}</button></div>
       </form>
     </div> : null}
   </section>;

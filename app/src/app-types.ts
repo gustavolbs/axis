@@ -9,7 +9,10 @@ export interface AdminProject {
   name: string;
   /** Presentation only: archived projects are hidden from the sidebar. */
   archived?: boolean;
+  /** Optional default Cowork folder; empty means conversation-only until a folder is chosen. */
   workspace: string;
+  /** Shared instructions injected into every conversation scoped to this Project. */
+  instructions?: string;
   organizationId: string;
   organizationName?: string;
   defaultRoutingPolicy: RoutingPolicy;

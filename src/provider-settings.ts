@@ -2,16 +2,37 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { ProviderCapabilityKind } from './providers/types.js';
+
 export interface ModelRoutingProfile {
   enabled?: boolean;
   frontier?: boolean;
   qualityScore?: number;
 }
 
+export interface ProviderCapabilityAccess {
+  enabled: boolean;
+  /** Undefined/empty means every id in this enabled class is allowed. */
+  allowIds?: string[];
+}
+
+export type ProviderCapabilityPolicy = Record<ProviderCapabilityKind, ProviderCapabilityAccess>;
+
+export type ProviderCapabilityPolicyPatch = Partial<Record<
+  ProviderCapabilityKind,
+  Partial<ProviderCapabilityAccess>
+>>;
+
 export interface ProviderRuntimeSettings {
   enabled: boolean;
   /** Model selected from provider discovery; no provider-specific model id is hardcoded here. */
   defaultModelId?: string;
+  /** True only after an explicit Unlimited choice. Undefined/false is not unlimited. */
+  unlimitedUsage?: boolean;
+  /** Finite provider API spend cap. Mutually exclusive with unlimitedUsage=true. */
+  monthlyBudgetUsd?: number;
+  /** Central policy inherited by every provider invocation. Old callers may omit it; defaults are fail-safe. */
+  capabilities?: ProviderCapabilityPolicy;
   models: Record<string, ModelRoutingProfile>;
 }
 
@@ -19,6 +40,11 @@ export interface ProviderRuntimeSettingsPatch {
   enabled?: boolean;
   /** `null` clears the provider default and returns selection to Auto. */
   defaultModelId?: string | null;
+  /** Explicitly allow unlimited provider spend. False means a finite budget is required for cloud. */
+  unlimitedUsage?: boolean;
+  /** `null` clears a finite budget. With unlimitedUsage=false this disables cloud spend. */
+  monthlyBudgetUsd?: number | null;
+  capabilities?: ProviderCapabilityPolicyPatch;
   models?: Record<string, ModelRoutingProfile>;
 }
 
@@ -29,6 +55,15 @@ interface ProviderSettingsFile {
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CAPABILITY_KINDS: ProviderCapabilityKind[] = ['skills', 'abilities', 'mcps', 'plugins', 'tools'];
+
+export const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilityPolicy = {
+  skills: { enabled: true },
+  abilities: { enabled: true },
+  mcps: { enabled: false },
+  plugins: { enabled: false },
+  tools: { enabled: false }
+};
 
 function safeProviderId(value: string): string {
   const trimmed = value.trim();
@@ -44,6 +79,22 @@ function modelId(value: string): string {
   return trimmed;
 }
 
+function capabilityId(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 240 || /[\r\n\0]/.test(trimmed)) {
+    throw new Error('Capability id must be 1-240 characters without control line breaks.');
+  }
+  return trimmed;
+}
+
+function monthlyBudget(value: number | null | undefined): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error('Provider monthly budget must be a positive USD amount.');
+  }
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
 function normalizeProfile(input: ModelRoutingProfile = {}): ModelRoutingProfile {
   const qualityScore = input.qualityScore;
   if (qualityScore !== undefined && (!Number.isFinite(qualityScore) || qualityScore < 0 || qualityScore > 100)) {
@@ -56,6 +107,32 @@ function normalizeProfile(input: ModelRoutingProfile = {}): ModelRoutingProfile 
   };
 }
 
+function normalizeCapabilityAccess(
+  input: Partial<ProviderCapabilityAccess> | undefined,
+  fallback: ProviderCapabilityAccess
+): ProviderCapabilityAccess {
+  const allowIds = input?.allowIds === undefined
+    ? fallback.allowIds
+    : [...new Set(input.allowIds.map(capabilityId))].sort();
+  return {
+    enabled: input?.enabled ?? fallback.enabled,
+    allowIds: allowIds && allowIds.length > 0 ? allowIds : undefined
+  };
+}
+
+function normalizeCapabilities(
+  input: ProviderCapabilityPolicyPatch | ProviderCapabilityPolicy | undefined,
+  fallback?: ProviderCapabilityPolicy
+): ProviderCapabilityPolicy {
+  const source = input ?? {};
+  const base = fallback ?? DEFAULT_PROVIDER_CAPABILITIES;
+  const result = {} as ProviderCapabilityPolicy;
+  for (const kind of CAPABILITY_KINDS) {
+    result[kind] = normalizeCapabilityAccess(source[kind], base[kind]);
+  }
+  return result;
+}
+
 function normalizeSettings(input: Partial<ProviderRuntimeSettings> = {}): ProviderRuntimeSettings {
   const models: Record<string, ModelRoutingProfile> = {};
   for (const [id, profile] of Object.entries(input.models ?? {})) {
@@ -65,9 +142,13 @@ function normalizeSettings(input: Partial<ProviderRuntimeSettings> = {}): Provid
   if (defaultModelId && models[defaultModelId]?.enabled === false) {
     throw new Error(`Default model ${defaultModelId} is disabled in provider settings.`);
   }
+  const unlimitedUsage = input.unlimitedUsage === true;
   return {
     enabled: input.enabled ?? true,
     defaultModelId,
+    unlimitedUsage,
+    monthlyBudgetUsd: unlimitedUsage ? undefined : monthlyBudget(input.monthlyBudgetUsd),
+    capabilities: normalizeCapabilities(input.capabilities),
     models
   };
 }
@@ -92,10 +173,19 @@ export class ProviderSettingsStore {
   update(providerId: string, patch: ProviderRuntimeSettingsPatch): ProviderRuntimeSettings {
     const id = safeProviderId(providerId);
     const state = this.read();
-    const current = state.providers[id] ?? { enabled: true, models: {} };
+    const current = state.providers[id] ?? normalizeSettings();
     const mergedModels = patch.models
       ? { ...current.models, ...patch.models }
       : current.models;
+    const explicitUnlimited = patch.unlimitedUsage === true ||
+      (patch.unlimitedUsage === undefined && patch.monthlyBudgetUsd === null);
+    const unlimitedUsage = patch.unlimitedUsage !== undefined
+      ? patch.unlimitedUsage
+      : patch.monthlyBudgetUsd === null
+        ? true
+        : patch.monthlyBudgetUsd !== undefined
+          ? false
+          : current.unlimitedUsage === true;
     const next = normalizeSettings({
       enabled: patch.enabled ?? current.enabled,
       defaultModelId:
@@ -104,6 +194,16 @@ export class ProviderSettingsStore {
           : patch.defaultModelId === null
             ? undefined
             : patch.defaultModelId,
+      unlimitedUsage,
+      monthlyBudgetUsd:
+        explicitUnlimited
+          ? undefined
+          : patch.monthlyBudgetUsd === undefined
+            ? current.monthlyBudgetUsd
+            : patch.monthlyBudgetUsd === null
+              ? undefined
+              : patch.monthlyBudgetUsd,
+      capabilities: normalizeCapabilities(patch.capabilities, current.capabilities),
       models: mergedModels
     });
     state.providers[id] = next;
