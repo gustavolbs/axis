@@ -51,13 +51,22 @@ function optionalString(body: JsonObject, key: string): string | undefined {
   return value.trim() || undefined;
 }
 
-function parseModelSelection(value: unknown): ModelSelection | undefined {
+export function parseModelSelection(value: unknown): ModelSelection | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('modelSelection must be an object.');
   }
   const item = value as JsonObject;
   if (item.mode === 'auto') return { mode: 'auto' };
+  if (
+    item.mode === 'local-first' &&
+    typeof item.modelId === 'string' && item.modelId.trim()
+  ) {
+    return {
+      mode: 'local-first',
+      modelId: item.modelId.trim()
+    };
+  }
   if (
     item.mode === 'explicit' &&
     typeof item.providerId === 'string' && item.providerId.trim() &&
@@ -69,7 +78,7 @@ function parseModelSelection(value: unknown): ModelSelection | undefined {
       modelId: item.modelId.trim()
     };
   }
-  throw new Error('modelSelection must be auto or an explicit provider/model pair.');
+  throw new Error('modelSelection must be auto, local-first with an Ollama model, or an explicit provider/model pair.');
 }
 
 function parseReasoningEffort(value: unknown): StandaloneReasoningEffort | undefined {
@@ -232,6 +241,18 @@ export class DesktopAppRuntime {
       const body = objectBody(request.body);
       return { job: this.jobs.submitGuidance(guidanceMatch[1], requiredString(body, 'guidance')) };
     }
+    const escalationMatch = /^\/jobs\/([A-Za-z0-9-]+)\/escalate$/.exec(pathname);
+    if (method === 'POST' && escalationMatch) {
+      const body = objectBody(request.body);
+      const effort = parseReasoningEffort(body.reasoningEffort);
+      return {
+        job: await this.jobs.submitEscalation(escalationMatch[1], {
+          providerId: requiredString(body, 'providerId'),
+          modelId: requiredString(body, 'modelId'),
+          reasoningEffort: effort === 'auto' ? undefined : effort
+        })
+      };
+    }
 
     if (method === 'GET' && pathname === '/projects') return { projects: this.projects.listProjects() };
     if (method === 'POST' && pathname === '/projects') {
@@ -288,8 +309,8 @@ export class DesktopAppRuntime {
         settings: {
           ollamaBaseUrl: this.config.ollamaBaseUrl,
           executionMode: this.config.executionMode,
-          // Direct mode never consults a worker, so no bearer token is involved.
-          requiresWorkerToken: this.config.executionMode !== 'local'
+          workerTokenOptional: true,
+          requiresWorkerToken: false
         }
       };
     }
@@ -321,7 +342,8 @@ export class DesktopAppRuntime {
         settings: {
           ollamaBaseUrl: this.config.ollamaBaseUrl,
           executionMode: patch.executionMode ?? this.config.executionMode,
-          requiresWorkerToken: (patch.executionMode ?? this.config.executionMode) !== 'local',
+          workerTokenOptional: true,
+          requiresWorkerToken: false,
           restartRequired: patch.executionMode !== undefined && patch.executionMode !== this.config.executionMode
         }
       };
