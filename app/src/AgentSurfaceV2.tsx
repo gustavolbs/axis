@@ -465,7 +465,7 @@ export function AgentSurfaceV2() {
       estimatedTokens,
       contextWindow: model?.contextWindow ?? (localFallback ? 16_384 : undefined),
       maxOutputTokens: model?.maxOutputTokens ?? (localFallback ? 2_048 : undefined),
-      modelLabel: model?.label ?? currentInference?.model ?? modelId || providerLabel(providerId),
+      modelLabel: model?.label ?? currentInference?.model ?? (modelId || providerLabel(providerId)),
       providerLabel: providerLabel(providerId)
     };
   }, [
