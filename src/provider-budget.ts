@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import {
   PricingStore,
-  estimateRequestCostUsd
+  calculateUsageCostUsd,
+  type ModelPricing
 } from './pricing-store.js';
 import { ProviderSettingsStore } from './provider-settings.js';
 import type { InferenceProvider, InferenceRequest, InferenceResult } from './providers/types.js';
@@ -43,9 +44,9 @@ export interface ProviderBudgetManagerOptions {
   now?: () => Date;
 }
 
-const PROVIDER_BUDGET_PROJECT_ID = 'provider-budget';
+export const PROVIDER_BUDGET_PROJECT_ID = 'provider-budget';
 const PROVIDER_BUDGET_ORGANIZATION_ID = 'global';
-const SUCCESS_RELEASE_DELAY_MS = 5_000;
+const RECONCILE_DELAYS_MS = [250, 2_500];
 
 function roundUsd(value: number): number {
   return Math.round(value * 1_000_000_000) / 1_000_000_000;
@@ -69,21 +70,44 @@ function completeMonthSpend(
   return { knownCostUsd: roundUsd(knownCostUsd), unknownCostEvents };
 }
 
+function providerReservations(
+  reservations: UsageBudgetReservation[],
+  providerId: string
+): UsageBudgetReservation[] {
+  return reservations.filter((reservation) =>
+    reservation.projectId === PROVIDER_BUDGET_PROJECT_ID &&
+    reservation.providerId === providerId
+  );
+}
+
 function reservationCost(
   reservations: UsageBudgetReservation[],
   providerId: string
 ): number {
-  return roundUsd(reservations
-    .filter((reservation) =>
-      reservation.projectId === PROVIDER_BUDGET_PROJECT_ID &&
-      reservation.providerId === providerId
-    )
+  return roundUsd(providerReservations(reservations, providerId)
     .reduce((sum, reservation) => sum + reservation.upperBoundCostUsd, 0));
 }
 
-function reservationLeaseMs(request: InferenceRequest): number {
-  const requested = request.timeoutMs ?? 1_800_000;
-  return Math.max(60_000, Math.min(requested + 120_000, 7_200_000));
+/**
+ * Billing providers report actual token counts only after the request. Admission therefore
+ * reserves a deliberately pessimistic upper bound: at most one input token per UTF-8 byte,
+ * plus the exact maxOutputTokens ceiling. This can over-reserve; it must not under-reserve.
+ */
+function upperBoundCost(request: InferenceRequest, pricing: ModelPricing): number | undefined {
+  if (
+    request.maxOutputTokens === undefined ||
+    !Number.isFinite(request.maxOutputTokens) ||
+    request.maxOutputTokens <= 0
+  ) return undefined;
+  const promptBytes = Buffer.byteLength(`${request.systemPrompt}\n${request.userPrompt}`, 'utf8');
+  return calculateUsageCostUsd({
+    inputTokens: Math.max(1, promptBytes),
+    outputTokens: Math.ceil(request.maxOutputTokens)
+  }, pricing);
+}
+
+function reservationExpiry(now: Date): string {
+  return utcMonthPeriod(now).to.toISOString();
 }
 
 export class ProviderBudgetManager {
@@ -97,6 +121,29 @@ export class ProviderBudgetManager {
     this.pricing = options.pricing ?? new PricingStore();
     this.ledger = options.ledger ?? new UsageLedger();
     this.now = options.now ?? (() => new Date());
+  }
+
+  /**
+   * A reservation is released only after the durable usage event carrying its billingId
+   * exists. This makes disk/telemetry failures conservative instead of silently freeing
+   * money that may already have been charged by the provider.
+   */
+  async reconcile(providerId: string): Promise<number> {
+    return await this.ledger.withBudgetLock(() => this.reconcileLocked(providerId, this.now()));
+  }
+
+  private reconcileLocked(providerId: string, now: Date): number {
+    const accounted = new Set(
+      this.ledger.list()
+        .filter((event) => event.providerId === providerId && event.billingId)
+        .map((event) => event.billingId!)
+    );
+    let released = 0;
+    for (const reservation of providerReservations(this.ledger.listReservations(undefined, now), providerId)) {
+      if (!accounted.has(reservation.id)) continue;
+      if (this.ledger.releaseReservation(reservation.id)) released += 1;
+    }
+    return released;
   }
 
   async authorize(provider: InferenceProvider, request: InferenceRequest): Promise<ProviderBudgetAdmission | undefined> {
@@ -114,8 +161,8 @@ export class ProviderBudgetManager {
           { modelId: request.model, limitUsd }
         );
       }
-      const estimate = estimateRequestCostUsd(request, pricing);
-      if (!estimate) {
+      const upper = upperBoundCost(request, pricing);
+      if (upper === undefined) {
         throw new ProviderBudgetError(
           'output-bound-required',
           provider.id,
@@ -123,9 +170,9 @@ export class ProviderBudgetManager {
           { modelId: request.model, limitUsd }
         );
       }
-      const upper = estimate.estimatedCostUsd;
 
       const now = this.now();
+      this.reconcileLocked(provider.id, now);
       const month = completeMonthSpend(this.ledger, provider.id, now);
       if (month.unknownCostEvents > 0) {
         throw new ProviderBudgetError(
@@ -156,7 +203,7 @@ export class ProviderBudgetManager {
 
       const reservation = this.ledger.reserve({
         jobId: randomUUID(),
-        expiresAt: new Date(now.getTime() + reservationLeaseMs(request)).toISOString(),
+        expiresAt: reservationExpiry(now),
         projectId: PROVIDER_BUDGET_PROJECT_ID,
         organizationId: PROVIDER_BUDGET_ORGANIZATION_ID,
         providerId: provider.id,
@@ -176,9 +223,21 @@ export class ProviderBudgetManager {
     });
   }
 
+  /** Explicit release is for calls proven not to have reached a provider. */
   release(admission: ProviderBudgetAdmission | undefined): void {
     if (!admission) return;
     this.ledger.releaseReservation(admission.reservationId);
+  }
+
+  private scheduleReconcile(providerId: string): void {
+    for (const delay of RECONCILE_DELAYS_MS) {
+      const timer = setTimeout(() => {
+        void this.reconcile(providerId).catch(() => {
+          // Fail closed: a failed reconciliation leaves the reservation in place.
+        });
+      }, delay);
+      timer.unref?.();
+    }
   }
 
   wrap(provider: InferenceProvider): InferenceProvider {
@@ -194,13 +253,17 @@ export class ProviderBudgetManager {
         const admission = await budget.authorize(provider, request);
         try {
           const result = await provider.invoke(request);
-          if (admission) {
-            const timer = setTimeout(() => budget.release(admission), SUCCESS_RELEASE_DELAY_MS);
-            timer.unref?.();
-          }
-          return result;
+          if (!admission) return result;
+          const correlated: InferenceResult = {
+            ...result,
+            billingId: admission.reservationId
+          };
+          budget.scheduleReconcile(provider.id);
+          return correlated;
         } catch (error) {
-          budget.release(admission);
+          // Once invoke() has started, a transport error cannot prove that the remote
+          // provider did not process/bill the request. Keep the upper-bound reservation
+          // until month rollover rather than risking an unexpectedly large invoice.
           throw error;
         }
       }
