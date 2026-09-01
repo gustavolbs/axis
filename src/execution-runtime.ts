@@ -5,6 +5,7 @@ import {
   type AgenticExecutionResult
 } from './executor.js';
 import type {
+  LocalEngineerEscalation,
   LocalEngineerResult
 } from './local-engineer.js';
 import type { OllamaClient, OllamaGeneration } from './ollama.js';
@@ -16,7 +17,10 @@ import {
 import { executePremiumLocalAgent } from './premium-agent.js';
 import {
   ProjectAwareEngineerBackend,
-  type ProjectEngineerInput
+  type ProjectEngineerInput,
+  type ProjectEscalationChoice,
+  type ProjectEscalationGuidance,
+  type ProjectEscalationPlan
 } from './project-engineer-backend.js';
 import { RemoteWorkerClient, RemoteWorkerError } from './remote-worker-client.js';
 
@@ -32,6 +36,15 @@ export interface ExecutionBackend {
   executeTask(input: AgenticCodeTask): Promise<AgenticExecutionResult>;
   executePlan(input: LocalExecutionPlan): Promise<LocalExecutionPlanResult>;
   executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult>;
+  prepareEscalation?(
+    input: ProjectEngineerInput,
+    escalation: LocalEngineerEscalation
+  ): Promise<ProjectEscalationPlan>;
+  consultEscalation?(
+    input: ProjectEngineerInput,
+    escalation: LocalEngineerEscalation,
+    choice: ProjectEscalationChoice
+  ): Promise<ProjectEscalationGuidance>;
 }
 
 export interface ExecutionRuntime {
@@ -137,6 +150,21 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
 
   async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
     return await this.engineer.executeEngineer(input);
+  }
+
+  async prepareEscalation(
+    input: ProjectEngineerInput,
+    escalation: LocalEngineerEscalation
+  ): Promise<ProjectEscalationPlan> {
+    return await this.engineer.prepareEscalation(input, escalation);
+  }
+
+  async consultEscalation(
+    input: ProjectEngineerInput,
+    escalation: LocalEngineerEscalation,
+    choice: ProjectEscalationChoice
+  ): Promise<ProjectEscalationGuidance> {
+    return await this.engineer.consultEscalation(input, escalation, choice);
   }
 }
 
