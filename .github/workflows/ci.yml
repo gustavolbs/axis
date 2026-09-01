@@ -107,7 +107,17 @@ jobs:
         run: |
           npm run build
           node --check desktop/main.mjs
+          node --check desktop/bootstrap.mjs
+          node --check scripts/run-desktop.mjs
           npx tsx --test test/desktop-shell.test.ts test/desktop-ui-contract.test.ts
+
+      - name: Reproduce inherited Electron Node-mode contamination
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+        run: |
+          output="$(node scripts/run-desktop.mjs --version)"
+          echo "$output"
+          echo "$output" | grep -q "v44.1.0"
 
       - name: Smoke desktop resize and zoom matrix
         run: npx electron scripts/smoke-desktop-layout.mjs
