@@ -166,6 +166,7 @@ interface CatalogProvider {
   models: CatalogModel[];
 }
 interface ProjectCatalog {
+  scope?: 'personal' | 'project';
   projectId: string;
   defaultModel: ModelSelection;
   providers: CatalogProvider[];
@@ -178,6 +179,7 @@ interface ModelOption {
   available: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
+  providerDefault: boolean;
   reason?: string;
 }
 interface ConversationContextInfo {
@@ -259,7 +261,7 @@ function defaultComposerSelection(catalog: ProjectCatalog): string {
   const configured = modelValue(catalog.defaultModel);
   if (configured !== 'auto') return configured;
   const local = firstAvailableModel(catalog, 'ollama');
-  if (local) return modeValue('local-first', local.id);
+  if (local) return modeValue(catalog.scope === 'personal' ? 'ollama' : 'local-first', local.id);
   const claude = firstAvailableModel(catalog, 'anthropic');
   if (claude) return modeValue('anthropic', claude.id);
   const gpt = firstAvailableModel(catalog, 'openai');
@@ -357,7 +359,14 @@ export function AgentSurfaceV2() {
 
   useEffect(() => {
     setEditingTurnId(undefined);
-  }, [activeId]);
+    if (active?.input.interactionMode === 'chat' && active.input.modelSelection) {
+      setModelSelection(modelValue(active.input.modelSelection));
+      if (active.input.reasoningEffort && active.input.reasoningEffort !== 'none') {
+        setEffort(active.input.reasoningEffort as ReasoningEffortSelection);
+      }
+      setThinkingEnabled(active.input.reasoningEffort !== 'none');
+    }
+  }, [activeId, active?.input.modelSelection, active?.input.reasoningEffort]);
 
   useEffect(() => {
     if (!error) return;
@@ -366,22 +375,27 @@ export function AgentSurfaceV2() {
   }, [error]);
 
   useEffect(() => {
-    if (!selectedProjectId) {
-      setCatalog(undefined);
-      setModelSelection('auto');
-      return;
-    }
-    void api<{ catalog: ProjectCatalog }>(`/api/projects/${encodeURIComponent(selectedProjectId)}/catalog`)
+    let cancelled = false;
+    const endpoint = selectedProjectId
+      ? `/api/projects/${encodeURIComponent(selectedProjectId)}/catalog`
+      : '/api/chat/catalog';
+    void api<{ catalog: ProjectCatalog }>(endpoint)
       .then(({ catalog: next }) => {
+        if (cancelled) return;
         setCatalog(next);
-        setModelSelection(defaultComposerSelection(next));
+        const activeSelection = active?.input.interactionMode === 'chat'
+          ? active.input.modelSelection
+          : undefined;
+        setModelSelection(activeSelection ? modelValue(activeSelection) : defaultComposerSelection(next));
       })
       .catch((next) => {
+        if (cancelled) return;
         setCatalog(undefined);
         setModelSelection('auto');
         setError(next instanceof Error ? next.message : String(next));
       });
-  }, [selectedProjectId]);
+    return () => { cancelled = true; };
+  }, [selectedProjectId, modelMenu]);
 
   useEffect(() => {
     if (!active?.decisionRequest) return;
@@ -416,6 +430,7 @@ export function AgentSurfaceV2() {
           available: provider.ready && model.available,
           contextWindow: model.contextWindow,
           maxOutputTokens: model.maxOutputTokens,
+          providerDefault: model.providerDefault,
           reason: provider.reason
         });
       }
@@ -437,7 +452,7 @@ export function AgentSurfaceV2() {
     const conversationMode = active?.input.interactionMode ?? mode;
     if (conversationMode !== 'chat') return undefined;
 
-    const selection = active?.input.modelSelection ?? (selectedProject ? parseModelValue(modelSelection) : undefined);
+    const selection = active?.input.modelSelection ?? parseModelValue(modelSelection);
     const providerId = selection?.mode === 'explicit'
       ? selection.providerId
       : selection?.mode === 'local-first'
@@ -482,8 +497,7 @@ export function AgentSurfaceV2() {
     modelOptions,
     modelSelection,
     selectedModeConfig.providerId,
-    selectedModelId,
-    selectedProject
+    selectedModelId
   ]);
 
   function chooseProject(projectId: string) {
@@ -529,6 +543,7 @@ export function AgentSurfaceV2() {
     setSubmitting(true);
     setError(undefined);
     try {
+      const modelOverrideAllowed = Boolean(selectedProject) || mode === 'chat';
       const { job } = await api<{ job: Job }>('/api/jobs', {
         method: 'POST',
         body: JSON.stringify({
@@ -538,8 +553,8 @@ export function AgentSurfaceV2() {
           context: context.trim() || undefined,
           maxRepairRounds: 1,
           interactionMode: mode,
-          modelSelection: selectedProject ? parseModelValue(modelSelection) : undefined,
-          reasoningEffort: selectedProject ? (thinkingEnabled ? effort : 'none') : undefined
+          modelSelection: modelOverrideAllowed ? parseModelValue(modelSelection) : undefined,
+          reasoningEffort: modelOverrideAllowed ? (thinkingEnabled ? effort : 'none') : undefined
         })
       });
       if (!selectedProject) localStorage.setItem('local-coder.workspace', effectiveWorkspace);
@@ -764,6 +779,7 @@ export function AgentSurfaceV2() {
         onKeyDown={onComposerKeyDown}
         mode={mode}
         chooseMode={chooseMode}
+        allowLocalFirst={Boolean(selectedProject)}
         editingMessage={Boolean(editingTurnId)}
         cancelEditing={cancelEditTurn}
         placeholder={pendingDecision ? 'Or answer directly…' : undefined}
@@ -844,6 +860,7 @@ function Composer(props: {
   chooseProject: (id: string) => void;
   mode: ComposerMode;
   chooseMode: (value: ComposerMode) => void;
+  allowLocalFirst: boolean;
   placeholder?: string;
   extrasOpen: boolean;
   setExtrasOpen: (value: boolean) => void;
@@ -935,7 +952,7 @@ function Composer(props: {
             </button>
             {props.projectMenu ? <div className="lc-agent-popover project-popover" role="menu">
               <button className={!props.selectedProject ? 'selected' : ''} onClick={() => props.chooseProject('')}>
-                <span><strong>No project</strong><small>Use a workspace path directly</small></span>
+                <span><strong>No project</strong><small>Use personal Chat credentials without repository access</small></span>
                 {!props.selectedProject ? <Check size={15} /> : null}
               </button>
               {props.projects.map((project) => <button key={project.id} className={props.selectedProject?.id === project.id ? 'selected' : ''} onClick={() => props.chooseProject(project.id)}>
@@ -971,6 +988,7 @@ function ModelMenu(props: {
   modelOptions: ModelOption[];
   modelSelection: string;
   setModelSelection: (value: string) => void;
+  allowLocalFirst: boolean;
   effort: ReasoningEffortSelection;
   setEffort: (value: ReasoningEffortSelection) => void;
   effortLabel: string;
@@ -996,13 +1014,18 @@ function ModelMenu(props: {
     : '';
 
   function modeReady(mode: ProviderMode): boolean {
+    if (mode === 'local-first' && !props.allowLocalFirst) return false;
     const config = providerModes.find((item) => item.id === mode)!;
     return props.modelOptions.some((model) => model.providerId === config.providerId && model.available);
   }
 
   function chooseProviderMode(mode: ProviderMode) {
+    if (mode === 'local-first' && !props.allowLocalFirst) return;
     const config = providerModes.find((item) => item.id === mode)!;
-    const model = props.modelOptions.find((option) => option.providerId === config.providerId && option.available);
+    const candidates = props.modelOptions.filter(
+      (option) => option.providerId === config.providerId && option.available
+    );
+    const model = candidates.find((option) => option.providerDefault) ?? candidates[0];
     if (!model) return;
     props.setModelSelection(modeValue(mode, model.modelId));
   }
@@ -1011,8 +1034,11 @@ function ModelMenu(props: {
     <div className="model-provider-label">Mode</div>
     {providerModes.map((mode) => {
       const ready = modeReady(mode.id);
+      const unavailable = mode.id === 'local-first' && !props.allowLocalFirst
+        ? ' · requires a project'
+        : ready ? '' : ' · unavailable';
       return <button key={mode.id} className={currentMode === mode.id ? 'selected' : ''} disabled={!ready} onClick={() => chooseProviderMode(mode.id)}>
-        <span><strong>{mode.label}</strong><small>{mode.description}{ready ? '' : ' · unavailable'}</small></span>
+        <span><strong>{mode.label}</strong><small>{mode.description}{unavailable}</small></span>
         {currentMode === mode.id ? <Check size={16} /> : null}
       </button>;
     })}
@@ -1022,7 +1048,7 @@ function ModelMenu(props: {
       <span><strong>{model.label}</strong><small>{model.description}{model.available ? '' : ` · ${model.reason ?? 'unavailable'}`}</small></span>
       {selectedModelId === model.modelId ? <Check size={16} /> : null}
     </button>)}
-    {props.modelOptions.length === 0 ? <div className="model-menu-note">Choose or create a project to discover Ollama, Claude and GPT models.</div> : null}
+    {props.modelOptions.length === 0 ? <div className="model-menu-note">No Chat models are available. Check the Windows worker or add a personal API key in Settings → API keys.</div> : null}
     <div className="popover-separator" />
     <button className="popover-row-link" onClick={() => props.setModelMenu('effort')}>
       <span><strong>Effort</strong><small>Control how deeply the selected model reasons</small></span>
@@ -1086,7 +1112,7 @@ function MessageActions(props: {
 }
 
 function chatProgress(state?: string, model?: string): { title: string; detail: string } {
-  const name = model ?? 'Ollama';
+  const name = model ?? 'Local Coder';
   if (state === 'thinking') {
     return {
       title: 'Thinking',
@@ -1131,8 +1157,11 @@ function TaskThread(props: {
     job.status === 'error' ||
     job.status === 'cancelled' ||
     (job.status === 'success' && job.input.interactionMode !== 'chat');
+  const selectedChatModel = job.input.modelSelection && job.input.modelSelection.mode !== 'auto'
+    ? job.input.modelSelection.modelId
+    : undefined;
   const progress = job.input.interactionMode === 'chat'
-    ? chatProgress(currentInference?.streamState, currentInference?.model)
+    ? chatProgress(currentInference?.streamState, selectedChatModel ?? currentInference?.model)
     : undefined;
 
   return <div className="lc-agent-thread" aria-live="polite">
@@ -1163,7 +1192,7 @@ function TaskThread(props: {
         {working ? <div className="assistant-stream-state">
           <div className="assistant-stream-title"><LoaderCircle className="assistant-spinner" size={16} /><strong>{progress?.title ?? (currentInference?.streamState === 'generating' ? 'Writing' : currentInference?.streamState === 'thinking' ? 'Thinking' : 'Working')}</strong></div>
           <p>{progress?.detail ?? latestEvent?.title ?? 'Starting the task…'}</p>
-          <div className="assistant-stream-meta">{currentInference?.stage ? <span>{currentInference.stage}</span> : null}{currentInference?.model ? <span>{currentInference.model}</span> : null}{currentInference?.runningMs ? <span>{duration(currentInference.runningMs)}</span> : null}</div>
+          <div className="assistant-stream-meta">{currentInference?.stage ? <span>{currentInference.stage}</span> : null}{selectedChatModel ? <span>{selectedChatModel}</span> : currentInference?.model ? <span>{currentInference.model}</span> : null}{currentInference?.runningMs ? <span>{duration(currentInference.runningMs)}</span> : null}</div>
         </div> : null}
         {job.status === 'waiting-guidance' && result?.escalation ? <GuidanceMessage job={job} guidance={props.guidance} setGuidance={props.setGuidance} onContinue={props.sendGuidance} onEscalate={props.sendEscalation} /> : null}
         {job.status === 'error' ? <div className="assistant-result-message error"><strong>Something went wrong</strong><p>{job.error ?? 'The task stopped unexpectedly.'}</p></div> : null}
