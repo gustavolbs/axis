@@ -52,10 +52,14 @@ export function FolderField({
     setChecking(true);
     try {
       const response = await fetch(`/api/fs/exists?path=${encodeURIComponent(clean)}`, { headers: { accept: 'application/json' } });
-      const body = (await response.json()) as { exists?: boolean };
+      const body = (await response.json()) as { exists?: boolean; resolvedPath?: string };
       const exists = response.ok && body.exists === true;
       setValid(exists);
-      if (exists) rememberWorkspace(clean);
+      if (exists) {
+        const resolved = body.resolvedPath?.trim() || clean;
+        if (resolved !== value) onChange(resolved);
+        rememberWorkspace(resolved);
+      }
     } catch {
       setValid(undefined);
     } finally {
