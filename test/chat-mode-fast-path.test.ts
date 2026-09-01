@@ -67,7 +67,7 @@ test('standalone chat jobs preserve interaction mode and cannot enter guidance c
   let receivedMode: string | undefined;
   const manager = new StandaloneJobManager({
     executeEngineer: async (input) => {
-      receivedMode = input.interactionMode;
+      receivedMode = (input as typeof input & { interactionMode?: string }).interactionMode;
       return success('Resposta direta.');
     }
   });
