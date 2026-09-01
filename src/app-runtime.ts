@@ -12,6 +12,7 @@ import type { ModelSelection, CreateProjectInput } from './project-store.js';
 import type { ProviderRuntimeSettingsPatch } from './provider-settings.js';
 import {
   StandaloneJobManager,
+  type StandaloneInteractionMode,
   type StandaloneJobInput,
   type StandaloneReasoningEffort
 } from './standalone-job-manager.js';
@@ -49,6 +50,12 @@ function optionalString(body: JsonObject, key: string): string | undefined {
   if (value === undefined || value === null || value === '') return undefined;
   if (typeof value !== 'string') throw new Error(`${key} must be a string.`);
   return value.trim() || undefined;
+}
+
+function parseInteractionMode(value: unknown): StandaloneInteractionMode {
+  if (value === undefined) return 'cowork';
+  if (value === 'chat' || value === 'cowork') return value;
+  throw new Error("interactionMode must be 'chat' or 'cowork'.");
 }
 
 export function parseModelSelection(value: unknown): ModelSelection | undefined {
@@ -249,6 +256,7 @@ export class DesktopAppRuntime {
           typeof body.maxRepairRounds === 'number' && Number.isInteger(body.maxRepairRounds)
             ? Math.max(0, Math.min(body.maxRepairRounds, 2))
             : 1,
+        interactionMode: parseInteractionMode(body.interactionMode),
         modelSelection: parseModelSelection(body.modelSelection),
         reasoningEffort: parseReasoningEffort(body.reasoningEffort)
       };

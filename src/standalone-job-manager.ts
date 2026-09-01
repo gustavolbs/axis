@@ -29,6 +29,7 @@ export type StandaloneJobStatus =
   | 'error';
 
 export type StandaloneReasoningEffort = 'auto' | ReasoningEffort;
+export type StandaloneInteractionMode = 'chat' | 'cowork';
 
 export interface StandaloneJobInput {
   projectId?: string;
@@ -38,6 +39,8 @@ export interface StandaloneJobInput {
   constraints?: string[];
   language?: string;
   maxRepairRounds?: number;
+  /** Chat is a single conversational inference; Cowork runs the engineering pipeline. */
+  interactionMode?: StandaloneInteractionMode;
   /** Optional standalone override. Auto preserves the Project/agent stage policy. */
   modelSelection?: ModelSelection;
   /** Optional standalone override applied to every routed cognitive stage. */
@@ -207,6 +210,7 @@ export class StandaloneJobManager {
         projectId: input.projectId?.trim() || undefined,
         workspace: input.workspace.trim(),
         goal: input.goal.trim(),
+        interactionMode: input.interactionMode ?? 'cowork',
         reasoningEffort: input.reasoningEffort ?? 'auto'
       },
       rounds: 0,
@@ -214,7 +218,7 @@ export class StandaloneJobManager {
       controller: new AbortController()
     };
     this.jobs.set(job.id, job);
-    this.emit(job, 'status', 'Job queued');
+    this.emit(job, 'status', input.interactionMode === 'chat' ? 'Chat queued' : 'Job queued');
     void this.run(job);
     return snapshot(job);
   }
@@ -409,12 +413,15 @@ export class StandaloneJobManager {
     if (job.status === 'cancelled') return;
     const controller = job.controller ?? new AbortController();
     job.controller = controller;
+    const isChat = job.input.interactionMode === 'chat';
 
     try {
       await withCancellationSignal(controller.signal, async () => {
         throwIfCancelled();
         job.status = 'running';
-        this.emit(job, 'status', job.rounds > 0 ? 'Local agent resumed' : 'Local agent started');
+        this.emit(job, 'status', isChat
+          ? 'Direct chat started'
+          : job.rounds > 0 ? 'Local agent resumed' : 'Local agent started');
 
         for (let round = Math.max(1, job.rounds + 1); round <= 6; round += 1) {
           throwIfCancelled();
@@ -424,7 +431,7 @@ export class StandaloneJobManager {
             userGuidance: job.guidance,
             budgetJobId: job.id
           };
-          this.emit(job, 'status', `Agent round ${round} running`);
+          this.emit(job, 'status', isChat ? 'Generating chat response' : `Agent round ${round} running`);
           const result = await this.execution.executeEngineer(input);
           throwIfCancelled();
           job.result = result;
@@ -432,11 +439,15 @@ export class StandaloneJobManager {
           if (result.status === 'success') {
             job.status = 'success';
             job.escalationPlan = undefined;
-            this.emit(job, 'result', 'Local agent completed', {
+            this.emit(job, 'result', isChat ? 'Chat response completed' : 'Local agent completed', {
               changedFiles: result.changedFiles.length,
-              quality: premium(result).quality ?? null
+              quality: isChat ? null : premium(result).quality ?? null
             });
             return;
+          }
+
+          if (isChat) {
+            throw new Error('Chat mode returned an engineering checkpoint instead of a direct response.');
           }
 
           const decisionRequest = premium(result).decisionRequest;
@@ -505,7 +516,7 @@ export class StandaloneJobManager {
       }
       job.status = 'error';
       job.error = error instanceof Error ? error.message : String(error);
-      this.emit(job, 'error', 'Local agent failed', { error: job.error });
+      this.emit(job, 'error', isChat ? 'Chat failed' : 'Local agent failed', { error: job.error });
     } finally {
       job.waiting = undefined;
       job.controller = undefined;
