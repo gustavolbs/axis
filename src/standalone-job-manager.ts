@@ -10,7 +10,12 @@ import {
 import type { ExecutionBackend } from './execution-runtime.js';
 import type { LocalEngineerResult } from './local-engineer.js';
 import type { PremiumDecisionRequest, PremiumEngineerResult } from './premium-agent.js';
-import type { ProjectEngineerInput } from './project-engineer-backend.js';
+import type {
+  ProjectEngineerInput,
+  ProjectEscalationChoice,
+  ProjectEscalationGuidance,
+  ProjectEscalationPlan
+} from './project-engineer-backend.js';
 import type { ModelSelection } from './project-store.js';
 import type { ReasoningEffort } from './providers/types.js';
 
@@ -55,6 +60,7 @@ export interface StandaloneJobSnapshot {
   updatedAt: string;
   input: StandaloneJobInput;
   decisionRequest?: PremiumDecisionRequest;
+  escalationPlan?: ProjectEscalationPlan;
   result?: LocalEngineerResult;
   error?: string;
   rounds: number;
@@ -88,6 +94,7 @@ function snapshot(job: JobInternal): StandaloneJobSnapshot {
     updatedAt: job.updatedAt,
     input: job.input,
     decisionRequest: job.decisionRequest,
+    escalationPlan: job.escalationPlan,
     result: job.result,
     error: job.error,
     rounds: job.rounds,
@@ -113,13 +120,27 @@ function renderSelections(
   return lines.join('\n');
 }
 
+function renderEscalationGuidance(guidance: ProjectEscalationGuidance): string {
+  return [
+    '# CLOUD ESCALATION GUIDANCE (bounded consultation)',
+    `Provider: ${guidance.providerId}`,
+    `Model: ${guidance.modelId}`,
+    `Reasoning effort: ${guidance.reasoningEffort}`,
+    '',
+    guidance.content.trim()
+  ].join('\n');
+}
+
 export class StandaloneJobManager {
   private readonly jobs = new Map<string, JobInternal>();
   private readonly listeners = new Set<JobListener>();
   private persistTail: Promise<void> = Promise.resolve();
 
   constructor(
-    private readonly execution: Pick<ExecutionBackend, 'executeEngineer'>,
+    private readonly execution: Pick<
+      ExecutionBackend,
+      'executeEngineer' | 'prepareEscalation' | 'consultEscalation'
+    >,
     private readonly stateDir?: string
   ) {}
 
@@ -211,6 +232,7 @@ export class StandaloneJobManager {
     job.status = 'cancelled';
     job.error = undefined;
     job.decisionRequest = undefined;
+    job.escalationPlan = undefined;
     job.controller?.abort();
     const waiting = job.waiting;
     job.waiting = undefined;
@@ -244,6 +266,7 @@ export class StandaloneJobManager {
     if (job.status !== 'waiting-guidance') throw new Error('Job is not waiting for guidance.');
     if (!guidance.trim()) throw new Error('guidance is required.');
     job.guidance = mergeGuidance(job.guidance, guidance);
+    job.escalationPlan = undefined;
     const waiting = job.waiting?.kind === 'guidance' ? job.waiting : undefined;
     job.waiting = undefined;
     job.status = 'running';
@@ -254,6 +277,66 @@ export class StandaloneJobManager {
       void this.run(job);
     }
     return snapshot(job);
+  }
+
+  async submitEscalation(
+    id: string,
+    choice: ProjectEscalationChoice
+  ): Promise<StandaloneJobSnapshot> {
+    const job = this.requireJob(id);
+    if (job.status !== 'waiting-guidance') throw new Error('Job is not waiting for guidance.');
+    if (job.input.modelSelection?.mode !== 'local-first') {
+      throw new Error('Cloud consultation is only available for Local-first jobs.');
+    }
+    const escalation = job.result?.escalation;
+    if (!escalation) throw new Error('Escalation request is missing.');
+    if (!job.escalationPlan?.options.some(
+      (option) => option.providerId === choice.providerId && option.modelId === choice.modelId
+    )) {
+      throw new Error(`Escalation target ${choice.providerId}/${choice.modelId} is not available for this job.`);
+    }
+    if (!this.execution.consultEscalation) throw new Error('Cloud escalation broker is unavailable.');
+
+    const waiting = job.waiting?.kind === 'guidance' ? job.waiting : undefined;
+    job.status = 'running';
+    this.emit(job, 'guidance', `Escalating bounded question to ${choice.providerId}/${choice.modelId}`, {
+      providerId: choice.providerId,
+      modelId: choice.modelId,
+      reasoningEffort: choice.reasoningEffort ?? null
+    });
+
+    try {
+      const input: ProjectEngineerInput = {
+        ...job.input,
+        userGuidance: job.guidance,
+        budgetJobId: job.id
+      };
+      const consultation = await this.execution.consultEscalation(input, escalation, choice);
+      const rendered = renderEscalationGuidance(consultation);
+      job.guidance = mergeGuidance(job.guidance, rendered);
+      job.escalationPlan = undefined;
+      job.waiting = undefined;
+      job.status = 'running';
+      this.emit(job, 'guidance', `Cloud guidance received from ${consultation.providerId}/${consultation.modelId}; resuming Ollama`, {
+        providerId: consultation.providerId,
+        modelId: consultation.modelId,
+        reasoningEffort: consultation.reasoningEffort,
+        latencyMs: consultation.latencyMs,
+        usage: consultation.usage
+      });
+      if (waiting) waiting.resolve(rendered);
+      else {
+        job.controller = new AbortController();
+        void this.run(job);
+      }
+      return snapshot(job);
+    } catch (error) {
+      job.status = 'waiting-guidance';
+      this.emit(job, 'guidance', 'Cloud escalation failed; choose another target or provide guidance manually', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
   }
 
   private requireJob(id: string): JobInternal {
@@ -348,6 +431,7 @@ export class StandaloneJobManager {
 
           if (result.status === 'success') {
             job.status = 'success';
+            job.escalationPlan = undefined;
             this.emit(job, 'result', 'Local agent completed', {
               changedFiles: result.changedFiles.length,
               quality: premium(result).quality ?? null
@@ -359,6 +443,7 @@ export class StandaloneJobManager {
           if (decisionRequest?.questions.length) {
             job.status = 'waiting-decision';
             job.decisionRequest = decisionRequest;
+            job.escalationPlan = undefined;
             this.emit(job, 'decision', 'Material user decision required', {
               questions: decisionRequest.questions.map((question) => question.id)
             });
@@ -369,10 +454,32 @@ export class StandaloneJobManager {
 
           if (result.escalation) {
             job.status = 'waiting-guidance';
-            this.emit(job, 'guidance', 'The local agent needs bounded external guidance', {
+            job.escalationPlan = undefined;
+            if (
+              job.input.modelSelection?.mode === 'local-first' &&
+              this.execution.prepareEscalation
+            ) {
+              try {
+                job.escalationPlan = await this.execution.prepareEscalation(input, result.escalation);
+              } catch (error) {
+                job.escalationPlan = {
+                  stage: 'other',
+                  options: [],
+                  reasons: [
+                    `Could not prepare cloud escalation: ${error instanceof Error ? error.message : String(error)}`,
+                    'Manual guidance is still available.'
+                  ]
+                };
+              }
+            }
+            this.emit(job, 'guidance', job.escalationPlan?.recommended
+              ? `Ollama needs bounded help; recommended escalation is ${job.escalationPlan.recommended.providerId}/${job.escalationPlan.recommended.modelId}`
+              : 'The local agent needs bounded external guidance', {
               kind: result.escalation.kind,
               questions: result.escalation.questions,
-              researchRequests: result.escalation.researchRequests
+              researchRequests: result.escalation.researchRequests,
+              recommended: job.escalationPlan?.recommended ?? null,
+              options: job.escalationPlan?.options ?? []
             });
             await this.wait(job, 'guidance');
             throwIfCancelled();
@@ -391,6 +498,7 @@ export class StandaloneJobManager {
           job.status = 'cancelled';
           job.error = undefined;
           job.decisionRequest = undefined;
+          job.escalationPlan = undefined;
           this.emit(job, 'cancelled', 'Job cancelled');
         }
         return;
