@@ -62,6 +62,7 @@ export class PersonalUsageRecorder {
       costUsd,
       pricingSource: pricing?.source,
       pricingVerifiedAt: pricing?.verifiedAt,
+      billingId: input.result.billingId,
       fallbackUsed: false,
       timestamp: this.now().toISOString()
     });
