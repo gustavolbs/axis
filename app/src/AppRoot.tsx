@@ -19,6 +19,7 @@ import { App } from './App.js';
 import { ProjectGallery } from './ProjectGallery.js';
 import { RunInspector } from './RunInspector.js';
 import { SettingsModal } from './SettingsModal.js';
+import { ShellDialog, type ShellDialogRequest } from './ShellDialog.js';
 import { displayProfileName, type DesktopCommand } from './native.js';
 
 /** Conversations live in the sidebar, under their project or in the
@@ -107,6 +108,7 @@ export function AppRoot() {
   const [jobMenuId, setJobMenuId] = useState<string>();
   const [projectMenuId, setProjectMenuId] = useState<string>();
   const [actionError, setActionError] = useState<string>();
+  const [dialog, setDialog] = useState<ShellDialogRequest>();
   const [profileName, setProfileName] = useState('Local profile');
   const [runtimeOnline, setRuntimeOnline] = useState<boolean>();
   const [readJobs, setReadJobs] = useState<Set<string>>(() => storedIds(READ_KEY));
@@ -209,9 +211,15 @@ export function AppRoot() {
   }
 
   function renameJob(job: SidebarJob) {
-    const next = window.prompt('Rename chat', jobTitle(job));
-    if (next === null || !next.trim()) return;
-    void mutate(() => api(`/api/jobs/${job.id}`, { method: 'PATCH', body: { title: next.trim() } }));
+    setJobMenuId(undefined);
+    setDialog({
+      kind: 'prompt',
+      title: 'Rename chat',
+      label: 'Name',
+      value: jobTitle(job),
+      confirmLabel: 'Rename',
+      onConfirm: (next) => void mutate(() => api(`/api/jobs/${job.id}`, { method: 'PATCH', body: { title: next } }))
+    });
   }
 
   function archiveJob(job: SidebarJob, archived: boolean) {
@@ -219,20 +227,33 @@ export function AppRoot() {
   }
 
   function deleteJob(job: SidebarJob) {
-    if (!window.confirm(`Delete "${jobTitle(job)}"? This cannot be undone.`)) return;
-    void mutate(async () => {
-      await api(`/api/jobs/${job.id}`, { method: 'DELETE' });
-      if (localStorage.getItem('local-coder.open-job') === job.id) {
-        localStorage.removeItem('local-coder.open-job');
-        setAgentEpoch((value) => value + 1);
-      }
+    setJobMenuId(undefined);
+    setDialog({
+      kind: 'confirm',
+      title: 'Delete chat',
+      message: `"${jobTitle(job)}" will be deleted. This cannot be undone — archive it instead to keep it out of the sidebar.`,
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: () => void mutate(async () => {
+        await api(`/api/jobs/${job.id}`, { method: 'DELETE' });
+        if (localStorage.getItem('local-coder.open-job') === job.id) {
+          localStorage.removeItem('local-coder.open-job');
+          setAgentEpoch((value) => value + 1);
+        }
+      })
     });
   }
 
   function renameProject(project: AdminProject) {
-    const next = window.prompt('Rename project', project.name);
-    if (next === null || !next.trim()) return;
-    void mutate(() => api(`/api/projects/${encodeURIComponent(project.id)}`, { method: 'PATCH', body: { name: next.trim() } }));
+    setProjectMenuId(undefined);
+    setDialog({
+      kind: 'prompt',
+      title: 'Rename project',
+      label: 'Name',
+      value: project.name,
+      confirmLabel: 'Rename',
+      onConfirm: (next) => void mutate(() => api(`/api/projects/${encodeURIComponent(project.id)}`, { method: 'PATCH', body: { name: next } }))
+    });
   }
 
   function archiveProject(project: AdminProject, archived: boolean) {
@@ -240,10 +261,18 @@ export function AppRoot() {
   }
 
   function deleteProject(project: AdminProject) {
-    // The runtime refuses while the project still holds conversations, and says
-    // how many; surface that instead of pre-empting it with our own count.
-    if (!window.confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
-    void mutate(() => api(`/api/projects/${encodeURIComponent(project.id)}`, { method: 'DELETE' }));
+    setProjectMenuId(undefined);
+    setDialog({
+      kind: 'confirm',
+      title: 'Delete project',
+      // The runtime refuses while the project still holds conversations, and
+      // says how many; surface that rather than pre-empting it with our own
+      // count, which could disagree.
+      message: `"${project.name}" will be deleted. This cannot be undone, and a project that still holds conversations cannot be deleted at all.`,
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: () => void mutate(() => api(`/api/projects/${encodeURIComponent(project.id)}`, { method: 'DELETE' }))
+    });
   }
 
   function selectSurface(next: Surface) {
@@ -542,6 +571,8 @@ export function AppRoot() {
         </div>
       </section>
     </div> : null}
+
+    <ShellDialog request={dialog} onClose={() => setDialog(undefined)} />
 
     <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} onRunProject={(project) => { setSettingsOpen(false); runProject(project); }} />
   </div>;

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CheckCircle2, KeyRound, Plus, Trash2 } from 'lucide-react';
 
 import type { AdminProject, ModelSelection, RoutingPolicy } from './app-types.js';
+import { ShellDialog, type ShellDialogRequest } from './ShellDialog.js';
 import { UiSelect, type UiSelectOption } from './UiSelect.js';
 
 interface Credential {
@@ -373,6 +374,7 @@ export function ModelRoutingSettings() {
 export function ApiKeySettings() {
   const [providers, setProviders] = useState<ProviderAdmin[]>([]);
   const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [dialog, setDialog] = useState<ShellDialogRequest>();
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
@@ -437,8 +439,18 @@ export function ApiKeySettings() {
     }
   }
 
+  function requestRemove(credentialId: string) {
+    setDialog({
+      kind: 'confirm',
+      title: 'Remove API key',
+      message: `“${credentialId}” will be removed. Projects bound to it lose access to that provider.`,
+      confirmLabel: 'Remove',
+      danger: true,
+      onConfirm: () => void remove(credentialId)
+    });
+  }
+
   async function remove(credentialId: string) {
-    if (!window.confirm(`Remove “${credentialId}”?`)) return;
     try {
       await api(`/api/credentials/${encodeURIComponent(credentialId)}`, { method: 'DELETE' });
       await load();
@@ -456,7 +468,7 @@ export function ApiKeySettings() {
       <span className="credential-provider-icon"><KeyRound size={15} /></span>
       <div><strong>{credential.label}</strong><p>{credential.providerId} · {credential.organizationId ?? 'Personal'} · {credential.backend === 'macos-keychain' ? 'Keychain' : credential.environmentVariable ?? 'Environment'}</p></div>
       <span className={`credential-availability ${credential.available ? 'ready' : ''}`}>{credential.available ? 'Available' : 'Missing'}</span>
-      <button className="credential-remove" aria-label={`Remove ${credential.label}`} onClick={() => void remove(credential.id)}><Trash2 size={15} /></button>
+      <button className="credential-remove" aria-label={`Remove ${credential.label}`} onClick={() => requestRemove(credential.id)}><Trash2 size={15} /></button>
     </article>)}</div>
     {credentials.length === 0 ? <div className="settings-empty-state">No API keys configured.</div> : null}
 
@@ -472,5 +484,6 @@ export function ApiKeySettings() {
         <div className="nested-settings-dialog-actions"><button type="button" onClick={() => setAdding(false)}>Cancel</button><button className="settings-save-button" disabled={busy}>{busy ? 'Saving…' : 'Save key'}</button></div>
       </form>
     </div> : null}
+    <ShellDialog request={dialog} onClose={() => setDialog(undefined)} />
   </div>;
 }

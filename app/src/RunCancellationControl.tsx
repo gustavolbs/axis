@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { ShellDialog, type ShellDialogRequest } from './ShellDialog.js';
+
 type CancellableStatus = 'queued' | 'running' | 'waiting-decision' | 'waiting-guidance';
 
 interface ActiveJob {
@@ -26,6 +28,7 @@ export function RunCancellationControl() {
   const [jobs, setJobs] = useState<ActiveJob[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [cancelling, setCancelling] = useState(false);
+  const [dialog, setDialog] = useState<ShellDialogRequest>();
   const [error, setError] = useState<string>();
   const active = useMemo(() => activeJobs(jobs), [jobs]);
   const selected = active.find((job) => job.id === selectedId) ?? active[0];
@@ -55,9 +58,20 @@ export function RunCancellationControl() {
     if (!selected && selectedId) setSelectedId(undefined);
   }, [selected?.id, selectedId]);
 
+  function requestCancel() {
+    if (!selected || cancelling) return;
+    setDialog({
+      kind: 'confirm',
+      title: 'Cancel run',
+      message: `“${selected.input.goal}” will stop. Active provider and validation work is aborted.`,
+      confirmLabel: 'Cancel run',
+      danger: true,
+      onConfirm: () => void cancelSelected()
+    });
+  }
+
   async function cancelSelected() {
     if (!selected || cancelling) return;
-    if (!window.confirm(`Cancel “${selected.input.goal}”? Active provider/validation work will be aborted.`)) return;
     setCancelling(true);
     setError(undefined);
     try {
@@ -89,9 +103,10 @@ export function RunCancellationControl() {
         {job.status} · {job.input.projectId ? `${job.input.projectId} · ` : ''}{job.input.goal.slice(0, 64)}
       </option>)}
     </select>
-    <button className="cancel-run-button" disabled={!selected || cancelling} onClick={() => void cancelSelected()}>
+    <button className="cancel-run-button" disabled={!selected || cancelling} onClick={requestCancel}>
       {cancelling ? 'Cancelling…' : 'Cancel run'}
     </button>
     {error ? <span className="run-cancel-error">{error}</span> : null}
+    <ShellDialog request={dialog} onClose={() => setDialog(undefined)} />
   </div>;
 }

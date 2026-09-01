@@ -99,8 +99,10 @@ test('the sidebar offers the actions and reports a refusal', () => {
 
 test('deleting the open conversation clears it from the composer', () => {
   const del = appRoot.slice(appRoot.indexOf('function deleteJob'));
-  const body = del.slice(0, del.indexOf('\n  }'));
-  assert.match(body, /window\.confirm/, 'delete is irreversible; ask first');
+  const body = del.slice(0, del.indexOf('\n  }\n'));
+  // Delete is irreversible, so it asks first — through the in-app dialog.
+  assert.match(body, /kind: 'confirm'/);
+  assert.match(body, /danger: true/);
   assert.match(body, /local-coder\.open-job/);
 });
 

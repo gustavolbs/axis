@@ -895,6 +895,67 @@
    surface lists what has been hidden from the sidebar.
    ----------------------------------------------------------------------- */
 
+/* Reuses the project modal's backdrop, title row and action row, so a rename
+   and a project creation look like the same application. */
+.shell-dialog {
+  display: grid;
+  gap: 18px;
+  width: min(440px, calc(100vw - 48px));
+  padding: 22px;
+  border: 1px solid var(--lc-border-strong);
+  border-radius: 13px;
+  background: var(--lc-surface);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .55);
+}
+
+.shell-dialog label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.shell-dialog label span {
+  color: var(--lc-text-soft);
+}
+
+.shell-dialog input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--lc-border);
+  border-radius: 8px;
+  background: var(--lc-surface-1);
+  color: var(--lc-text);
+  font-size: 14px;
+}
+
+.shell-dialog input:focus-visible {
+  border-color: var(--lc-border-strong);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lc-accent) 18%, transparent);
+}
+
+.shell-dialog-message {
+  margin: 0;
+  color: var(--lc-text-soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.shell-dialog .btn-primary.danger {
+  background: var(--lc-negative);
+  color: #1b1210;
+}
+
+.shell-dialog .btn-primary.danger:hover {
+  background: color-mix(in srgb, var(--lc-negative) 88%, #fff);
+}
+
+.shell-dialog .btn-primary:disabled {
+  background: var(--lc-surface-3);
+  color: var(--lc-faint);
+  cursor: default;
+}
+
 .lc-shell-row-menu button.danger,
 .archived-row .btn-secondary.danger {
   color: var(--lc-negative);
