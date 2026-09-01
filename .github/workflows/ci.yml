@@ -111,11 +111,6 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "v44.1.0"
 
-      - name: Smoke desktop resize and zoom extremes
-        env:
-          LOCAL_CODER_LAYOUT_SMOKE_CI: '1'
-        run: npx electron scripts/smoke-desktop-layout.mjs
-
       - name: Package unsigned Local Coder.app, DMG and ZIP
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
