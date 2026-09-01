@@ -54,6 +54,32 @@ export interface RoutingCatalogOptions {
   modelSelection?: ModelSelection;
 }
 
+export interface PersonalChatCatalogModel {
+  id: string;
+  displayName: string;
+  available: boolean;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  capabilities?: Partial<ProviderCapabilities>;
+  providerDefault: boolean;
+  projectDefault: false;
+}
+
+export interface PersonalChatCatalogProvider {
+  id: string;
+  kind: ProviderKind;
+  ready: boolean;
+  reason?: string;
+  models: PersonalChatCatalogModel[];
+}
+
+export interface PersonalChatCatalog {
+  scope: 'personal';
+  projectId: '';
+  defaultModel: ModelSelection;
+  providers: PersonalChatCatalogProvider[];
+}
+
 export const BUILT_IN_CLOUD_PROVIDER_IDS = ['anthropic', 'openai'] as const;
 
 const defaultCloudFactories: Record<string, CloudProviderFactory> = {
@@ -82,6 +108,33 @@ function profileEnabled(profile: ModelRoutingProfile | undefined): boolean {
 
 function unique(values: Array<string | undefined>): string[] {
   return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+}
+
+/**
+ * Provider-specific model-list normalization belongs at the provider boundary. OpenAI's
+ * `/models` endpoint is unusually broad, so keep non-conversational assets out of Chat.
+ * Other providers are expected to expose invokable text models from listModels().
+ */
+function isPersonalChatModel(providerId: string, model: ModelDefinition): boolean {
+  if (providerId !== 'openai') return true;
+  const id = model.id.toLowerCase();
+  if (/(?:image|audio|realtime|transcrib|tts|embedding|moderation|whisper|dall-e)/.test(id)) return false;
+  return /^(?:gpt-(?:4|5)|chatgpt-|o[1-9](?:-|$))/.test(id);
+}
+
+function orderPersonalChatModels(
+  models: ModelDefinition[],
+  defaultModelId?: string
+): ModelDefinition[] {
+  return [...models].sort((left, right) => {
+    const leftDefault = left.id === defaultModelId ? 1 : 0;
+    const rightDefault = right.id === defaultModelId ? 1 : 0;
+    if (leftDefault !== rightDefault) return rightDefault - leftDefault;
+    const leftCreated = left.createdAt ? Date.parse(left.createdAt) : 0;
+    const rightCreated = right.createdAt ? Date.parse(right.createdAt) : 0;
+    if (leftCreated !== rightCreated) return rightCreated - leftCreated;
+    return left.id.localeCompare(right.id);
+  });
 }
 
 /**
@@ -136,6 +189,125 @@ export class ProjectProviderRuntime {
   }
 
   /**
+   * Resolve any registered provider for projectless Chat. Cloud providers all share the
+   * same isolation rule: only credentials without organizationId are eligible. Corporate
+   * credentials can therefore never leak into a personal conversation. Multiple personal
+   * credentials fail closed because there is no Project binding available to disambiguate.
+   */
+  personalChatProvider(providerId: string): { provider?: InferenceProvider; reason?: string } {
+    if (providerId === this.localProvider?.id || providerId === 'ollama') {
+      if (!this.localProvider) return { reason: 'Local inference is not configured.' };
+      const settings = this.settings.get(this.localProvider.id);
+      if (settings?.enabled === false) return { reason: `${this.localProvider.id} is disabled in Model routing settings.` };
+      return { provider: this.localProvider };
+    }
+
+    const factory = this.factories[providerId];
+    if (!factory) return { reason: `Provider ${providerId} is not registered.` };
+    const settings = this.settings.get(providerId);
+    if (settings?.enabled === false) return { reason: `${providerId} is disabled in Model routing settings.` };
+
+    const personalProfiles = this.credentials.list().filter(
+      (profile) => profile.providerId === providerId && profile.organizationId === undefined
+    );
+    const available: Array<{ id: string; secret: string }> = [];
+    for (const profile of personalProfiles) {
+      try {
+        const secret = this.credentials.resolve(profile.id);
+        if (secret) available.push({ id: profile.id, secret });
+      } catch {
+        // Availability is represented by the resulting reason, never by leaking a Keychain error/secret.
+      }
+    }
+
+    if (available.length === 0) {
+      return { reason: `Add an available personal ${providerId} credential in Settings → API keys.` };
+    }
+    if (available.length > 1) {
+      return { reason: `Multiple personal ${providerId} credentials are available. Use a Project to choose one explicitly.` };
+    }
+
+    const provider = factory(available[0]!.secret);
+    if (provider.id !== providerId || provider.kind !== 'cloud') {
+      throw new Error(`Provider factory ${providerId} returned inconsistent provider identity/kind.`);
+    }
+    return { provider };
+  }
+
+  /**
+   * Personal Chat provider discovery is factory-driven, not hardcoded to Claude/GPT.
+   * Registering a new cloud provider factory automatically enrolls it in the same
+   * credential-isolation and model-discovery path.
+   */
+  async personalChatCatalog(): Promise<PersonalChatCatalog> {
+    const providerIds = unique([
+      this.localProvider?.id ?? 'ollama',
+      ...Object.keys(this.factories)
+    ]);
+    const providers: PersonalChatCatalogProvider[] = [];
+
+    for (const providerId of providerIds) {
+      const resolution = this.personalChatProvider(providerId);
+      const provider = resolution.provider;
+      const settings = this.settings.get(providerId) ?? { enabled: true, models: {} };
+      let models: ModelDefinition[] = [];
+      let discoveryError: string | undefined;
+      if (provider) {
+        try {
+          models = orderPersonalChatModels(
+            (await provider.listModels()).filter((model) => isPersonalChatModel(providerId, model)),
+            settings.defaultModelId
+          );
+        } catch (error) {
+          discoveryError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      const ready = Boolean(provider) && !discoveryError && models.length > 0;
+      providers.push({
+        id: providerId,
+        kind: provider?.kind ?? (providerId === (this.localProvider?.id ?? 'ollama') ? 'local' : 'cloud'),
+        ready,
+        reason: ready
+          ? undefined
+          : discoveryError ?? resolution.reason ?? `No conversational models are available for ${providerId}.`,
+        models: models.map((model) => ({
+          id: model.id,
+          displayName: model.displayName,
+          available: true,
+          contextWindow: model.contextWindow,
+          maxOutputTokens: model.maxOutputTokens,
+          capabilities: mergeCapabilities(provider!, model),
+          providerDefault: settings.defaultModelId === model.id,
+          projectDefault: false
+        }))
+      });
+    }
+
+    return {
+      scope: 'personal',
+      projectId: '',
+      defaultModel: { mode: 'auto' },
+      providers
+    };
+  }
+
+  async personalModelDefinition(
+    providerId: string,
+    modelId: string
+  ): Promise<{ provider: InferenceProvider; model: ModelDefinition }> {
+    const resolution = this.personalChatProvider(providerId);
+    if (!resolution.provider) {
+      throw new Error(resolution.reason ?? `Provider ${providerId} is unavailable for personal Chat.`);
+    }
+    const models = await resolution.provider.listModels();
+    const model = models.find(
+      (candidate) => candidate.id === modelId && isPersonalChatModel(providerId, candidate)
+    );
+    if (!model) throw new Error(`Model ${providerId}/${modelId} is not available for personal Chat.`);
+    return { provider: resolution.provider, model };
+  }
+
+  /**
    * Returns the real provider/model metadata used by Chat budgeting. This keeps
    * context-window knowledge at the provider boundary instead of baking Claude,
    * GPT or Ollama limits into the generic conversation layer.
@@ -184,8 +356,8 @@ export class ProjectProviderRuntime {
       } else if (selection.mode === 'explicit' && selection.providerId === provider.id) {
         requestedIds = [selection.modelId];
       } else if (selection.mode === 'explicit') {
-        // Direct Ollama / Claude / GPT selection is exact. Do not keep unrelated
-        // providers around as fallback candidates for provider failures.
+        // Direct provider selection is exact. Do not keep unrelated providers around
+        // as fallback candidates for provider failures.
         requestedIds = [];
       } else if (provider.kind === 'local') {
         const configuredFast = discovered.find(

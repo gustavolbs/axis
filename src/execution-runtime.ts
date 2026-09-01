@@ -8,7 +8,9 @@ import type {
   LocalEngineerEscalation,
   LocalEngineerResult
 } from './local-engineer.js';
-import type { OllamaChatOptions, OllamaClient, OllamaGeneration } from './ollama.js';
+import { createLocalInferenceProvider } from './local-inference-provider.js';
+import type { OllamaChatOptions, OllamaClient, OllamaGeneration, OllamaThinkingLevel } from './ollama.js';
+import type { OllamaStreamProgress } from './ollama-stream.js';
 import {
   executeLocalCodePlan,
   type LocalExecutionPlan,
@@ -22,6 +24,13 @@ import {
   type ProjectEscalationGuidance,
   type ProjectEscalationPlan
 } from './project-engineer-backend.js';
+import { ProjectProviderRuntime } from './project-provider-runtime.js';
+import type {
+  InferenceOutputFormat,
+  InferenceProvider,
+  ModelDefinition,
+  ReasoningEffort
+} from './providers/types.js';
 import { RemoteWorkerClient, RemoteWorkerError } from './remote-worker-client.js';
 
 export interface ChatClient {
@@ -53,6 +62,95 @@ export interface ExecutionRuntime {
   chat: ChatClient;
   execution: ExecutionBackend;
   health(): Promise<Record<string, unknown>>;
+}
+
+function outputFormat(format: 'json' | Record<string, unknown> | undefined): InferenceOutputFormat {
+  if (!format || format === 'json') return { type: 'text' };
+  return { type: 'json_schema', schema: format, name: 'local_coder_personal_chat', strict: true };
+}
+
+function reasoningEffort(think: OllamaThinkingLevel | undefined): ReasoningEffort | undefined {
+  if (think === undefined) return undefined;
+  if (think === false) return 'none';
+  if (think === true) return 'high';
+  return think;
+}
+
+function streamProgress(
+  startedAt: number,
+  state: 'waiting-response' | 'reasoning' | 'generating',
+  timestamp: string,
+  eventCount: number,
+  outputChars: number
+): OllamaStreamProgress {
+  return {
+    elapsedMs: Math.max(0, Date.now() - startedAt),
+    chunkCount: eventCount,
+    thinkingChars: 0,
+    outputChars,
+    state: state === 'generating' ? 'generating' : 'thinking',
+    lastActivityAt: timestamp
+  };
+}
+
+/** One exact provider/model for a projectless Chat conversation. */
+class SelectedProviderChatClient implements ChatClient {
+  constructor(
+    private readonly provider: InferenceProvider,
+    private readonly model: ModelDefinition,
+    private readonly configuredEffort?: ProjectEngineerInput['reasoningEffort']
+  ) {}
+
+  async chat(
+    systemPrompt: string,
+    userPrompt: string,
+    format?: 'json' | Record<string, unknown>,
+    runtime: OllamaChatOptions = {}
+  ): Promise<OllamaGeneration> {
+    const startedAt = Date.now();
+    const configured = this.configuredEffort && this.configuredEffort !== 'auto'
+      ? this.configuredEffort
+      : undefined;
+    const effort = configured ?? reasoningEffort(runtime.think);
+    const result = await this.provider.invoke({
+      model: this.model.id,
+      systemPrompt,
+      userPrompt,
+      stage: 'other',
+      output: outputFormat(format),
+      reasoning: effort === undefined ? undefined : { effort },
+      maxOutputTokens: runtime.maxTokens,
+      timeoutMs: runtime.maxDurationMs,
+      providerOptions: this.provider.kind === 'local'
+        ? {
+            ollama: {
+              numCtx: runtime.numCtx,
+              keepAlive: runtime.keepAlive,
+              think: runtime.think
+            }
+          }
+        : undefined,
+      onProgress: runtime.onStreamProgress
+        ? (progress) => runtime.onStreamProgress?.(
+            streamProgress(
+              startedAt,
+              progress.state,
+              progress.timestamp,
+              progress.eventCount,
+              progress.outputChars
+            )
+          )
+        : undefined
+    });
+    return {
+      content: result.content,
+      model: result.model,
+      doneReason: result.stopReason,
+      totalDurationNs: Math.max(0, result.latencyMs) * 1_000_000,
+      promptTokens: result.usage.inputTokens,
+      completionTokens: result.usage.outputTokens
+    };
+  }
 }
 
 class LocalExecutionBackend implements ExecutionBackend {
@@ -133,14 +231,17 @@ class AutoExecutionBackend implements ExecutionBackend {
 
 class ProjectAwareExecutionBackend implements ExecutionBackend {
   private readonly engineer: ProjectAwareEngineerBackend;
+  private readonly personalProviders: ProjectProviderRuntime;
 
   constructor(
     private readonly legacy: ExecutionBackend,
     private readonly config: LocalCoderConfig,
     ollama: OllamaClient,
-    private readonly directChat: ChatClient
+    private readonly directChat: ChatClient,
+    personalLocalProvider?: InferenceProvider
   ) {
     this.engineer = new ProjectAwareEngineerBackend(config, ollama, legacy);
+    this.personalProviders = new ProjectProviderRuntime({ localProvider: personalLocalProvider });
   }
 
   async executeTask(input: AgenticCodeTask): Promise<AgenticExecutionResult> {
@@ -153,12 +254,53 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
 
   async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
     if (input.interactionMode === 'chat' && !input.projectId) {
+      if (input.routingPolicy !== undefined) {
+        throw new Error('Routing-policy overrides require a configured Project.');
+      }
+      if (input.modelSelection?.mode === 'local-first') {
+        throw new Error('Local-first requires a Project because cloud escalation is governed by Project privacy and credential bindings.');
+      }
+
+      const selection = input.modelSelection;
+      if (selection?.mode === 'explicit') {
+        const resolved = await this.personalProviders.personalModelDefinition(
+          selection.providerId,
+          selection.modelId
+        );
+        const {
+          projectId: _projectId,
+          budgetJobId: _budgetJobId,
+          routingPolicy: _routingPolicy,
+          modelSelection: _modelSelection,
+          reasoningEffort: _reasoningEffort,
+          chatModelLimits: _chatModelLimits,
+          ...chatInput
+        } = input;
+        return (
+          await executePremiumLocalAgent(
+            new SelectedProviderChatClient(resolved.provider, resolved.model, input.reasoningEffort),
+            this.config,
+            {
+              ...chatInput,
+              workspace: '',
+              chatModelLimits: {
+                providerId: resolved.provider.id,
+                providerKind: resolved.provider.kind,
+                contextWindow: resolved.model.contextWindow,
+                maxOutputTokens: resolved.model.maxOutputTokens
+              }
+            }
+          )
+        ).result;
+      }
+
       if (
-        input.routingPolicy !== undefined ||
-        input.modelSelection !== undefined ||
-        (input.reasoningEffort !== undefined && input.reasoningEffort !== 'auto')
+        input.modelSelection !== undefined && input.modelSelection.mode !== 'auto'
       ) {
-        throw new Error('Per-task routing, model, and effort overrides require a configured Project.');
+        throw new Error('Personal Chat requires an explicit Ollama, Claude, or GPT model.');
+      }
+      if (input.reasoningEffort !== undefined && input.reasoningEffort !== 'auto') {
+        throw new Error('Choose a model before overriding effort in personal Chat.');
       }
       const {
         projectId: _projectId,
@@ -204,9 +346,16 @@ function projectAware(
   legacy: ExecutionBackend,
   config: LocalCoderConfig,
   ollama: OllamaClient,
-  directChat: ChatClient
+  directChat: ChatClient,
+  personalLocalProvider?: InferenceProvider
 ): ExecutionBackend {
-  return new ProjectAwareExecutionBackend(legacy, config, ollama, directChat);
+  return new ProjectAwareExecutionBackend(
+    legacy,
+    config,
+    ollama,
+    directChat,
+    personalLocalProvider
+  );
 }
 
 const WORKER_NOT_CONFIGURED = 'No worker URL is set. Add one in Settings → General → Windows worker.';
@@ -243,10 +392,11 @@ export function createExecutionRuntime(
   }
 
   if (config.executionMode === 'local') {
+    const localProvider = createLocalInferenceProvider(config, ollama);
     return {
       mode: 'local',
       chat: ollama,
-      execution: projectAware(localExecution, config, ollama, ollama),
+      execution: projectAware(localExecution, config, ollama, ollama, localProvider),
       health: async () => ({
         executionMode: 'local',
         ollama: await ollama.health()
@@ -255,12 +405,13 @@ export function createExecutionRuntime(
   }
 
   const remote = new RemoteWorkerClient(config);
+  const remoteLocalProvider = createLocalInferenceProvider(config, ollama, remote);
 
   if (config.executionMode === 'remote') {
     return {
       mode: 'remote',
       chat: remote,
-      execution: projectAware(remote, config, ollama, remote),
+      execution: projectAware(remote, config, ollama, remote, remoteLocalProvider),
       health: async () => ({
         executionMode: 'remote',
         workerUrl: config.remoteWorkerUrl,
@@ -275,7 +426,7 @@ export function createExecutionRuntime(
   return {
     mode: 'auto',
     chat: autoChat,
-    execution: projectAware(autoExecution, config, ollama, autoChat),
+    execution: projectAware(autoExecution, config, ollama, autoChat, remoteLocalProvider),
     health: async () => {
       try {
         return {
