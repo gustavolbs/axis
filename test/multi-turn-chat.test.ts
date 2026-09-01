@@ -168,30 +168,48 @@ test('direct chat receives the earlier conversation turns in its bounded prompt'
   assert.match(prompt, /# CURRENT USER MESSAGE\nQual é meu nome\?/);
 });
 
-test('jobs persisted before turns existed migrate into a complete chat transcript', async () => {
+test('jobs persisted before turns existed migrate Chat without changing Cowork rendering', async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-chat-migration-'));
   try {
     const createdAt = '2026-08-31T10:00:00.000Z';
     const updatedAt = '2026-08-31T10:00:03.000Z';
-    await fs.writeFile(path.join(stateDir, 'jobs.json'), JSON.stringify([{
-      id: 'legacy-chat',
-      status: 'success',
-      createdAt,
-      updatedAt,
-      input: { workspace: '', goal: 'Oi', interactionMode: 'chat' },
-      result: success('Oi', 'Olá!'),
-      rounds: 1,
-      events: []
-    }]), 'utf8');
+    await fs.writeFile(path.join(stateDir, 'jobs.json'), JSON.stringify([
+      {
+        id: 'legacy-chat',
+        status: 'success',
+        createdAt,
+        updatedAt,
+        input: { workspace: '', goal: 'Oi', interactionMode: 'chat' },
+        result: success('Oi', 'Olá!'),
+        rounds: 1,
+        events: []
+      },
+      {
+        id: 'legacy-cowork',
+        status: 'success',
+        createdAt,
+        updatedAt,
+        input: { workspace: '/tmp', goal: 'Faça a tarefa', interactionMode: 'cowork' },
+        result: { ...success('Faça a tarefa', 'Tarefa concluída.'), workspace: '/tmp' },
+        rounds: 1,
+        events: []
+      }
+    ]), 'utf8');
 
     const manager = new StandaloneJobManager({ executeEngineer: async () => success('unused', 'unused') }, stateDir);
     await manager.restore();
-    const job = manager.get('legacy-chat');
-    assert.ok(job);
-    assert.deepEqual(job.turns.map((turn) => [turn.role, turn.content]), [
+    const chat = manager.get('legacy-chat');
+    assert.ok(chat);
+    assert.deepEqual(chat.turns.map((turn) => [turn.role, turn.content]), [
       ['user', 'Oi'],
       ['assistant', 'Olá!']
     ]);
+
+    const cowork = manager.get('legacy-cowork');
+    assert.ok(cowork);
+    assert.deepEqual(cowork.turns.map((turn) => [turn.role, turn.content]), [
+      ['user', 'Faça a tarefa']
+    ], 'Cowork keeps rendering result.summary from ResultMessage, not from a synthetic turn');
   } finally {
     await fs.rm(stateDir, { recursive: true, force: true });
   }
