@@ -77,7 +77,7 @@ function backendScript() {
 }
 
 function preloadScript() {
-  return path.join(app.getAppPath(), 'desktop', 'preload.mjs');
+  return path.join(app.getAppPath(), 'desktop', 'preload.cjs');
 }
 
 function windowStatePath() {
