@@ -112,6 +112,9 @@
 
 .reference-app-shell.sidebar-collapsed .global-search-backdrop { padding-left: 56px !important; }
 [data-shell='electron'][data-platform='darwin'].reference-app-shell.sidebar-collapsed .global-search-backdrop { padding-left: 78px !important; }
+[data-shell='electron'][data-platform='darwin'].reference-app-shell.sidebar-collapsed .reference-sidebar { width: 78px !important; }
+[data-shell='electron'][data-platform='darwin'].reference-app-shell.sidebar-collapsed .reference-sidebar-titlebar { padding: 0 !important; min-height: var(--lc-titlebar-h); }
+:where(button, a, input, textarea):focus-visible { border-radius: inherit; }
 
 @media (max-width: 900px) {
   .runs-detail-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
