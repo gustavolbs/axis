@@ -77,7 +77,7 @@ export function ConsoleRoot() {
         <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')}>Runs</button>
       </nav>
       <div className="desktop-titlebar-actions">
-        <RunCancellationControl />
+        {surface === 'runs' ? <RunCancellationControl /> : null}
       </div>
     </header>
 
