@@ -32,16 +32,21 @@ test('desktop uses the direct Electron main entry without an intermediate bootst
 
 test('desktop main finishes ESM evaluation before waiting for Electron readiness', () => {
   assert.doesNotMatch(desktopMain, /await\s+app\.whenReady\(\)/);
-  assert.match(desktopMain, /void app\.whenReady\(\)\s*\n\s*\.then\(initializeDesktop\)/);
+  assert.match(desktopMain, /app\.whenReady\(\)\s*\n\s*\.then\(initializeDesktop\)/);
+  assert.match(desktopMain, /async function initializeDesktop\(\)/);
   assert.match(desktopMain, /app\.once\('will-finish-launching'/);
   assert.match(desktopMain, /app\.once\('ready'/);
   assert.match(desktopMain, /main module loaded/);
 });
 
 test('explicit single-instance lock is kept out of the macOS pre-ready path', () => {
-  assert.match(desktopMain, /function configureSingleInstanceBehavior\(\)/);
-  assert.match(desktopMain, /if \(process\.platform === 'darwin'\) \{[\s\S]*?return true;/);
-  assert.match(desktopMain, /app\.requestSingleInstanceLock\(\)/);
+  const initializeIndex = desktopMain.indexOf('async function initializeDesktop()');
+  const lockIndex = desktopMain.indexOf('app.requestSingleInstanceLock()');
+  const readinessChainIndex = desktopMain.indexOf('app.whenReady()');
+  assert.ok(initializeIndex >= 0, 'missing initializeDesktop');
+  assert.ok(lockIndex > initializeIndex, 'single-instance lock must be inside post-readiness initialization');
+  assert.ok(readinessChainIndex > lockIndex, 'readiness callback registration should occur after helper definitions');
+  assert.match(desktopMain, /if \(process\.platform !== 'darwin'\) \{[\s\S]*?app\.requestSingleInstanceLock\(\)/);
   assert.match(desktopMain, /macOS startup: relying on Launch Services/);
 });
 
