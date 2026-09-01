@@ -119,7 +119,7 @@ function resolveRemoteWorkerToken(env: NodeJS.ProcessEnv, settings: AppSettingsF
     }
   }
 
-  return settings?.legacyRemoteWorkerToken || undefined;
+  return undefined;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConfig {
