@@ -8,7 +8,7 @@ import type {
   LocalEngineerEscalation,
   LocalEngineerResult
 } from './local-engineer.js';
-import type { OllamaClient, OllamaGeneration } from './ollama.js';
+import type { OllamaChatOptions, OllamaClient, OllamaGeneration } from './ollama.js';
 import {
   executeLocalCodePlan,
   type LocalExecutionPlan,
@@ -28,7 +28,8 @@ export interface ChatClient {
   chat(
     systemPrompt: string,
     userPrompt: string,
-    format?: 'json' | Record<string, unknown>
+    format?: 'json' | Record<string, unknown>,
+    runtime?: OllamaChatOptions
   ): Promise<OllamaGeneration>;
 }
 
@@ -83,13 +84,14 @@ class AutoChatClient implements ChatClient {
   async chat(
     systemPrompt: string,
     userPrompt: string,
-    format?: 'json' | Record<string, unknown>
+    format?: 'json' | Record<string, unknown>,
+    runtime?: OllamaChatOptions
   ): Promise<OllamaGeneration> {
     try {
-      return await this.remote.chat(systemPrompt, userPrompt, format);
+      return await this.remote.chat(systemPrompt, userPrompt, format, runtime);
     } catch (error) {
       if (!(error instanceof RemoteWorkerError) || !error.unavailable) throw error;
-      return await this.local.chat(systemPrompt, userPrompt, format);
+      return await this.local.chat(systemPrompt, userPrompt, format, runtime);
     }
   }
 }
@@ -150,12 +152,6 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
   }
 
   async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
-    // A project-less Chat must bypass the engineer transport itself, not only the
-    // agent pipeline. RemoteWorkerClient.executeEngineer() snapshots a Git workspace
-    // before contacting Windows, which is invalid for a conversation with no folder.
-    // Route straight to the runtime chat client so remote mode uses /v1/chat and never
-    // invokes prepareRemoteWorkspace(). Project-scoped Chat still goes through the
-    // project-aware backend so its provider/model/privacy policy remains enforced.
     if (input.interactionMode === 'chat' && !input.projectId) {
       if (
         input.routingPolicy !== undefined ||
@@ -170,12 +166,18 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
         routingPolicy: _routingPolicy,
         modelSelection: _modelSelection,
         reasoningEffort: _reasoningEffort,
+        chatModelLimits: _chatModelLimits,
         ...chatInput
       } = input;
       return (
         await executePremiumLocalAgent(this.directChat, this.config, {
           ...chatInput,
-          workspace: ''
+          workspace: '',
+          chatModelLimits: {
+            providerId: 'ollama',
+            providerKind: 'local',
+            contextWindow: this.config.ollamaNumCtx ?? 16_384
+          }
         })
       ).result;
     }
@@ -209,13 +211,6 @@ function projectAware(
 
 const WORKER_NOT_CONFIGURED = 'No worker URL is set. Add one in Settings → General → Windows worker.';
 
-/**
- * Stands in for the worker until a URL exists. RemoteWorkerClient throws from
- * its constructor, and the runtime builds it in a class field initializer — so
- * an unconfigured worker used to kill the process before any window opened,
- * which also made the settings screen that fixes it unreachable. Fail per call
- * instead, with a message that says what to do.
- */
 class UnconfiguredWorkerBackend implements ExecutionBackend, ChatClient {
   private fail(): never {
     throw new RemoteWorkerError(WORKER_NOT_CONFIGURED, true);
