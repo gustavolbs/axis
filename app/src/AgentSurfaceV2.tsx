@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   CircleStop,
   Code,
+  Copy,
   CornerDownLeft,
   FileText,
   FlaskConical,
@@ -21,13 +22,17 @@ import {
   LoaderCircle,
   Pencil,
   Plus,
+  RotateCcw,
   Sparkles,
+  Square,
+  Volume2,
   X,
   Zap
 } from 'lucide-react';
 
 import type { AdminProject, ModelSelection } from './app-types.js';
 import { FolderField } from './FolderField.js';
+import { MarkdownMessage, stripMarkdownForSpeech } from './MarkdownMessage.js';
 import { displayProfileName } from './native.js';
 
 type ReasoningEffortSelection = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -36,18 +41,8 @@ type ModelMenuView = 'closed' | 'models' | 'effort';
 type ProviderMode = 'ollama' | 'anthropic' | 'openai' | 'local-first';
 
 const NEW_TASK_ID = '__new__';
-
-/**
- * Cowork is bound to a folder: it needs a project or a workspace path before it
- * can run anything. Chat is a loose conversation — a project is optional.
- */
 type ComposerMode = 'chat' | 'cowork';
 
-/**
- * Typing this in the composer renders the decision picker with canned data, so
- * the interaction can be checked without waiting for a run to actually need a
- * decision. It never reaches the backend.
- */
 const MOCK_DECISION_COMMAND = /^\/mock[-\s]?decision$/i;
 
 const MOCK_DECISION: DecisionRequest = {
@@ -296,6 +291,7 @@ export function AgentSurfaceV2() {
   const [decisionSelections, setDecisionSelections] = useState<Record<string, string>>({});
   const [guidance, setGuidance] = useState('');
   const [profileName, setProfileName] = useState<string>();
+  const [editingTurnId, setEditingTurnId] = useState<string>();
 
   const active = activeId === NEW_TASK_ID ? undefined : jobs.find((job) => job.id === activeId);
   const pendingDecision = mockDecision
@@ -337,6 +333,10 @@ export function AgentSurfaceV2() {
     });
     return () => events.close();
   }, []);
+
+  useEffect(() => {
+    setEditingTurnId(undefined);
+  }, [activeId]);
 
   useEffect(() => {
     if (!error) return;
@@ -437,16 +437,9 @@ export function AgentSurfaceV2() {
       return;
     }
 
-    // With no project, fall back to the default workspace from Settings —
-    // which is what that setting is for.
     const defaultWorkspace = localStorage.getItem('local-coder.workspace')?.trim() ?? '';
     const effectiveWorkspace = selectedProject?.workspace ?? (workspace.trim() || defaultWorkspace);
-    // Chat is one inference that reads no files, so it sends without a folder.
-    // Cowork acts on a folder and cannot.
     if (!effectiveWorkspace && mode === 'cowork') {
-      // Reopening the project menu with no message read as the picker
-      // "jumping" for no reason. Say what is missing and open the field that
-      // fixes it.
       setModelMenu('closed');
       setProjectMenu(false);
       setExtrasOpen(true);
@@ -498,7 +491,6 @@ export function AgentSurfaceV2() {
         body: JSON.stringify({ message: goal.trim() })
       });
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
-      // Keep the active conversation open: a follow-up is another turn, not a new job.
       setGoal('');
       setExtrasOpen(false);
       setModelMenu('closed');
@@ -510,8 +502,44 @@ export function AgentSurfaceV2() {
     }
   }
 
+  async function retryChatTurn(turnId: string, message?: string) {
+    if (!active || active.input.interactionMode !== 'chat' || !canFollowUp(active.status)) return;
+    setSubmitting(true);
+    setError(undefined);
+    try {
+      const { job } = await api<{ job: Job }>(`/api/jobs/${active.id}/turns/${turnId}/retry`, {
+        method: 'POST',
+        body: JSON.stringify(message === undefined ? {} : { message })
+      });
+      setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
+      setEditingTurnId(undefined);
+      setGoal('');
+    } catch (next) {
+      setError(next instanceof Error ? next.message : String(next));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function beginEditTurn(turn: JobTurn) {
+    if (!active || active.input.interactionMode !== 'chat' || !canFollowUp(active.status)) return;
+    setEditingTurnId(turn.id);
+    setGoal(turn.content);
+    setMode('chat');
+    localStorage.setItem('local-coder.composer-mode', 'chat');
+  }
+
+  function cancelEditTurn() {
+    setEditingTurnId(undefined);
+    setGoal('');
+  }
+
   async function sendCurrentMessage() {
     if (!goal.trim()) return;
+    if (editingTurnId && active?.input.interactionMode === 'chat') {
+      await retryChatTurn(editingTurnId, goal.trim());
+      return;
+    }
     if (active?.input.interactionMode === 'chat') {
       if (canFollowUp(active.status)) await followUpChat();
       return;
@@ -582,10 +610,9 @@ export function AgentSurfaceV2() {
   }
 
   function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault();
-      void sendCurrentMessage();
-    }
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    void sendCurrentMessage();
   }
 
   return <div className="lc-agent-agent-shell lc-agent-shell">
@@ -604,10 +631,10 @@ export function AgentSurfaceV2() {
         setGuidance={setGuidance}
         sendGuidance={sendGuidance}
         sendEscalation={sendEscalation}
+        onEditTurn={beginEditTurn}
+        onResendTurn={(turnId) => retryChatTurn(turnId)}
       />}
 
-      {/* One render site for both the real request and the mock, so what you
-          check with /mock-decision is the same component that ships. */}
       {pendingDecision ? <DecisionPicker
         request={pendingDecision}
         onAnswer={(questionId, value) => {
@@ -660,14 +687,13 @@ export function AgentSurfaceV2() {
         onKeyDown={onComposerKeyDown}
         mode={mode}
         chooseMode={chooseMode}
+        editingMessage={Boolean(editingTurnId)}
+        cancelEditing={cancelEditTurn}
         placeholder={pendingDecision ? 'Or answer directly…' : undefined}
       />
 
-      {/* The legend belongs under the composer: "or type below" means the
-          composer, so it cannot live inside the card above it. */}
       {pendingDecision ? <DecisionHint request={pendingDecision} /> : null}
 
-      {/* Chat offers starting points; Cowork says which folder it will act on. */}
       {!active && !pendingDecision && mode === 'chat' ? <Suggestions onPick={setGoal} /> : null}
       {!active && mode === 'cowork' ? <p className="lc-agent-cowork-hint">
         {selectedProject ? `Cowork runs in ${selectedProject.name}.` : workspace.trim() ? `Cowork runs in ${workspace.trim()}.` : 'Pick a project or folder for Cowork to act on.'}
@@ -733,6 +759,8 @@ function Composer(props: {
   sendMessage: () => Promise<void>;
   cancelActive: () => Promise<void>;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  editingMessage: boolean;
+  cancelEditing: () => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -742,8 +770,18 @@ function Composer(props: {
     element.style.height = `${Math.min(element.scrollHeight, Math.min(320, window.innerHeight * 0.4))}px`;
   }, [props.goal]);
 
+  useEffect(() => {
+    if (!props.editingMessage) return;
+    inputRef.current?.focus();
+    inputRef.current?.setSelectionRange(props.goal.length, props.goal.length);
+  }, [props.editingMessage]);
+
   return <div className="lc-agent-composer-wrap">
     <div className="lc-agent-composer">
+      {props.editingMessage ? <div className="composer-editing-banner">
+        <span><Pencil size={13} />Editing message</span>
+        <button onClick={props.cancelEditing}>Cancel</button>
+      </div> : null}
       {(props.selectedProject || props.workspace || props.context) ? <div className="composer-context-chips">
         {props.selectedProject ? <span><FolderGit2 size={13} />{props.selectedProject.name}</span> : props.workspace ? <span><FolderGit2 size={13} />{props.workspace}<button aria-label="Remove workspace" onClick={() => props.setWorkspace('')}><X size={11} /></button></span> : null}
         {props.context ? <span><FileText size={13} />Context<button aria-label="Remove context" onClick={() => props.setContext('')}><X size={11} /></button></span> : null}
@@ -889,6 +927,76 @@ function ModelMenu(props: {
   </div>;
 }
 
+function MessageActions(props: {
+  turn: JobTurn;
+  canModify?: boolean;
+  onEdit?: () => void;
+  onResend?: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [reading, setReading] = useState(false);
+  const canRead = props.turn.role === 'assistant' &&
+    typeof window !== 'undefined' &&
+    'speechSynthesis' in window &&
+    typeof SpeechSynthesisUtterance !== 'undefined';
+
+  useEffect(() => () => {
+    if (reading) window.speechSynthesis?.cancel();
+  }, [reading]);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(props.turn.content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1_200);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  function toggleRead() {
+    if (!canRead) return;
+    if (reading) {
+      window.speechSynthesis.cancel();
+      setReading(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(stripMarkdownForSpeech(props.turn.content));
+    utterance.onend = () => setReading(false);
+    utterance.onerror = () => setReading(false);
+    setReading(true);
+    window.speechSynthesis.speak(utterance);
+  }
+
+  return <div className="message-actions" aria-label={`${props.turn.role} message actions`}>
+    {props.turn.role === 'user' && props.canModify && props.onEdit ? <button onClick={props.onEdit} title="Edit message" aria-label="Edit message"><Pencil size={14} /></button> : null}
+    {props.turn.role === 'user' && props.canModify && props.onResend ? <button onClick={props.onResend} title="Send again" aria-label="Send again"><RotateCcw size={14} /></button> : null}
+    <button onClick={() => void copy()} title={copied ? 'Copied' : 'Copy'} aria-label={copied ? 'Copied' : 'Copy message'}><Copy size={14} /></button>
+    {canRead ? <button onClick={toggleRead} title={reading ? 'Stop reading' : 'Read aloud'} aria-label={reading ? 'Stop reading' : 'Read aloud'}>{reading ? <Square size={13} /> : <Volume2 size={14} />}</button> : null}
+  </div>;
+}
+
+function chatProgress(state?: string, model?: string): { title: string; detail: string } {
+  const name = model ?? 'Ollama';
+  if (state === 'thinking') {
+    return {
+      title: 'Thinking',
+      detail: `${name} is working through your message. Hidden reasoning stays private.`
+    };
+  }
+  if (state === 'generating') {
+    return {
+      title: 'Writing',
+      detail: `${name} is composing the answer from this conversation.`
+    };
+  }
+  return {
+    title: 'Preparing',
+    detail: `${name} is preparing the response…`
+  };
+}
+
 function TaskThread(props: {
   job: Job;
   currentInference?: NonNullable<WorkerStatus['inference']>['current'];
@@ -896,6 +1004,8 @@ function TaskThread(props: {
   setGuidance: (value: string) => void;
   sendGuidance: () => Promise<void>;
   sendEscalation: (providerId: string, modelId: string, reasoningEffort?: JobReasoningEffort) => Promise<void>;
+  onEditTurn: (turn: JobTurn) => void;
+  onResendTurn: (turnId: string) => Promise<void>;
 }) {
   const { job, currentInference } = props;
   const working = isWorking(job.status);
@@ -905,7 +1015,7 @@ function TaskThread(props: {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [job.turns.length]);
+  }, [job.turns.length, job.status]);
 
   const terminalAssistant =
     working ||
@@ -913,17 +1023,29 @@ function TaskThread(props: {
     job.status === 'error' ||
     job.status === 'cancelled' ||
     (job.status === 'success' && job.input.interactionMode !== 'chat');
+  const progress = job.input.interactionMode === 'chat'
+    ? chatProgress(currentInference?.streamState, currentInference?.model)
+    : undefined;
 
   return <div className="lc-agent-thread" aria-live="polite">
     {job.turns.map((turn, index) => turn.role === 'user'
       ? <div className="thread-user-turn" key={turn.id}>
-          <div className="user-message">{turn.content}</div>
+          <div className="message-turn-shell user-turn-shell">
+            <div className="user-message">{turn.content}</div>
+            <MessageActions
+              turn={turn}
+              canModify={!working && canFollowUp(job.status)}
+              onEdit={() => props.onEditTurn(turn)}
+              onResend={() => void props.onResendTurn(turn.id)}
+            />
+          </div>
           {index === 0 && job.input.context ? <div className="user-context-note">Context attached</div> : null}
         </div>
       : <div className="thread-assistant-turn" key={turn.id}>
           <div className="assistant-mark"><Sparkles size={18} strokeWidth={1.55} /></div>
-          <div className="assistant-body">
-            <div className="assistant-result-message"><p className="assistant-result-copy">{turn.content}</p></div>
+          <div className="assistant-body message-turn-shell">
+            <div className="assistant-result-message"><MarkdownMessage content={turn.content} /></div>
+            <MessageActions turn={turn} />
           </div>
         </div>)}
 
@@ -931,8 +1053,8 @@ function TaskThread(props: {
       <div className={`assistant-mark ${working ? 'working' : ''}`}><Sparkles size={18} strokeWidth={1.55} /></div>
       <div className="assistant-body">
         {working ? <div className="assistant-stream-state">
-          <div className="assistant-stream-title"><LoaderCircle className="assistant-spinner" size={16} /><strong>{currentInference?.streamState === 'generating' ? 'Writing' : currentInference?.streamState === 'reasoning' ? 'Thinking' : job.input.interactionMode === 'chat' ? 'Replying' : 'Working'}</strong></div>
-          <p>{latestEvent?.title ?? (job.input.interactionMode === 'chat' ? 'Starting the response…' : 'Starting the task…')}</p>
+          <div className="assistant-stream-title"><LoaderCircle className="assistant-spinner" size={16} /><strong>{progress?.title ?? (currentInference?.streamState === 'generating' ? 'Writing' : currentInference?.streamState === 'thinking' ? 'Thinking' : 'Working')}</strong></div>
+          <p>{progress?.detail ?? latestEvent?.title ?? 'Starting the task…'}</p>
           <div className="assistant-stream-meta">{currentInference?.stage ? <span>{currentInference.stage}</span> : null}{currentInference?.model ? <span>{currentInference.model}</span> : null}{currentInference?.runningMs ? <span>{duration(currentInference.runningMs)}</span> : null}</div>
         </div> : null}
         {job.status === 'waiting-guidance' && result?.escalation ? <GuidanceMessage job={job} guidance={props.guidance} setGuidance={props.setGuidance} onContinue={props.sendGuidance} onEscalate={props.sendEscalation} /> : null}
@@ -945,11 +1067,6 @@ function TaskThread(props: {
   </div>;
 }
 
-/**
- * One question at a time, keyboard-first: ↑/↓ move, 1–9 jump straight to an
- * option, Enter picks, Esc dismisses. The last row is a free-text answer, for
- * when none of the options is what the person meant.
- */
 function DecisionPicker(props: {
   request: DecisionRequest;
   onAnswer: (questionId: string, value: string) => void;
@@ -958,15 +1075,12 @@ function DecisionPicker(props: {
   const [index, setIndex] = useState(0);
   const [active, setActive] = useState(0);
   const [custom, setCustom] = useState('');
-  /** While the free-text row has focus it is the answer, so no option row may
-   *  also look selected — two highlighted rows at once read as a glitch. */
   const [customFocused, setCustomFocused] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   const question = props.request.questions[index];
   const isLast = index >= props.request.questions.length - 1;
 
-  // A new question resets the cursor, otherwise it points at the wrong row.
   useEffect(() => {
     setActive(question?.recommendedOptionId
       ? Math.max(0, question.options.findIndex((option) => option.id === question.recommendedOptionId))
@@ -1000,7 +1114,6 @@ function DecisionPicker(props: {
       props.onDismiss();
       return;
     }
-    // Number keys jump to an option, the way the reference picker does.
     const digit = Number.parseInt(event.key, 10);
     if (Number.isInteger(digit) && digit >= 1 && digit <= count) {
       event.preventDefault();
@@ -1056,10 +1169,6 @@ function DecisionPicker(props: {
   </div>;
 }
 
-/**
- * The shortcut legend sits below the composer, not inside the card — the last
- * line it refers to ("or type below") is the composer itself.
- */
 function DecisionHint({ request }: { request: DecisionRequest }) {
   return <p className="decision-picker-hint" aria-hidden="true">
     <kbd>↑</kbd><kbd>↓</kbd><span>to navigate</span>
