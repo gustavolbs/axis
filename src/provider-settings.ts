@@ -2,11 +2,26 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { ProviderCapabilityKind } from './providers/types.js';
+
 export interface ModelRoutingProfile {
   enabled?: boolean;
   frontier?: boolean;
   qualityScore?: number;
 }
+
+export interface ProviderCapabilityAccess {
+  enabled: boolean;
+  /** Undefined/empty means every id in this enabled class is allowed. */
+  allowIds?: string[];
+}
+
+export type ProviderCapabilityPolicy = Record<ProviderCapabilityKind, ProviderCapabilityAccess>;
+
+export type ProviderCapabilityPolicyPatch = Partial<Record<
+  ProviderCapabilityKind,
+  Partial<ProviderCapabilityAccess>
+>>;
 
 export interface ProviderRuntimeSettings {
   enabled: boolean;
@@ -14,6 +29,8 @@ export interface ProviderRuntimeSettings {
   defaultModelId?: string;
   /** Undefined means unlimited provider API spend. */
   monthlyBudgetUsd?: number;
+  /** Central policy inherited by every provider invocation. */
+  capabilities: ProviderCapabilityPolicy;
   models: Record<string, ModelRoutingProfile>;
 }
 
@@ -23,6 +40,7 @@ export interface ProviderRuntimeSettingsPatch {
   defaultModelId?: string | null;
   /** `null` disables the provider budget and returns usage to Unlimited. */
   monthlyBudgetUsd?: number | null;
+  capabilities?: ProviderCapabilityPolicyPatch;
   models?: Record<string, ModelRoutingProfile>;
 }
 
@@ -33,6 +51,20 @@ interface ProviderSettingsFile {
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CAPABILITY_KINDS: ProviderCapabilityKind[] = ['skills', 'abilities', 'mcps', 'plugins', 'tools'];
+
+/**
+ * Pure prompt-level skills/abilities are enabled by default. Anything that can
+ * cross a process/network/tool boundary is opt-in so a newly added adapter never
+ * silently gains authority for every model.
+ */
+export const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilityPolicy = {
+  skills: { enabled: true },
+  abilities: { enabled: true },
+  mcps: { enabled: false },
+  plugins: { enabled: false },
+  tools: { enabled: false }
+};
 
 function safeProviderId(value: string): string {
   const trimmed = value.trim();
@@ -44,6 +76,14 @@ function modelId(value: string): string {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > 240 || /[\r\n\0]/.test(trimmed)) {
     throw new Error('Model id must be 1-240 characters without control line breaks.');
+  }
+  return trimmed;
+}
+
+function capabilityId(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 240 || /[\r\n\0]/.test(trimmed)) {
+    throw new Error('Capability id must be 1-240 characters without control line breaks.');
   }
   return trimmed;
 }
@@ -68,6 +108,32 @@ function normalizeProfile(input: ModelRoutingProfile = {}): ModelRoutingProfile 
   };
 }
 
+function normalizeCapabilityAccess(
+  kind: ProviderCapabilityKind,
+  input: Partial<ProviderCapabilityAccess> | undefined,
+  fallback: ProviderCapabilityAccess
+): ProviderCapabilityAccess {
+  const allowIds = input?.allowIds === undefined
+    ? fallback.allowIds
+    : [...new Set(input.allowIds.map(capabilityId))].sort();
+  return {
+    enabled: input?.enabled ?? fallback.enabled,
+    allowIds: allowIds && allowIds.length > 0 ? allowIds : undefined
+  };
+}
+
+function normalizeCapabilities(
+  input: ProviderCapabilityPolicyPatch | ProviderCapabilityPolicy | undefined,
+  fallback: ProviderCapabilityPolicy = DEFAULT_PROVIDER_CAPABILITIES
+): ProviderCapabilityPolicy {
+  const source = input ?? {};
+  const result = {} as ProviderCapabilityPolicy;
+  for (const kind of CAPABILITY_KINDS) {
+    result[kind] = normalizeCapabilityAccess(kind, source[kind], fallback[kind]);
+  }
+  return result;
+}
+
 function normalizeSettings(input: Partial<ProviderRuntimeSettings> = {}): ProviderRuntimeSettings {
   const models: Record<string, ModelRoutingProfile> = {};
   for (const [id, profile] of Object.entries(input.models ?? {})) {
@@ -81,6 +147,7 @@ function normalizeSettings(input: Partial<ProviderRuntimeSettings> = {}): Provid
     enabled: input.enabled ?? true,
     defaultModelId,
     monthlyBudgetUsd: monthlyBudget(input.monthlyBudgetUsd),
+    capabilities: normalizeCapabilities(input.capabilities),
     models
   };
 }
@@ -105,7 +172,7 @@ export class ProviderSettingsStore {
   update(providerId: string, patch: ProviderRuntimeSettingsPatch): ProviderRuntimeSettings {
     const id = safeProviderId(providerId);
     const state = this.read();
-    const current = state.providers[id] ?? { enabled: true, models: {} };
+    const current = state.providers[id] ?? normalizeSettings();
     const mergedModels = patch.models
       ? { ...current.models, ...patch.models }
       : current.models;
@@ -123,6 +190,7 @@ export class ProviderSettingsStore {
           : patch.monthlyBudgetUsd === null
             ? undefined
             : patch.monthlyBudgetUsd,
+      capabilities: normalizeCapabilities(patch.capabilities, current.capabilities),
       models: mergedModels
     });
     state.providers[id] = next;
