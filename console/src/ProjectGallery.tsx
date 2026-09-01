@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Check, ChevronDown, Folder, MoreHorizontal, Pin, Plus, Search, X } from 'lucide-react';
+import { Check, ChevronDown, Folder, Info, MoreHorizontal, Pin, Search, X } from 'lucide-react';
 
 import type { AdminProject } from './AdminPanel.js';
+import { FolderField } from './FolderField.js';
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -41,6 +42,7 @@ export function ProjectGallery({
   const [sort, setSort] = useState<SortMode>('updated');
   const [sortOpen, setSortOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [workspace, setWorkspace] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -59,12 +61,17 @@ export function ProjectGallery({
     return [...filtered].sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : b.updatedAt.localeCompare(a.updatedAt));
   }, [projects, query, sort]);
 
+  function closeCreate() {
+    setCreating(false);
+    setWorkspace('');
+  }
+
   async function createProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const name = String(form.get('name') ?? '').trim();
-    const workspace = String(form.get('workspace') ?? '').trim();
-    if (!name || !workspace) return;
+    const folder = workspace.trim();
+    if (!name || !folder) return;
     setBusy(true);
     setError(undefined);
     try {
@@ -73,7 +80,7 @@ export function ProjectGallery({
         method: 'POST',
         body: JSON.stringify({
           name,
-          workspace,
+          workspace: folder,
           organizationId,
           organizationName: name,
           defaultRoutingPolicy: 'local-first',
@@ -84,7 +91,7 @@ export function ProjectGallery({
       });
       await load();
       window.dispatchEvent(new CustomEvent('local-coder:projects-changed'));
-      setCreating(false);
+      closeCreate();
       onOpenProject(project);
     } catch (next) {
       setError(next instanceof Error ? next.message : String(next));
@@ -93,9 +100,9 @@ export function ProjectGallery({
     }
   }
 
-  return <section className="reference-projects-page" aria-label="Projects">
-    <header className="reference-projects-header">
-      <h1>Projects</h1>
+  return <section className="reference-projects-page page-shell" aria-label="Projects">
+    <header className="reference-projects-header page-header">
+      <h1 className="page-title">Projects</h1>
       <div className="reference-project-actions">
         <label className="reference-project-search">
           <Search size={16} />
@@ -108,7 +115,7 @@ export function ProjectGallery({
             <button className={sort === 'name' ? 'selected' : ''} onClick={() => { setSort('name'); setSortOpen(false); }}><span>Name</span>{sort === 'name' ? <Check size={14} /> : null}</button>
           </div> : null}
         </div>
-        <button className="reference-primary-button" type="button" onClick={() => setCreating(true)}>New project</button>
+        <button className="reference-primary-button btn-primary" type="button" onClick={() => setCreating(true)}>New project</button>
       </div>
     </header>
 
@@ -126,14 +133,14 @@ export function ProjectGallery({
       {visible.length === 0 ? <div className="reference-project-empty">No projects found.</div> : null}
     </div>
 
-    {creating ? <div className="reference-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setCreating(false); }}>
+    {creating ? <div className="reference-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) closeCreate(); }}>
       <form className="reference-project-modal" onSubmit={(event) => void createProject(event)}>
-        <div className="reference-modal-title"><h2>Create a project</h2><button type="button" onClick={() => setCreating(false)} aria-label="Close"><X size={18} /></button></div>
+        <div className="reference-modal-title"><h2 className="dialog-title">Create a project</h2><button type="button" onClick={closeCreate} aria-label="Close"><X size={18} /></button></div>
         <label><span>What are you working on?</span><input name="name" required autoFocus placeholder="Give your project a name" /></label>
-        <label><span>Project folder</span><input name="workspace" required placeholder="/Users/you/code/project" /></label>
+        <label><span>Project folder</span><FolderField value={workspace} onChange={setWorkspace} name="workspace" required /></label>
         <label className="reference-modal-optional"><span>Organization <small>optional</small></span><input name="organizationId" placeholder="e.g. acme" /></label>
-        <div className="reference-modal-folder-hint"><Plus size={16} /><span>The folder is used as the agent's isolated workspace.</span></div>
-        <div className="reference-modal-actions"><button type="button" onClick={() => setCreating(false)}>Cancel</button><button className="reference-primary-button" disabled={busy}>{busy ? 'Creating…' : 'Create project'}</button></div>
+        <div className="reference-modal-folder-hint"><Info size={14} /><span>The folder is used as the agent's isolated workspace.</span></div>
+        <div className="reference-modal-actions"><button className="btn-secondary" type="button" onClick={closeCreate}>Cancel</button><button className="reference-primary-button btn-primary" disabled={busy || !workspace.trim()}>{busy ? 'Creating…' : 'Create project'}</button></div>
       </form>
     </div> : null}
   </section>;
