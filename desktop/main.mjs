@@ -27,6 +27,10 @@ function log(message, detail) {
   console.log(`[Local Coder desktop] ${message}${suffix}`);
 }
 
+log('main module loaded', { pid: process.pid, platform: process.platform, arch: process.arch, electron: process.versions.electron });
+app.once('will-finish-launching', () => log('will-finish-launching'));
+app.once('ready', () => log('ready event received'));
+
 function configuredPort() {
   const raw = process.env.LOCAL_CODER_CONSOLE_PORT?.trim();
   if (!raw) return DEFAULT_PORT;
@@ -377,43 +381,53 @@ async function recoverBackendAfterExit() {
   }
 }
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) {
-  log('another Local Coder desktop instance already owns the single-instance lock');
-  app.quit();
+app.on('before-quit', () => {
+  quitting = true;
+  if (saveBoundsTimer) {
+    clearTimeout(saveBoundsTimer);
+    saveBoundsTimer = undefined;
+  }
+  persistWindowState(mainWindow);
+  void stopOwnedBackend();
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('activate', () => {
+  if (!mainWindow && backendUrl) mainWindow = createMainWindow(backendUrl);
+});
+
+await app.whenReady();
+app.setName('Local Coder');
+log('Electron ready', { packaged: app.isPackaged, version: process.versions.electron });
+session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+session.defaultSession.setPermissionCheckHandler(() => false);
+
+let continueStartup = true;
+if (process.platform !== 'darwin') {
+  log('requesting explicit single-instance lock');
+  const hasSingleInstanceLock = app.requestSingleInstanceLock();
+  log('single-instance lock result', { acquired: hasSingleInstanceLock });
+  if (!hasSingleInstanceLock) {
+    continueStartup = false;
+    log('another Local Coder desktop instance already owns the single-instance lock');
+    app.quit();
+  } else {
+    app.on('second-instance', () => {
+      log('second instance requested; focusing existing window');
+      if (!mainWindow) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    });
+  }
 } else {
-  app.on('second-instance', () => {
-    log('second instance requested; focusing existing window');
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  });
+  log('macOS startup: relying on Launch Services for normal app single-instance behavior');
+}
 
-  app.on('before-quit', () => {
-    quitting = true;
-    if (saveBoundsTimer) {
-      clearTimeout(saveBoundsTimer);
-      saveBoundsTimer = undefined;
-    }
-    persistWindowState(mainWindow);
-    void stopOwnedBackend();
-  });
-
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
-  });
-
-  app.on('activate', () => {
-    if (!mainWindow && backendUrl) mainWindow = createMainWindow(backendUrl);
-  });
-
-  await app.whenReady();
-  app.setName('Local Coder');
-  log('Electron ready', { packaged: app.isPackaged, version: process.versions.electron });
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  session.defaultSession.setPermissionCheckHandler(() => false);
-
+if (continueStartup) {
   const url = await startWithRecovery();
   if (!url) {
     app.quit();
