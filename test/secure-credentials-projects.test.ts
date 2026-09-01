@@ -4,16 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { readAppSettings, writeAppSettings } from '../src/app-config.js';
 import { loadConfig } from '../src/config.js';
 import {
   CredentialManager,
   CredentialProfileStore,
   type CredentialProfile
 } from '../src/credential-store.js';
-import {
-  readControlPlaneConfig,
-  writeControlPlaneConfig
-} from '../src/control-plane-config.js';
 import {
   ProjectStore,
   assertProjectCredentialIsolation,
@@ -270,37 +267,36 @@ test('cloud transmission requires explicit project permission even if provider i
   );
 });
 
-test('control-plane v2 writer strips legacy inline worker token while legacy files remain readable', () => {
-  const dir = tempDir('control-plane');
-  const file = path.join(dir, 'control-plane.json');
-  const previous = process.env.LOCAL_CODER_CONTROL_PLANE_CONFIG_PATH;
-  process.env.LOCAL_CODER_CONTROL_PLANE_CONFIG_PATH = file;
+test('standalone settings persist worker credential references but never raw worker tokens', () => {
+  const dir = tempDir('app-settings');
+  const file = path.join(dir, 'settings.json');
+  const previous = process.env.LOCAL_CODER_SETTINGS_PATH;
+  process.env.LOCAL_CODER_SETTINGS_PATH = file;
   try {
-    writeControlPlaneConfig({
+    writeAppSettings({
       executionMode: 'remote',
       remoteWorkerUrl: 'http://windows-worker:7337',
-      remoteWorkerToken: 'legacy-worker-secret',
       remoteWorkerCredentialRef: 'remote-worker/default',
       model: 'qwen3.8:27b'
     });
-    const raw = fs.readFileSync(file, 'utf8');
-    assert.equal(raw.includes('legacy-worker-secret'), false);
-    assert.equal(raw.includes('remoteWorkerToken'), false);
-    const modern = readControlPlaneConfig();
-    assert.equal(modern?.version, 2);
-    assert.equal(modern?.remoteWorkerCredentialRef, 'remote-worker/default');
 
-    fs.writeFileSync(file, JSON.stringify({
-      executionMode: 'remote',
-      remoteWorkerUrl: 'http://legacy:7337',
-      remoteWorkerToken: 'legacy-worker-secret',
-      model: 'qwen3.8:27b'
-    }));
-    const legacy = readControlPlaneConfig();
-    assert.equal(legacy?.remoteWorkerToken, 'legacy-worker-secret');
-    assert.equal(loadConfig({}).remoteWorkerToken, 'legacy-worker-secret');
+    const raw = fs.readFileSync(file, 'utf8');
+    assert.equal(raw.includes('remoteWorkerToken'), false);
+    assert.equal(raw.includes('legacy-worker-secret'), false);
+    const settings = readAppSettings();
+    assert.equal(settings?.version, 1);
+    assert.equal(settings?.executionMode, 'remote');
+    assert.equal(settings?.remoteWorkerCredentialRef, 'remote-worker/default');
+    assert.equal(settings?.remoteWorkerUrl, 'http://windows-worker:7337');
+
+    const explicit = loadConfig({
+      LOCAL_CODER_SETTINGS_PATH: file,
+      LOCAL_CODER_REMOTE_WORKER_TOKEN: 'ephemeral-worker-secret'
+    });
+    assert.equal(explicit.remoteWorkerToken, 'ephemeral-worker-secret');
+    assert.equal(fs.readFileSync(file, 'utf8').includes('ephemeral-worker-secret'), false);
   } finally {
-    if (previous === undefined) delete process.env.LOCAL_CODER_CONTROL_PLANE_CONFIG_PATH;
-    else process.env.LOCAL_CODER_CONTROL_PLANE_CONFIG_PATH = previous;
+    if (previous === undefined) delete process.env.LOCAL_CODER_SETTINGS_PATH;
+    else process.env.LOCAL_CODER_SETTINGS_PATH = previous;
   }
 });
