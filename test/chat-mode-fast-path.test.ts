@@ -4,9 +4,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { LocalCoderConfig } from '../src/config.js';
+import { createExecutionRuntime } from '../src/execution-runtime.js';
 import type { LocalEngineerResult } from '../src/local-engineer.js';
 import type { OllamaClient, OllamaGeneration } from '../src/ollama.js';
 import { executePremiumLocalAgent } from '../src/premium-agent.js';
+import { REMOTE_WORKER_PROTOCOL_VERSION } from '../src/remote-protocol.js';
 import { StandaloneJobManager } from '../src/standalone-job-manager.js';
 
 function success(summary: string): LocalEngineerResult {
@@ -61,6 +63,61 @@ test('chat mode performs exactly one conversational inference without touching a
   assert.deepEqual(execution.result.validation, []);
   assert.equal(execution.result.escalation, undefined);
   assert.deepEqual(execution.changes, []);
+});
+
+test('remote project-less chat uses /v1/chat and never enters remote engineer workspace transport', async () => {
+  const originalFetch = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+    urls.push(url);
+    assert.equal(url, 'http://worker.test/v1/chat');
+    assert.equal(init?.method, 'POST');
+    const body = JSON.parse(String(init?.body)) as {
+      protocolVersion?: number;
+      userPrompt?: string;
+    };
+    assert.equal(body.protocolVersion, REMOTE_WORKER_PROTOCOL_VERSION);
+    assert.equal(body.userPrompt, 'Oi, tudo bem?');
+    return new Response(JSON.stringify({
+      protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+      generation: {
+        model: 'qwen3.8:27b',
+        content: 'Tudo certo!'
+      }
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+
+  try {
+    const config = {
+      executionMode: 'remote',
+      remoteWorkerUrl: 'http://worker.test',
+      remoteWorkerTimeoutMs: 5_000,
+      model: 'qwen3.8:27b',
+      ollamaNumCtx: 16_384,
+      fastModelKeepAlive: '90s',
+      reportMaxTokens: 3_072
+    } as LocalCoderConfig;
+    const runtime = createExecutionRuntime(config, {} as OllamaClient);
+    const result = await runtime.execution.executeEngineer({
+      interactionMode: 'chat',
+      workspace: '',
+      goal: 'Oi, tudo bem?'
+    });
+
+    assert.equal(result.status, 'success');
+    assert.equal(result.summary, 'Tudo certo!');
+    assert.deepEqual(urls, ['http://worker.test/v1/chat']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('standalone chat jobs preserve interaction mode and cannot enter guidance checkpoints', async () => {
