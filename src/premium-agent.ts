@@ -21,7 +21,10 @@ import { assessEngineeringQuality, type QualityAssessment } from './quality-gate
 import { ResearchBroker, type ResearchOutcome } from './research-broker.js';
 import { resolveWorkspace } from './workspace.js';
 
-type PremiumAgentInput = LocalEngineerInput & { repoMemoryScopeKey?: string };
+type PremiumAgentInput = LocalEngineerInput & {
+  repoMemoryScopeKey?: string;
+  interactionMode?: 'chat' | 'cowork';
+};
 type AgentModel = Pick<OllamaClient, 'chat'>;
 
 export interface PremiumDecisionOption {
@@ -177,6 +180,15 @@ Research policy:
 If a deliberate Architect/Critic/Judge result is supplied, use it as additional structured evidence. Do not blindly accept it: reconcile it against current repository evidence and user constraints.
 Do not edit code. Return only the required JSON.`;
 
+const DIRECT_CHAT_SYSTEM_PROMPT = `You are Local Coder's conversational assistant.
+This request is in Chat mode, not Cowork mode.
+Respond directly and naturally to the user's message.
+Do not inspect, search, plan, edit, validate, review, or otherwise operate on a repository.
+Do not create implementation plans, material-decision checkpoints, or engineering escalation requests.
+Use only information the user explicitly supplied in the message or attached context.
+For casual conversation, answer casually and concisely.
+Reply in the user's language unless they ask for another language.`;
+
 function generationMeta(generation: OllamaGeneration): LocalEngineerResult['modelCalls'][number] {
   return {
     stage: 'planning',
@@ -184,6 +196,50 @@ function generationMeta(generation: OllamaGeneration): LocalEngineerResult['mode
     promptTokens: generation.promptTokens,
     completionTokens: generation.completionTokens,
     totalDurationNs: generation.totalDurationNs
+  };
+}
+
+async function executeDirectChat(
+  model: AgentModel,
+  config: LocalCoderConfig,
+  input: PremiumAgentInput
+): Promise<LocalEngineerExecution> {
+  const userPrompt = [
+    input.goal.trim(),
+    input.context?.trim() ? `# USER-PROVIDED CONTEXT\n${input.context.trim()}` : '',
+    input.constraints?.length
+      ? `# USER CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}`
+      : ''
+  ].filter(Boolean).join('\n\n');
+
+  const generation = await model.chat(
+    DIRECT_CHAT_SYSTEM_PROMPT,
+    userPrompt,
+    undefined,
+    {
+      model: config.model,
+      numCtx: config.ollamaNumCtx ?? 16_384,
+      keepAlive: config.fastModelKeepAlive ?? '90s',
+      think: false,
+      maxTokens: Math.min(config.reportMaxTokens ?? 3_072, 2_048)
+    }
+  );
+
+  return {
+    result: {
+      status: 'success',
+      phase: 'complete',
+      workspace: input.workspace,
+      goal: input.goal,
+      summary: generation.content.trim(),
+      investigation: { searchQueries: [], evidenceFiles: [], researchRequests: [] },
+      repairRounds: 0,
+      changedFiles: [],
+      diff: '',
+      validation: [],
+      modelCalls: []
+    },
+    changes: []
   };
 }
 
@@ -592,7 +648,11 @@ async function autoResolveResearch(
 /**
  * Standalone high-quality agent loop.
  *
- * - read-only work skips mutation and auto-resolves external research where possible;
+ * Chat mode is a hard fast path: exactly one conversational model call and no
+ * repository discovery, planning, mutation, validation, review or checkpoint.
+ * Cowork mode preserves the full engineering workflow below.
+ *
+ * - read-only engineering work skips mutation and auto-resolves external research where possible;
  * - mutating work performs adaptive impact analysis and optional Architect/Critic/Judge
  *   deliberation before the evidence-backed implementation pipeline;
  * - material user preferences become structured decision checkpoints;
@@ -605,6 +665,10 @@ export async function executePremiumLocalAgent(
   config: LocalCoderConfig,
   input: PremiumAgentInput
 ): Promise<LocalEngineerExecution> {
+  if (input.interactionMode === 'chat') {
+    return await executeDirectChat(model, config, input);
+  }
+
   const broker = new ResearchBroker(config);
 
   if (isReadOnlyEngineerRequest(input)) {
