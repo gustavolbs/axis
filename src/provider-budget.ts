@@ -10,6 +10,7 @@ import type { InferenceProvider, InferenceRequest, InferenceResult } from './pro
 import { UsageLedger, utcMonthPeriod, type UsageBudgetReservation } from './usage-ledger.js';
 
 export type ProviderBudgetErrorCode =
+  | 'budget-configuration-required'
   | 'pricing-required'
   | 'output-bound-required'
   | 'historical-cost-unknown'
@@ -88,11 +89,6 @@ function reservationCost(
     .reduce((sum, reservation) => sum + reservation.upperBoundCostUsd, 0));
 }
 
-/**
- * Billing providers report actual token counts only after the request. Admission therefore
- * reserves a deliberately pessimistic upper bound: at most one input token per UTF-8 byte,
- * plus the exact maxOutputTokens ceiling. This can over-reserve; it must not under-reserve.
- */
 function upperBoundCost(request: InferenceRequest, pricing: ModelPricing): number | undefined {
   if (
     request.maxOutputTokens === undefined ||
@@ -123,11 +119,6 @@ export class ProviderBudgetManager {
     this.now = options.now ?? (() => new Date());
   }
 
-  /**
-   * A reservation is released only after the durable usage event carrying its billingId
-   * exists. This makes disk/telemetry failures conservative instead of silently freeing
-   * money that may already have been charged by the provider.
-   */
   async reconcile(providerId: string): Promise<number> {
     return await this.ledger.withBudgetLock(() => this.reconcileLocked(providerId, this.now()));
   }
@@ -148,8 +139,17 @@ export class ProviderBudgetManager {
 
   async authorize(provider: InferenceProvider, request: InferenceRequest): Promise<ProviderBudgetAdmission | undefined> {
     if (provider.kind === 'local') return undefined;
-    const limitUsd = this.settings.get(provider.id)?.monthlyBudgetUsd;
-    if (limitUsd === undefined) return undefined;
+    const settings = this.settings.get(provider.id);
+    if (settings?.unlimitedUsage === true) return undefined;
+    const limitUsd = settings?.monthlyBudgetUsd;
+    if (limitUsd === undefined) {
+      throw new ProviderBudgetError(
+        'budget-configuration-required',
+        provider.id,
+        `Cloud spend for ${provider.id} is disabled until you explicitly choose Unlimited or set a monthly budget in Settings → Usage.`,
+        { modelId: request.model }
+      );
+    }
 
     return await this.ledger.withBudgetLock(() => {
       const pricing = this.pricing.get(provider.id, request.model);
@@ -223,7 +223,7 @@ export class ProviderBudgetManager {
     });
   }
 
-  /** Explicit release is for calls proven not to have reached a provider. */
+  /** Explicit release is only safe before invoke() has started. */
   release(admission: ProviderBudgetAdmission | undefined): void {
     if (!admission) return;
     this.ledger.releaseReservation(admission.reservationId);
