@@ -149,29 +149,26 @@ export function ConsoleRoot() {
   }
 
   function startNewTask() {
+    localStorage.removeItem('local-coder.open-job');
     selectSurface('agent');
     setAgentEpoch((value) => value + 1);
-    window.setTimeout(() => document.querySelector<HTMLButtonElement>('.new-task-button')?.click(), 40);
   }
 
   function openJob(job: SidebarJob) {
     setSearchOpen(false);
     setJobMenuId(undefined);
+    localStorage.setItem('local-coder.open-job', job.id);
+    if (job.input.projectId) localStorage.setItem('local-coder.project', job.input.projectId);
     selectSurface('agent');
     setAgentEpoch((value) => value + 1);
-    window.setTimeout(() => {
-      const target = Array.from(document.querySelectorAll<HTMLButtonElement>('.claude-session'))
-        .find((button) => button.textContent?.includes(job.input.goal));
-      target?.click();
-    }, 80);
   }
 
   function runProject(project: AdminProject) {
     setSearchOpen(false);
+    localStorage.removeItem('local-coder.open-job');
     localStorage.setItem('local-coder.project', project.id);
     selectSurface('agent');
     setAgentEpoch((value) => value + 1);
-    window.setTimeout(() => document.querySelector<HTMLButtonElement>('.new-task-button')?.click(), 80);
   }
 
   function openSettings(project?: AdminProject) {
