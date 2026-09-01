@@ -1,0 +1,104 @@
+name: Finish standalone normalization
+
+on:
+  push:
+    branches:
+      - refactor/standalone-desktop-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    if: ${{ !contains(github.event.head_commit.message, '[standalone-refactor]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/standalone-desktop-runtime
+          fetch-depth: 0
+      - name: Normalize retired runtime contracts and UI namespaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          text_roots = [Path('src'), Path('test'), Path('docs')]
+          replacements = {
+              'claudeGuidance': 'userGuidance',
+              'needs-claude': 'needs-guidance',
+              'createControlPlaneLocalProvider': 'createLocalInferenceProvider',
+              'Local Coder Console': 'Local Coder',
+          }
+          for root in text_roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob('*'):
+                  if not path.is_file() or path.suffix not in {'.ts', '.tsx', '.js', '.mjs', '.md', '.json'}:
+                      continue
+                  text = path.read_text()
+                  updated = text
+                  for old, new in replacements.items():
+                      updated = updated.replace(old, new)
+                  if path.as_posix() == 'src/worker-server.ts':
+                      updated = updated.replace("    microsoftLearn: config.microsoftLearnResearchEnabled !== false,\n", '')
+                  if updated != text:
+                      path.write_text(updated)
+
+          exact_file_refs = {
+              'claude-shell.css': 'lc-agent-shell.css',
+              'claude-agent.css': 'lc-agent.css',
+              'claude-fidelity.css': 'lc-agent-fidelity.css',
+              'reference-fidelity.css': 'lc-shell-fidelity.css',
+              'claude-reference-overrides.css': 'lc-layout-overrides.css',
+          }
+          ui_paths = list(Path('app/src').rglob('*')) + [
+              Path('test/desktop-ui-contract.test.ts'),
+              Path('scripts/smoke-desktop-layout.mjs'),
+          ]
+          for path in ui_paths:
+              if not path.is_file() or path.suffix not in {'.ts', '.tsx', '.js', '.mjs', '.css'}:
+                  continue
+              text = path.read_text()
+              updated = text
+              for old, new in exact_file_refs.items():
+                  updated = updated.replace(old, new)
+              updated = updated.replace('claude-', 'lc-agent-')
+              updated = updated.replace('reference-', 'lc-shell-')
+              if updated != text:
+                  path.write_text(updated)
+
+          renames = {
+              Path('app/src/claude-shell.css'): Path('app/src/lc-agent-shell.css'),
+              Path('app/src/claude-agent.css'): Path('app/src/lc-agent.css'),
+              Path('app/src/claude-fidelity.css'): Path('app/src/lc-agent-fidelity.css'),
+              Path('app/src/reference-fidelity.css'): Path('app/src/lc-shell-fidelity.css'),
+              Path('app/src/claude-reference-overrides.css'): Path('app/src/lc-layout-overrides.css'),
+          }
+          for old, new in renames.items():
+              if old.exists():
+                  old.rename(new)
+
+          for unused in [Path('app/src/AdminPanel.tsx'), Path('app/src/admin.css'), Path('app/src/admin-fixes.css')]:
+              if unused.exists():
+                  unused.unlink()
+          PY
+
+          if git grep -nE 'claudeGuidance|needs-claude|microsoftLearnResearchEnabled|createControlPlaneLocalProvider' -- src test docs; then
+            echo 'Retired runtime contract remains' >&2
+            exit 1
+          fi
+          if git grep -nE '\.(claude|reference|admin)-' -- app/src; then
+            echo 'Retired UI class prefix remains' >&2
+            exit 1
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'refactor: normalize standalone contracts and UI namespace [standalone-refactor]'
+          git push origin HEAD:refactor/standalone-desktop-runtime
