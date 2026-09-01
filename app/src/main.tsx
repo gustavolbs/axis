@@ -1,11 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 
-import { ConsoleRoot } from './ConsoleRoot.js';
+import { ConsoleRoot as AppRoot } from './ConsoleRoot.js';
 import { installRuntimeTransport } from './runtime-shim.js';
 import './styles.css';
-import './admin.css';
-import './admin-fixes.css';
 import './runs.css';
 import './runs-fixes.css';
 import './cancellation.css';
@@ -29,6 +27,6 @@ void window.localCoder?.setTheme(theme);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConsoleRoot />
+    <AppRoot />
   </React.StrictMode>
 );
