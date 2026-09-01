@@ -135,6 +135,24 @@ export class ProjectProviderRuntime {
     return new ProviderRegistry(providers);
   }
 
+  /**
+   * Returns the real provider/model metadata used by Chat budgeting. This keeps
+   * context-window knowledge at the provider boundary instead of baking Claude,
+   * GPT or Ollama limits into the generic conversation layer.
+   */
+  async modelDefinition(
+    project: ProjectDefinition,
+    providerId: string,
+    modelId: string
+  ): Promise<{ providerKind: ProviderKind; model: ModelDefinition } | undefined> {
+    const registry = this.buildRegistry(project);
+    const provider = registry.list().find((candidate) => candidate.id === providerId);
+    if (!provider || !allowed(project, provider)) return undefined;
+    const models = await provider.listModels();
+    const model = models.find((candidate) => candidate.id === modelId);
+    return model ? { providerKind: provider.kind, model } : undefined;
+  }
+
   async routingCandidates(
     project: ProjectDefinition,
     options: RoutingCatalogOptions
