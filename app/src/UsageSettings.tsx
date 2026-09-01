@@ -46,8 +46,28 @@ interface UsageDashboardView {
   };
 }
 
-async function api<T>(url: string): Promise<T> {
-  const response = await fetch(url, { headers: { 'content-type': 'application/json' } });
+interface ProviderRuntimeSettings {
+  enabled: boolean;
+  defaultModelId?: string;
+  monthlyBudgetUsd?: number;
+  models: Record<string, unknown>;
+}
+
+interface ProviderAdminView {
+  id: string;
+  kind: 'local' | 'cloud';
+  builtIn: boolean;
+  settings: ProviderRuntimeSettings;
+}
+
+async function api<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(init.headers ?? {})
+    }
+  });
   const body = (await response.json()) as T & { error?: string };
   if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
   return body;
@@ -173,6 +193,12 @@ export function UsageSettings() {
   const [period, setPeriod] = useState<UsagePeriod>('30d');
   const [tab, setTab] = useState<UsageTab>('models');
   const [usage, setUsage] = useState<UsageDashboardView>();
+  const [monthUsage, setMonthUsage] = useState<UsageDashboardView>();
+  const [providers, setProviders] = useState<ProviderAdminView[]>([]);
+  const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
+  const [unlimitedDrafts, setUnlimitedDrafts] = useState<Record<string, boolean>>({});
+  const [savingBudget, setSavingBudget] = useState<string>();
+  const [budgetError, setBudgetError] = useState<string>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>();
@@ -181,8 +207,26 @@ export function UsageSettings() {
     setLoading(true);
     setError(undefined);
     try {
-      const { usage: next } = await api<{ usage: UsageDashboardView }>(`/api/usage?period=${period}`);
-      setUsage(next);
+      const [selectedResponse, monthResponse, providersResponse] = await Promise.all([
+        api<{ usage: UsageDashboardView }>(`/api/usage?period=${period}`),
+        api<{ usage: UsageDashboardView }>('/api/usage?period=month'),
+        api<{ providers: ProviderAdminView[] }>('/api/providers')
+      ]);
+      setUsage(selectedResponse.usage);
+      setMonthUsage(monthResponse.usage);
+      setProviders(providersResponse.providers);
+      setBudgetDrafts(Object.fromEntries(
+        providersResponse.providers.map((provider) => [
+          provider.id,
+          provider.settings.monthlyBudgetUsd === undefined ? '' : String(provider.settings.monthlyBudgetUsd)
+        ])
+      ));
+      setUnlimitedDrafts(Object.fromEntries(
+        providersResponse.providers.map((provider) => [
+          provider.id,
+          provider.settings.monthlyBudgetUsd === undefined
+        ])
+      ));
       setLastUpdated(new Date());
     } catch (next) {
       setError(next instanceof Error ? next.message : String(next));
@@ -195,9 +239,65 @@ export function UsageSettings() {
     void load();
   }, [load]);
 
+  async function saveBudget(providerId: string): Promise<void> {
+    const unlimited = unlimitedDrafts[providerId] ?? true;
+    const draft = budgetDrafts[providerId]?.trim() ?? '';
+    const amount = Number(draft);
+    if (!unlimited && (!draft || !Number.isFinite(amount) || amount <= 0)) {
+      setBudgetError('Monthly budget must be a positive USD amount.');
+      return;
+    }
+
+    setSavingBudget(providerId);
+    setBudgetError(undefined);
+    try {
+      const { settings } = await api<{ settings: ProviderRuntimeSettings }>(
+        `/api/providers/${encodeURIComponent(providerId)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ monthlyBudgetUsd: unlimited ? null : amount })
+        }
+      );
+      setProviders((current) => current.map((provider) =>
+        provider.id === providerId ? { ...provider, settings } : provider
+      ));
+      setBudgetDrafts((current) => ({
+        ...current,
+        [providerId]: settings.monthlyBudgetUsd === undefined ? '' : String(settings.monthlyBudgetUsd)
+      }));
+      setUnlimitedDrafts((current) => ({
+        ...current,
+        [providerId]: settings.monthlyBudgetUsd === undefined
+      }));
+    } catch (next) {
+      setBudgetError(next instanceof Error ? next.message : String(next));
+    } finally {
+      setSavingBudget(undefined);
+    }
+  }
+
   const totalTokens = usage?.totals.totalTokens ?? 0;
   const modelRows = useMemo(() => usage?.models ?? [], [usage]);
   const providerRows = useMemo(() => usage?.providers ?? [], [usage]);
+  const monthByProvider = useMemo(() => new Map(
+    (monthUsage?.providers ?? []).map((provider) => [provider.providerId, provider])
+  ), [monthUsage]);
+  const budgetProviders = useMemo(() => {
+    const byId = new Map(providers.map((provider) => [provider.id, provider]));
+    for (const usageProvider of monthUsage?.providers ?? []) {
+      if (byId.has(usageProvider.providerId)) continue;
+      byId.set(usageProvider.providerId, {
+        id: usageProvider.providerId,
+        kind: usageProvider.providerKind,
+        builtIn: false,
+        settings: { enabled: true, models: {} }
+      });
+    }
+    return [...byId.values()].sort((a, b) =>
+      Number(a.kind === 'local') - Number(b.kind === 'local') ||
+      providerLabel(a.id).localeCompare(providerLabel(b.id))
+    );
+  }, [providers, monthUsage]);
 
   return <div className="focused-settings-page usage-settings-page">
     <style>{`
@@ -209,7 +309,7 @@ export function UsageSettings() {
       .usage-refresh:disabled { opacity: .5; cursor: default; }
       .usage-refresh.loading svg { animation: usage-spin .8s linear infinite; }
       @keyframes usage-spin { to { transform: rotate(360deg); } }
-      .usage-shell { overflow: hidden; border: 1px solid var(--lc-border); border-radius: 14px; background: var(--lc-surface); }
+      .usage-shell, .usage-budget-shell { overflow: hidden; border: 1px solid var(--lc-border); border-radius: 14px; background: var(--lc-surface); }
       .usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 12px 9px 14px; }
       .usage-tabs, .usage-periods { display: flex; align-items: center; gap: 3px; }
       .usage-tabs button, .usage-periods button { border: 0; border-radius: 7px; background: transparent; color: var(--lc-muted); font: inherit; font-size: 11px; cursor: pointer; }
@@ -241,6 +341,33 @@ export function UsageSettings() {
       .usage-note { margin: 10px 3px 0; color: var(--lc-faint); font-size: 9.5px; line-height: 1.45; }
       .usage-empty { display: grid; min-height: 170px; place-items: center; color: var(--lc-muted); font-size: 11px; }
       .usage-error { margin-bottom: 12px; color: var(--lc-negative); font-size: 10.5px; }
+      .usage-budget-shell { margin-top: 22px; }
+      .usage-budget-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 13px 15px; border-bottom: 1px solid var(--lc-border); }
+      .usage-budget-heading strong, .usage-budget-heading small { display: block; }
+      .usage-budget-heading strong { color: var(--lc-text); font-size: 11.5px; font-weight: 610; }
+      .usage-budget-heading small { margin-top: 3px; color: var(--lc-muted); font-size: 9.5px; line-height: 1.4; }
+      .usage-budget-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(260px, 1.25fr); gap: 18px; align-items: center; padding: 12px 15px; }
+      .usage-budget-row + .usage-budget-row { border-top: 1px solid color-mix(in srgb, var(--lc-border) 55%, transparent); }
+      .usage-budget-provider strong, .usage-budget-provider small { display: block; }
+      .usage-budget-provider strong { color: var(--lc-text-soft); font-size: 11px; font-weight: 560; }
+      .usage-budget-provider small { margin-top: 3px; color: var(--lc-muted); font-size: 9.5px; }
+      .usage-budget-warning { color: var(--lc-negative) !important; }
+      .usage-budget-control { min-width: 0; }
+      .usage-budget-fields { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+      .usage-unlimited { display: flex; align-items: center; gap: 6px; color: var(--lc-text-soft); font-size: 10px; cursor: pointer; white-space: nowrap; }
+      .usage-unlimited input { accent-color: var(--lc-accent); }
+      .usage-budget-input { display: flex; align-items: center; width: 116px; height: 29px; padding: 0 8px; border: 1px solid var(--lc-border); border-radius: 7px; background: var(--lc-surface-2); color: var(--lc-muted); }
+      .usage-budget-input span { margin-right: 4px; font-size: 10px; }
+      .usage-budget-input input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--lc-text); font: inherit; font-size: 10px; }
+      .usage-budget-input.disabled { opacity: .42; }
+      .usage-budget-save { height: 29px; padding: 0 10px; border: 1px solid var(--lc-border); border-radius: 7px; background: var(--lc-surface-2); color: var(--lc-text-soft); font: inherit; font-size: 9.5px; cursor: pointer; }
+      .usage-budget-save:hover:not(:disabled) { background: var(--lc-surface-3); }
+      .usage-budget-save:disabled { opacity: .45; cursor: default; }
+      .usage-budget-progress { height: 3px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: var(--lc-surface-2); }
+      .usage-budget-progress > i { display: block; height: 100%; border-radius: inherit; background: #4f86dc; }
+      .usage-budget-progress > i.warn { background: var(--lc-negative); }
+      .usage-budget-meta { display: flex; justify-content: flex-end; margin-top: 5px; color: var(--lc-muted); font-size: 9px; }
+      .usage-budget-error { margin: 8px 15px 0; color: var(--lc-negative); font-size: 9.5px; }
       @media (max-width: 720px) {
         .usage-settings-page { width: calc(100% - 28px); }
         .usage-settings-page > header { align-items: flex-start; flex-direction: column; }
@@ -249,6 +376,8 @@ export function UsageSettings() {
         .usage-row { grid-template-columns: minmax(0, 1fr) auto; }
         .usage-row-numbers { grid-column: 1 / -1; grid-row: 2; text-align: left; }
         .usage-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .usage-budget-row { grid-template-columns: 1fr; gap: 9px; }
+        .usage-budget-fields, .usage-budget-meta { justify-content: flex-start; }
       }
     `}</style>
 
@@ -347,8 +476,91 @@ export function UsageSettings() {
       </> : null}
     </section>
 
+    <section className="usage-budget-shell" aria-label="Provider budgets">
+      <div className="usage-budget-heading">
+        <div>
+          <strong>Provider budgets</strong>
+          <small>Monthly hard stops apply across Projects and personal Chat. Unlimited disables the provider-level cap.</small>
+        </div>
+      </div>
+      {budgetError ? <div className="usage-budget-error" role="alert">{budgetError}</div> : null}
+      {budgetProviders.map((provider) => {
+        const month = monthByProvider.get(provider.id);
+        const spent = month?.knownCostUsd ?? 0;
+        const unpriced = month?.unknownCostEvents ?? 0;
+        const unlimited = unlimitedDrafts[provider.id] ?? provider.settings.monthlyBudgetUsd === undefined;
+        const persistedLimit = provider.settings.monthlyBudgetUsd;
+        const progress = persistedLimit === undefined || persistedLimit <= 0
+          ? 0
+          : Math.min(1, spent / persistedLimit);
+        const busy = savingBudget === provider.id;
+        const draft = budgetDrafts[provider.id] ?? '';
+        const validDraft = unlimited || (draft.trim() !== '' && Number.isFinite(Number(draft)) && Number(draft) > 0);
+        return <div className="usage-budget-row" key={provider.id}>
+          <div className="usage-budget-provider">
+            <strong>{providerLabel(provider.id)}</strong>
+            <small>
+              {provider.kind === 'local'
+                ? `${tokens(month?.totalTokens ?? 0)} tokens this month · $0 API cost`
+                : `${costLabel(month ?? { knownCostUsd: 0, unknownCostEvents: 0 })} this month`}
+            </small>
+            {unpriced > 0 && persistedLimit !== undefined ? <small className="usage-budget-warning">
+              Unpriced usage makes the hard stop indeterminate; further budgeted cloud calls are blocked.
+            </small> : null}
+          </div>
+          <div className="usage-budget-control">
+            <div className="usage-budget-fields">
+              <label className="usage-unlimited">
+                <input
+                  type="checkbox"
+                  checked={unlimited}
+                  onChange={(event) => setUnlimitedDrafts((current) => ({
+                    ...current,
+                    [provider.id]: event.target.checked
+                  }))}
+                  disabled={busy}
+                />
+                Unlimited
+              </label>
+              <label className={`usage-budget-input ${unlimited ? 'disabled' : ''}`}>
+                <span>$</span>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  inputMode="decimal"
+                  aria-label={`${providerLabel(provider.id)} monthly budget in USD`}
+                  placeholder="Monthly"
+                  value={draft}
+                  disabled={unlimited || busy}
+                  onChange={(event) => setBudgetDrafts((current) => ({
+                    ...current,
+                    [provider.id]: event.target.value
+                  }))}
+                />
+              </label>
+              <button
+                className="usage-budget-save"
+                disabled={busy || !validDraft}
+                onClick={() => void saveBudget(provider.id)}
+              >{busy ? 'Saving…' : 'Save'}</button>
+            </div>
+            <div className="usage-budget-progress" aria-hidden="true">
+              <i className={progress >= .9 ? 'warn' : ''} style={{ width: `${Math.round(progress * 100)}%` }} />
+            </div>
+            <div className="usage-budget-meta">
+              {persistedLimit === undefined
+                ? 'Unlimited'
+                : `${usd(spent)} / ${usd(persistedLimit)} this month · ${Math.round(progress * 100)}%`}
+            </div>
+          </div>
+        </div>;
+      })}
+      {budgetProviders.length === 0 ? <div className="usage-empty">No providers configured yet.</div> : null}
+    </section>
+
     <p className="usage-note">
-      Ollama API cost is always $0. Cloud spend uses the historical price captured for each call; unpriced cloud calls are shown explicitly and excluded from known spend.
+      Ollama API cost is always $0. Cloud spend uses the historical price captured for each call; unpriced cloud calls are shown explicitly and excluded from known spend. Finite provider budgets require known model pricing and block a call before inference when its conservative upper bound could cross the monthly cap.
     </p>
   </div>;
 }
