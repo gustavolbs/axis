@@ -361,11 +361,11 @@ test('agent remains thread-first with lightweight streaming state', () => {
   assert.doesNotMatch(agentSurface, /thinkingChars/);
 });
 
-test('send affordance is text-driven and missing workspace opens context instead of silently disabling', () => {
+test('send affordance is text-driven, and only Cowork needs a folder', () => {
   assert.match(agentSurface, /canSubmit=\{Boolean\(goal\.trim\(\)\)\}/);
   assert.match(agentSurface, /if \(!goal\.trim\(\)\) return/);
-  assert.match(agentSurface, /if \(!effectiveWorkspace\)/);
-  assert.match(agentSurface, /setProjectMenu\(true\)/);
+  // Chat is one inference that reads no files, so it sends without a folder.
+  assert.match(agentSurface, /if \(!effectiveWorkspace && mode === 'cowork'\)/);
   assert.match(agentSurface, /setExtrasOpen\(true\)/);
 });
 

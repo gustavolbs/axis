@@ -428,18 +428,19 @@ export function AgentSurfaceV2() {
     }
 
     // With no project, fall back to the default workspace from Settings —
-    // which is what that setting is for. Only a genuinely empty configuration
-    // blocks the send.
+    // which is what that setting is for.
     const defaultWorkspace = localStorage.getItem('local-coder.workspace')?.trim() ?? '';
     const effectiveWorkspace = selectedProject?.workspace ?? (workspace.trim() || defaultWorkspace);
-    if (!effectiveWorkspace) {
+    // Chat is one inference that reads no files, so it sends without a folder.
+    // Cowork acts on a folder and cannot.
+    if (!effectiveWorkspace && mode === 'cowork') {
       // Reopening the project menu with no message read as the picker
       // "jumping" for no reason. Say what is missing and open the field that
       // fixes it.
       setModelMenu('closed');
       setProjectMenu(false);
       setExtrasOpen(true);
-      setError('This chat needs a folder to work in. Set one here, pick a project, or set a default workspace in Settings → General.');
+      setError('Cowork needs a folder to work in. Set one here, pick a project, or set a default workspace in Settings → General.');
       return;
     }
     if (selectedProject && modelSelection === 'auto') {

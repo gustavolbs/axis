@@ -240,9 +240,14 @@ export class DesktopAppRuntime {
     if (method === 'POST' && pathname === '/jobs') {
       const body = objectBody(request.body);
       const projectId = optionalString(body, 'projectId');
+      const interactionMode = parseInteractionMode(body.interactionMode);
+      // Chat runs one inference and touches no files, so a folder is optional.
+      // Cowork is bound to one and still requires it.
       const workspace = projectId
         ? this.projects.getProject(projectId).workspace
-        : requiredString(body, 'workspace');
+        : interactionMode === 'chat'
+          ? optionalString(body, 'workspace') ?? ''
+          : requiredString(body, 'workspace');
       const input: StandaloneJobInput = {
         projectId,
         workspace,
@@ -256,7 +261,7 @@ export class DesktopAppRuntime {
           typeof body.maxRepairRounds === 'number' && Number.isInteger(body.maxRepairRounds)
             ? Math.max(0, Math.min(body.maxRepairRounds, 2))
             : 1,
-        interactionMode: parseInteractionMode(body.interactionMode),
+        interactionMode,
         modelSelection: parseModelSelection(body.modelSelection),
         reasoningEffort: parseReasoningEffort(body.reasoningEffort)
       };

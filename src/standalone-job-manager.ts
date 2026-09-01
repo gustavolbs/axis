@@ -197,7 +197,11 @@ export class StandaloneJobManager {
   }
 
   create(input: StandaloneJobInput): StandaloneJobSnapshot {
-    if (!input.workspace.trim()) throw new Error('workspace is required.');
+    // Chat is a single inference that reads no files, so it needs no folder.
+    // Only the engineering pipeline does.
+    if ((input.interactionMode ?? 'cowork') !== 'chat' && !input.workspace.trim()) {
+      throw new Error('workspace is required.');
+    }
     if (!input.goal.trim()) throw new Error('goal is required.');
     const now = new Date().toISOString();
     const job: JobInternal = {

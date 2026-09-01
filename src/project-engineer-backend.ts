@@ -58,6 +58,8 @@ import { resolveWorkspace } from './workspace.js';
 
 export type ProjectEngineerInput = LocalEngineerInput & {
   projectId?: string;
+  /** Chat is a single inference; only Cowork runs the engineering pipeline. */
+  interactionMode?: 'chat' | 'cowork';
   /** Internal host correlation id so resumed decision rounds share one per-job budget. */
   budgetJobId?: string;
   /** Optional standalone override. Undefined preserves the Project default. */
@@ -592,6 +594,12 @@ export class ProjectAwareEngineerBackend {
   ): Promise<{ project?: ProjectDefinition; workspace: string }> {
     if (!input.projectId && this.projects.list().length === 0) {
       return { workspace: input.workspace };
+    }
+
+    // A chat with no project has no folder to resolve, and resolveWorkspace
+    // throws on an empty path. Nothing downstream of a chat reads it.
+    if (!input.projectId && input.interactionMode === 'chat' && !input.workspace.trim()) {
+      return { workspace: '' };
     }
 
     const workspace = await resolveWorkspace(input.workspace);

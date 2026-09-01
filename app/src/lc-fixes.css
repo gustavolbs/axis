@@ -879,6 +879,17 @@
   font-size: 12px;
 }
 
+/* --------------------------------------------------------------------------
+   Workspace field inside the composer popover. `.composer-popover-field input`
+   sets width: 100%, which as a flex item becomes a 100% flex-basis — the input
+   claimed the whole row and pushed "Browse…" outside the popover, leaving a
+   horizontal scrollbar and an input squeezed to nothing.
+   ----------------------------------------------------------------------- */
+
+.path-field > input {
+  width: auto;
+}
+
 .settings-endpoint-row {
   display: flex;
   align-items: center;
