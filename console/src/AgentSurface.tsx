@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronLeft,
   CircleStop,
+  FileText,
   FolderGit2,
   LoaderCircle,
   Plus,
@@ -197,9 +198,13 @@ export function AgentSurface() {
       setProjects(initialProjects);
       if (initialJobs[0]) setActiveId(initialJobs[0].id);
       else setActiveId(NEW_TASK_ID);
-      if (selectedProjectId && !initialProjects.some((project) => project.id === selectedProjectId)) {
+      const storedProjectValid = selectedProjectId && initialProjects.some((project) => project.id === selectedProjectId);
+      if (selectedProjectId && !storedProjectValid) {
         setSelectedProjectId('');
         localStorage.removeItem('local-coder.project');
+      } else if (!selectedProjectId && initialProjects[0]) {
+        setSelectedProjectId(initialProjects[0].id);
+        localStorage.setItem('local-coder.project', initialProjects[0].id);
       }
     }).catch((next) => setError(next instanceof Error ? next.message : String(next)));
 
@@ -222,6 +227,12 @@ export function AgentSurface() {
     });
     return () => events.close();
   }, []);
+
+  useEffect(() => {
+    if (!error) return;
+    const timer = window.setTimeout(() => setError(undefined), 8_000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -256,6 +267,7 @@ export function AgentSurface() {
       if (target instanceof Element && target.closest('.composer-menu-anchor')) return;
       setModelMenu('closed');
       setProjectMenu(false);
+      setExtrasOpen(false);
     }
     document.addEventListener('pointerdown', closeMenus);
     return () => document.removeEventListener('pointerdown', closeMenus);
@@ -376,13 +388,10 @@ export function AgentSurface() {
 
   return <div className="claude-agent-shell">
     <aside className="claude-sidebar" aria-label="Task history">
-      <button className="new-task-button" onClick={startNewTask}>
-        <Plus size={15} strokeWidth={1.8} />
-        <span>New task</span>
-      </button>
-      <div className="sidebar-section-label">Tasks</div>
+      <button className="new-task-button" onClick={startNewTask}><Plus size={15} strokeWidth={1.8} /><span>New chat</span></button>
+      <div className="sidebar-section-label">Chats</div>
       <div className="claude-session-list">
-        {jobs.length === 0 ? <p className="sidebar-empty">No tasks yet</p> : jobs.map((job) => (
+        {jobs.length === 0 ? <p className="sidebar-empty">No chats yet</p> : jobs.map((job) => (
           <button key={job.id} className={`claude-session ${active?.id === job.id ? 'active' : ''}`} onClick={() => setActiveId(job.id)}>
             <span className="session-title">{job.input.goal}</span>
             <span className="session-subtitle">
@@ -392,17 +401,13 @@ export function AgentSurface() {
           </button>
         ))}
       </div>
-      <div className="sidebar-footer-status">
-        <span className={`connection-dot ${worker?.ok === false ? 'bad' : 'good'}`} />
-        <span>{worker?.hostname ?? 'Local runtime'}</span>
-        <small>{streamOk ? 'Connected' : 'Reconnecting'}</small>
-      </div>
+      <div className="sidebar-footer-status"><span className={`connection-dot ${worker?.ok === false ? 'bad' : 'good'}`} /><span>{worker?.hostname ?? 'Local runtime'}</span><small>{streamOk ? 'Connected' : 'Reconnecting'}</small></div>
     </aside>
 
     <main className="claude-thread-pane">
-      {error ? <div className="claude-error-banner"><span>{error}</span><button onClick={() => setError(undefined)} aria-label="Dismiss"><X size={14} /></button></div> : null}
+      {error ? <div className="claude-error-banner" role="status"><span>{error}</span><button onClick={() => setError(undefined)} aria-label="Dismiss"><X size={14} /></button></div> : null}
 
-      {!active ? <EmptyStart /> : <TaskThread
+      {!active ? <EmptyStart selectedProject={selectedProject} onSuggestion={setGoal} /> : <TaskThread
         job={active}
         currentInference={currentInference}
         decisionSelections={decisionSelections}
@@ -451,11 +456,14 @@ export function AgentSurface() {
   </div>;
 }
 
-function EmptyStart() {
+function EmptyStart({ selectedProject, onSuggestion }: { selectedProject?: AdminProject; onSuggestion: (value: string) => void }) {
+  const suggestions = ['Review this code', 'Fix a bug', 'Improve the tests', 'Explain this project'];
   return <section className="claude-empty-start">
-    <div className="claude-empty-mark"><Sparkles size={28} strokeWidth={1.45} /></div>
-    <h1>What should we build?</h1>
-    <p>Describe the outcome. Local Coder can inspect the repository, plan, implement, validate and review the work.</p>
+    {selectedProject ? <div className="empty-project-breadcrumb">Projects <span>›</span> {selectedProject.name}</div> : null}
+    <div className="claude-empty-mark"><Sparkles size={26} strokeWidth={1.4} /></div>
+    <h1>{selectedProject ? selectedProject.name : 'How can I help you today?'}</h1>
+    <p>{selectedProject ? 'Start a chat in this project. Local Coder will use its isolated workspace and routing policy.' : 'Describe what you want to build, change, investigate or understand.'}</p>
+    <div className="claude-quick-actions">{suggestions.map((label) => <button key={label} onClick={() => onSuggestion(label)}>{label}</button>)}</div>
   </section>;
 }
 
@@ -493,9 +501,9 @@ function Composer(props: {
 }) {
   return <div className="claude-composer-wrap">
     <div className="claude-composer">
-      {props.extrasOpen ? <div className="composer-extras">
-        {!props.selectedProject ? <label><span>Workspace</span><input value={props.workspace} onChange={(event) => props.setWorkspace(event.target.value)} placeholder="/Users/you/project" /></label> : null}
-        <label><span>Context</span><textarea value={props.context} onChange={(event) => props.setContext(event.target.value)} rows={2} placeholder="Optional context or constraints" /></label>
+      {(props.selectedProject || props.workspace || props.context) ? <div className="composer-context-chips">
+        {props.selectedProject ? <span><FolderGit2 size={13} />{props.selectedProject.name}</span> : props.workspace ? <span><FolderGit2 size={13} />{props.workspace}<button aria-label="Remove workspace" onClick={() => props.setWorkspace('')}><X size={11} /></button></span> : null}
+        {props.context ? <span><FileText size={13} />Context<button aria-label="Remove context" onClick={() => props.setContext('')}><X size={11} /></button></span> : null}
       </div> : null}
 
       <textarea
@@ -504,20 +512,26 @@ function Composer(props: {
         onChange={(event) => props.setGoal(event.target.value)}
         onKeyDown={props.onKeyDown}
         rows={3}
-        placeholder="How can Local Coder help?"
+        placeholder="How can I help you today?"
         aria-label="Task prompt"
       />
 
       <div className="composer-toolbar">
         <div className="composer-toolbar-left">
-          <button className={`composer-icon-button ${props.extrasOpen ? 'active' : ''}`} onClick={() => props.setExtrasOpen(!props.extrasOpen)} aria-label="Add context" aria-pressed={props.extrasOpen}>
-            <Plus size={18} strokeWidth={1.7} />
-          </button>
+          <div className="composer-menu-anchor composer-add-anchor">
+            <button className={`composer-icon-button ${props.extrasOpen ? 'active' : ''}`} onClick={() => { props.setProjectMenu(false); props.setModelMenu('closed'); props.setExtrasOpen(!props.extrasOpen); }} aria-label="Add context" aria-expanded={props.extrasOpen}>
+              <Plus size={19} strokeWidth={1.7} />
+            </button>
+            {props.extrasOpen ? <div className="claude-popover composer-add-popover" role="menu">
+              {!props.selectedProject ? <label className="composer-popover-field"><span><FolderGit2 size={14} /><strong>Workspace</strong></span><input value={props.workspace} onChange={(event) => props.setWorkspace(event.target.value)} placeholder="/Users/you/project" /></label> : null}
+              <label className="composer-popover-field"><span><FileText size={14} /><strong>Context</strong></span><textarea value={props.context} onChange={(event) => props.setContext(event.target.value)} rows={3} placeholder="Add optional context or constraints" /></label>
+            </div> : null}
+          </div>
 
-          <div className="composer-menu-anchor">
-            <button className="composer-text-button" aria-haspopup="menu" aria-expanded={props.projectMenu} onClick={() => { props.setModelMenu('closed'); props.setProjectMenu(!props.projectMenu); }}>
+          <div className="composer-menu-anchor project-menu-anchor">
+            <button className="composer-text-button" aria-haspopup="menu" aria-expanded={props.projectMenu} onClick={() => { props.setExtrasOpen(false); props.setModelMenu('closed'); props.setProjectMenu(!props.projectMenu); }}>
               <FolderGit2 size={14} strokeWidth={1.6} />
-              <span>{props.selectedProject?.name ?? 'Work in a project'}</span>
+              <span>{props.selectedProject?.name ?? 'Choose project'}</span>
               <ChevronDown size={13} strokeWidth={1.6} />
             </button>
             {props.projectMenu ? <div className="claude-popover project-popover" role="menu">
@@ -535,9 +549,9 @@ function Composer(props: {
 
         <div className="composer-toolbar-right">
           <div className="composer-menu-anchor model-menu-anchor">
-            <button className="model-effort-trigger" disabled={!props.selectedProject} aria-haspopup="menu" aria-expanded={props.modelMenu !== 'closed'} onClick={() => { props.setProjectMenu(false); props.setModelMenu(props.modelMenu === 'closed' ? 'models' : 'closed'); }}>
+            <button className="model-effort-trigger" aria-haspopup="menu" aria-expanded={props.modelMenu !== 'closed'} onClick={() => { props.setExtrasOpen(false); props.setProjectMenu(false); props.setModelMenu(props.modelMenu === 'closed' ? 'models' : 'closed'); }}>
               <span>{props.modelLabel}</span>
-              {props.selectedProject ? <><span className="model-trigger-dot">·</span><span>{props.effortLabel}</span></> : null}
+              <span className="model-trigger-dot">·</span><span>{props.effortLabel}</span>
               <ChevronDown size={13} strokeWidth={1.6} />
             </button>
             {props.modelMenu !== 'closed' ? <ModelMenu {...props} /> : null}
@@ -548,7 +562,6 @@ function Composer(props: {
         </div>
       </div>
     </div>
-    <div className="composer-hint">⌘ Enter to start</div>
   </div>;
 }
 
@@ -575,22 +588,27 @@ function ModelMenu(props: {
     </div>;
   }
 
+  const providers = [...new Set(props.modelOptions.map((model) => model.providerId))];
   return <div className="claude-popover model-popover" role="menu">
     <button className={props.modelSelection === 'auto' ? 'selected' : ''} onClick={() => { props.setModelSelection('auto'); props.setModelMenu('closed'); }}>
       <span><strong>Auto</strong><small>Route each stage to the best allowed model</small></span>
       {props.modelSelection === 'auto' ? <Check size={16} /> : null}
     </button>
-    {props.modelOptions.map((model) => <button key={model.value} className={props.modelSelection === model.value ? 'selected' : ''} disabled={!model.available} onClick={() => { props.setModelSelection(model.value); props.setModelMenu('closed'); }}>
-      <span><strong>{model.label}</strong><small>{model.description}{model.available ? '' : ' · unavailable'}</small></span>
-      {props.modelSelection === model.value ? <Check size={16} /> : null}
-    </button>)}
+    {providers.map((providerId) => <div className="model-provider-group" key={providerId}>
+      <div className="model-provider-label">{providerId}</div>
+      {props.modelOptions.filter((model) => model.providerId === providerId).map((model) => <button key={model.value} className={props.modelSelection === model.value ? 'selected' : ''} disabled={!model.available} onClick={() => { props.setModelSelection(model.value); props.setModelMenu('closed'); }}>
+        <span><strong>{model.label}</strong><small>{model.description}{model.available ? '' : ' · unavailable'}</small></span>
+        {props.modelSelection === model.value ? <Check size={16} /> : null}
+      </button>)}
+    </div>)}
+    {props.modelOptions.length === 0 ? <div className="model-menu-note">Choose or create a project to discover provider models. Auto remains available.</div> : null}
     <div className="popover-separator" />
     <button className="popover-row-link" onClick={() => props.setModelMenu('effort')}>
       <span><strong>Effort</strong><small>Control how deeply the selected model reasons</small></span>
       <span className="popover-row-value">{props.effortLabel.replace('Thinking off', 'Default')} ›</span>
     </button>
     <button className="popover-row-link thinking-row" aria-pressed={props.thinkingEnabled} onClick={() => props.setThinkingEnabled(!props.thinkingEnabled)}>
-      <span><strong>Thinking</strong><small>Allow the model to use extended reasoning when supported</small></span>
+      <span><strong>Thinking</strong><small>Allow extended reasoning when supported</small></span>
       <span className={`claude-switch ${props.thinkingEnabled ? 'on' : ''}`} aria-hidden="true"><i /></span>
     </button>
   </div>;
