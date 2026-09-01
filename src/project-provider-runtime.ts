@@ -1,6 +1,7 @@
 import type { RoutingCandidate } from './cognitive-router.js';
 import type { InferenceStage } from './inference-status.js';
 import { CredentialManager } from './credential-store.js';
+import { ProviderBudgetManager } from './provider-budget.js';
 import {
   assertProjectCredentialIsolation,
   type ModelSelection,
@@ -43,6 +44,7 @@ export interface ProjectProviderRuntimeOptions {
   localProvider?: InferenceProvider;
   credentials?: CredentialManager;
   settings?: ProviderSettingsStore;
+  budget?: ProviderBudgetManager;
   cloudProviderFactories?: Record<string, CloudProviderFactory>;
   metrics?: RoutingMetricsSource;
 }
@@ -145,6 +147,7 @@ export class ProjectProviderRuntime {
   private readonly localProvider?: InferenceProvider;
   private readonly credentials: CredentialManager;
   private readonly settings: ProviderSettingsStore;
+  private readonly budget: ProviderBudgetManager;
   private readonly factories: Record<string, CloudProviderFactory>;
   private readonly metrics?: RoutingMetricsSource;
 
@@ -152,6 +155,7 @@ export class ProjectProviderRuntime {
     this.localProvider = options.localProvider;
     this.credentials = options.credentials ?? new CredentialManager();
     this.settings = options.settings ?? new ProviderSettingsStore();
+    this.budget = options.budget ?? new ProviderBudgetManager({ settings: this.settings });
     this.factories = { ...defaultCloudFactories, ...(options.cloudProviderFactories ?? {}) };
     this.metrics = options.metrics;
   }
@@ -182,7 +186,7 @@ export class ProjectProviderRuntime {
           `Provider factory ${providerId} returned inconsistent provider identity/kind.`
         );
       }
-      if (allowed(project, provider)) providers.push(provider);
+      if (allowed(project, provider)) providers.push(this.budget.wrap(provider));
     }
 
     return new ProviderRegistry(providers);
@@ -231,7 +235,7 @@ export class ProjectProviderRuntime {
     if (provider.id !== providerId || provider.kind !== 'cloud') {
       throw new Error(`Provider factory ${providerId} returned inconsistent provider identity/kind.`);
     }
-    return { provider };
+    return { provider: this.budget.wrap(provider) };
   }
 
   /**
