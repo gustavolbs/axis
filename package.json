@@ -1,10 +1,11 @@
 {
   "name": "local-coder-mcp",
+  "productName": "Local Coder",
   "version": "0.14.0",
   "private": true,
   "description": "Provider-agnostic software engineering agent with Claude/MCP and standalone macOS interfaces.",
   "type": "module",
-  "main": "desktop/bootstrap.mjs",
+  "main": "desktop/main.mjs",
   "engines": {
     "node": ">=20"
   },
