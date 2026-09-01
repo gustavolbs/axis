@@ -12,6 +12,7 @@ import { ProjectProviderRuntime } from '../src/project-provider-runtime.js';
 import { ProviderSettingsStore } from '../src/provider-settings.js';
 import type {
   InferenceProvider,
+  ModelDefinition,
   ProviderCapabilities
 } from '../src/providers/types.js';
 import type { SecretStore } from '../src/secret-store.js';
@@ -43,50 +44,30 @@ const capabilities: ProviderCapabilities = {
   toolUse: false
 };
 
-function openAiFactory(secrets: string[]): (apiKey: string) => InferenceProvider {
+function cloudFactory(
+  providerId: string,
+  models: ModelDefinition[],
+  secrets: string[]
+): (apiKey: string) => InferenceProvider {
   return (apiKey) => {
     secrets.push(apiKey);
     return {
-      id: 'openai',
+      id: providerId,
       kind: 'cloud',
       capabilities,
-      async listModels() {
-        return [
-          {
-            providerId: 'openai',
-            id: 'gpt-5.6',
-            displayName: 'GPT-5.6',
-            createdAt: '2026-08-30T00:00:00.000Z',
-            contextWindow: 1_050_000,
-            maxOutputTokens: 131_072
-          },
-          {
-            providerId: 'openai',
-            id: 'gpt-5.5',
-            displayName: 'GPT-5.5',
-            createdAt: '2026-07-01T00:00:00.000Z',
-            contextWindow: 400_000,
-            maxOutputTokens: 64_000
-          },
-          {
-            providerId: 'openai',
-            id: 'text-embedding-3-large',
-            displayName: 'text-embedding-3-large'
-          }
-        ];
-      },
+      async listModels() { return models; },
       async health() {
         return {
-          providerId: 'openai',
+          providerId,
           ok: true,
           checkedAt: new Date(0).toISOString(),
           latencyMs: 1,
-          modelsAvailable: 3
+          modelsAvailable: models.length
         };
       },
       async invoke(request) {
         return {
-          providerId: 'openai',
+          providerId,
           model: request.model,
           content: 'ok',
           latencyMs: 1,
@@ -97,7 +78,41 @@ function openAiFactory(secrets: string[]): (apiKey: string) => InferenceProvider
   };
 }
 
-function runtimeFixture() {
+const openAiModels: ModelDefinition[] = [
+  {
+    providerId: 'openai',
+    id: 'gpt-5.6',
+    displayName: 'GPT-5.6',
+    createdAt: '2026-08-30T00:00:00.000Z',
+    contextWindow: 1_050_000,
+    maxOutputTokens: 131_072
+  },
+  {
+    providerId: 'openai',
+    id: 'gpt-5.5',
+    displayName: 'GPT-5.5',
+    createdAt: '2026-07-01T00:00:00.000Z',
+    contextWindow: 400_000,
+    maxOutputTokens: 64_000
+  },
+  {
+    providerId: 'openai',
+    id: 'text-embedding-3-large',
+    displayName: 'text-embedding-3-large'
+  }
+];
+
+const anthropicModels: ModelDefinition[] = [
+  {
+    providerId: 'anthropic',
+    id: 'claude-opus-4-1',
+    displayName: 'Claude Opus 4.1',
+    contextWindow: 200_000,
+    maxOutputTokens: 32_000
+  }
+];
+
+function runtimeFixture(extraFactories: Record<string, (apiKey: string) => InferenceProvider> = {}) {
   const dir = tempDir('runtime');
   const keychain = new MemorySecretStore();
   const credentials = new CredentialManager(
@@ -105,17 +120,22 @@ function runtimeFixture() {
     { keychain }
   );
   const settings = new ProviderSettingsStore(path.join(dir, 'providers.json'));
-  const secrets: string[] = [];
+  const openAiSecrets: string[] = [];
+  const anthropicSecrets: string[] = [];
   const runtime = new ProjectProviderRuntime({
     credentials,
     settings,
-    cloudProviderFactories: { openai: openAiFactory(secrets) }
+    cloudProviderFactories: {
+      openai: cloudFactory('openai', openAiModels, openAiSecrets),
+      anthropic: cloudFactory('anthropic', anthropicModels, anthropicSecrets),
+      ...extraFactories
+    }
   });
-  return { credentials, keychain, runtime, secrets };
+  return { credentials, keychain, runtime, openAiSecrets, anthropicSecrets };
 }
 
 test('personal Chat discovers an available personal OpenAI credential and only conversational models', async () => {
-  const { credentials, runtime, secrets } = runtimeFixture();
+  const { credentials, runtime, openAiSecrets } = runtimeFixture();
   credentials.addOrReplaceKeychainCredential({
     id: 'personal-openai',
     providerId: 'openai',
@@ -130,7 +150,7 @@ test('personal Chat discovers an available personal OpenAI credential and only c
   assert.deepEqual(openai.models.map((model) => model.id), ['gpt-5.6', 'gpt-5.5']);
   assert.equal(openai.models.some((model) => model.id.includes('embedding')), false);
   assert.equal(openai.models[0]?.contextWindow, 1_050_000);
-  assert.equal(secrets.includes('sk-personal-test-value'), true);
+  assert.equal(openAiSecrets.includes('sk-personal-test-value'), true);
 
   const resolved = await runtime.personalModelDefinition('openai', 'gpt-5.6');
   assert.equal(resolved.provider.id, 'openai');
@@ -138,26 +158,61 @@ test('personal Chat discovers an available personal OpenAI credential and only c
   assert.equal(resolved.model.maxOutputTokens, 131_072);
 });
 
-test('personal Chat never uses organization-scoped credentials', async () => {
-  const { credentials, runtime, secrets } = runtimeFixture();
+test('Anthropic uses the same personal credential path as OpenAI', async () => {
+  const { credentials, runtime, anthropicSecrets } = runtimeFixture();
+  credentials.addOrReplaceKeychainCredential({
+    id: 'personal-anthropic',
+    providerId: 'anthropic',
+    label: 'Personal Anthropic',
+    secret: 'sk-ant-personal-test-value'
+  });
+
+  const catalog = await runtime.personalChatCatalog();
+  const anthropic = catalog.providers.find((provider) => provider.id === 'anthropic');
+  assert.ok(anthropic);
+  assert.equal(anthropic.ready, true);
+  assert.deepEqual(anthropic.models.map((model) => model.id), ['claude-opus-4-1']);
+  assert.equal(anthropicSecrets.includes('sk-ant-personal-test-value'), true);
+
+  const resolved = await runtime.personalModelDefinition('anthropic', 'claude-opus-4-1');
+  assert.equal(resolved.provider.id, 'anthropic');
+  assert.equal(resolved.model.id, 'claude-opus-4-1');
+  assert.equal(resolved.model.contextWindow, 200_000);
+});
+
+test('personal Chat never uses organization-scoped credentials for any provider', async () => {
+  const { credentials, runtime, openAiSecrets, anthropicSecrets } = runtimeFixture();
   credentials.addOrReplaceKeychainCredential({
     id: 'company-openai',
     providerId: 'openai',
     label: 'Company OpenAI',
     organizationId: 'company-a',
-    secret: 'sk-company-test-value'
+    secret: 'sk-company-openai'
+  });
+  credentials.addOrReplaceKeychainCredential({
+    id: 'company-anthropic',
+    providerId: 'anthropic',
+    label: 'Company Anthropic',
+    organizationId: 'company-a',
+    secret: 'sk-company-anthropic'
   });
 
   const catalog = await runtime.personalChatCatalog();
-  const openai = catalog.providers.find((provider) => provider.id === 'openai');
-  assert.ok(openai);
-  assert.equal(openai.ready, false);
-  assert.match(openai.reason ?? '', /personal OpenAI API key/);
-  assert.deepEqual(secrets, []);
-  await assert.rejects(
-    runtime.personalModelDefinition('openai', 'gpt-5.6'),
-    /personal OpenAI API key/
-  );
+  for (const providerId of ['openai', 'anthropic']) {
+    const provider = catalog.providers.find((item) => item.id === providerId);
+    assert.ok(provider);
+    assert.equal(provider.ready, false);
+    assert.match(provider.reason ?? '', new RegExp(`personal ${providerId} credential`));
+    await assert.rejects(
+      runtime.personalModelDefinition(
+        providerId,
+        providerId === 'openai' ? 'gpt-5.6' : 'claude-opus-4-1'
+      ),
+      new RegExp(`personal ${providerId} credential`)
+    );
+  }
+  assert.deepEqual(openAiSecrets, []);
+  assert.deepEqual(anthropicSecrets, []);
 });
 
 test('personal Chat fails closed when multiple personal credentials could match one provider', async () => {
@@ -182,9 +237,61 @@ test('personal Chat fails closed when multiple personal credentials could match 
   );
 });
 
+test('a future registered cloud provider automatically inherits personal Chat credential isolation', async () => {
+  const futureSecrets: string[] = [];
+  const futureModels: ModelDefinition[] = [{
+    providerId: 'future-ai',
+    id: 'future-chat-1',
+    displayName: 'Future Chat 1',
+    contextWindow: 512_000,
+    maxOutputTokens: 64_000
+  }];
+  const { credentials, runtime } = runtimeFixture({
+    'future-ai': cloudFactory('future-ai', futureModels, futureSecrets)
+  });
+
+  let catalog = await runtime.personalChatCatalog();
+  let future = catalog.providers.find((provider) => provider.id === 'future-ai');
+  assert.ok(future, 'registered factories must automatically appear in the personal catalog');
+  assert.equal(future.ready, false);
+  assert.match(future.reason ?? '', /personal future-ai credential/);
+
+  credentials.addOrReplaceKeychainCredential({
+    id: 'company-future',
+    providerId: 'future-ai',
+    label: 'Company Future',
+    organizationId: 'company-a',
+    secret: 'future-company-secret'
+  });
+  catalog = await runtime.personalChatCatalog();
+  future = catalog.providers.find((provider) => provider.id === 'future-ai');
+  assert.ok(future);
+  assert.equal(future.ready, false, 'organization credentials must remain excluded');
+  assert.deepEqual(futureSecrets, []);
+
+  credentials.addOrReplaceKeychainCredential({
+    id: 'personal-future',
+    providerId: 'future-ai',
+    label: 'Personal Future',
+    secret: 'future-personal-secret'
+  });
+  catalog = await runtime.personalChatCatalog();
+  future = catalog.providers.find((provider) => provider.id === 'future-ai');
+  assert.ok(future);
+  assert.equal(future.ready, true);
+  assert.deepEqual(future.models.map((model) => model.id), ['future-chat-1']);
+  assert.equal(futureSecrets.includes('future-company-secret'), false);
+  assert.equal(futureSecrets.includes('future-personal-secret'), true);
+
+  const resolved = await runtime.personalModelDefinition('future-ai', 'future-chat-1');
+  assert.equal(resolved.provider.id, 'future-ai');
+  assert.equal(resolved.model.id, 'future-chat-1');
+});
+
 test('projectless Chat exposes and submits exact personal provider models without weakening Cowork', () => {
   const appRuntime = lf(fs.readFileSync(path.join(process.cwd(), 'src/app-runtime.ts'), 'utf8'));
   const executionRuntime = lf(fs.readFileSync(path.join(process.cwd(), 'src/execution-runtime.ts'), 'utf8'));
+  const providerRuntime = lf(fs.readFileSync(path.join(process.cwd(), 'src/project-provider-runtime.ts'), 'utf8'));
   const surface = lf(fs.readFileSync(path.join(process.cwd(), 'app/src/AgentSurfaceV2.tsx'), 'utf8'));
 
   assert.match(appRuntime, /pathname === '\/chat\/catalog'/);
@@ -193,6 +300,8 @@ test('projectless Chat exposes and submits exact personal provider models withou
   assert.match(executionRuntime, /personalModelDefinition\(/);
   assert.match(executionRuntime, /new SelectedProviderChatClient/);
   assert.match(executionRuntime, /input\.interactionMode === 'chat' && !input\.projectId/);
+  assert.match(providerRuntime, /\.\.\.Object\.keys\(this\.factories\)/);
+  assert.match(providerRuntime, /profile\.organizationId === undefined/);
 
   assert.match(surface, /'\/api\/chat\/catalog'/);
   assert.match(surface, /modelOverrideAllowed = Boolean\(selectedProject\) \|\| mode === 'chat'/);
