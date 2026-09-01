@@ -1,0 +1,73 @@
+name: Final host-neutral audit
+
+on:
+  push:
+    branches:
+      - refactor/standalone-desktop-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    if: ${{ !contains(github.event.head_commit.message, '[host-neutral]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/standalone-desktop-runtime
+          fetch-depth: 0
+      - name: Remove retired host language
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          replacements = {
+            'must stay in Claude': 'requires guidance before bounded execution',
+            'must stay with Claude': 'requires guidance before bounded execution',
+            'resolved by Claude': 'resolved before bounded implementation',
+            'Claude-decomposed': 'planner-decomposed',
+            'Claude decomposition': 'planner decomposition',
+            'Claude escalation': 'guidance checkpoint',
+            'Claude research handoff': 'external research guidance checkpoint',
+            'review requires Claude': 'review requires guidance',
+            'requires Claude': 'requires guidance',
+            'in Claude': 'through standalone guidance',
+            'Claude-session': 'app-session',
+            'Claude session': 'app session',
+            'Full diff review by Claude': 'Full independent diff review',
+            'Keep it in Claude': 'Request standalone guidance',
+            'local_engineer request': 'engineering request',
+          }
+          for root in [Path('src'), Path('test'), Path('scripts')]:
+            if not root.exists():
+              continue
+            for path in root.rglob('*'):
+              if not path.is_file() or path.suffix not in {'.ts','.tsx','.js','.mjs','.cjs','.json','.ps1'}:
+                continue
+              text = path.read_text()
+              updated = text
+              for old, new in replacements.items():
+                updated = updated.replace(old, new)
+              if updated != text:
+                path.write_text(updated)
+          PY
+
+          echo 'Remaining host-specific matches:'
+          git grep -nE 'claudeGuidance|needs-claude|claudeReviewRequired|must stay in Claude|resolved by Claude|requires Claude|Claude[- ]session|Claude-decomposed|Claude escalation|Claude research handoff|review requires Claude|Full diff review by Claude|local_engineer request' -- src test scripts || true
+
+          if git grep -nE 'claudeGuidance|needs-claude|claudeReviewRequired|must stay in Claude|resolved by Claude|requires Claude|Claude[- ]session|Claude-decomposed|Claude escalation|Claude research handoff|review requires Claude|Full diff review by Claude|local_engineer request' -- src test scripts; then
+            echo 'Retired host semantics remain' >&2
+            exit 1
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'refactor: remove remaining host-specific semantics [host-neutral]'
+          git push origin HEAD:refactor/standalone-desktop-runtime
