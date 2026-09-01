@@ -42,14 +42,17 @@ test('saving one setting does not wipe the others', () => {
     'that path resolves to the app settings file and replacing it loses the worker config');
 });
 
-test('direct mode is selectable so the worker bearer token is not required', () => {
-  // The token comes from the remote worker protocol, not from Ollama:
-  // executionMode 'local' talks to Ollama directly and never consults it.
-  assert.match(runtime, /requiresWorkerToken: this\.config\.executionMode !== 'local'/);
+test('worker bearer authentication is optional in every execution mode', () => {
+  // Windows Worker auth is opt-in. Without a configured token the worker relies
+  // on its restricted firewall boundary; when a token exists Bearer validation
+  // remains enabled by the worker protocol.
+  assert.match(runtime, /workerTokenOptional: true/);
+  assert.match(runtime, /requiresWorkerToken: false/);
   assert.match(runtime, /executionMode must be 'local', 'remote' or 'auto'/);
   assert.match(runtime, /restartRequired/, 'the execution runtime is built once at startup');
   assert.match(panels, /'Direct to Ollama'/);
-  assert.match(panels, /'No token'/);
+  assert.match(panels, /'No worker token'/);
+  assert.match(panels, /'Token optional'/);
   assert.match(panels, /executionMode: next/);
   assert.match(fixesCss, /\.settings-mode-choice/);
 });
