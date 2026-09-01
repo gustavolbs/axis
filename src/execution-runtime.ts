@@ -134,8 +134,9 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
 
   constructor(
     private readonly legacy: ExecutionBackend,
-    config: LocalCoderConfig,
-    ollama: OllamaClient
+    private readonly config: LocalCoderConfig,
+    ollama: OllamaClient,
+    private readonly directChat: ChatClient
   ) {
     this.engineer = new ProjectAwareEngineerBackend(config, ollama, legacy);
   }
@@ -149,6 +150,35 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
   }
 
   async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
+    // A project-less Chat must bypass the engineer transport itself, not only the
+    // agent pipeline. RemoteWorkerClient.executeEngineer() snapshots a Git workspace
+    // before contacting Windows, which is invalid for a conversation with no folder.
+    // Route straight to the runtime chat client so remote mode uses /v1/chat and never
+    // invokes prepareRemoteWorkspace(). Project-scoped Chat still goes through the
+    // project-aware backend so its provider/model/privacy policy remains enforced.
+    if (input.interactionMode === 'chat' && !input.projectId) {
+      if (
+        input.routingPolicy !== undefined ||
+        input.modelSelection !== undefined ||
+        (input.reasoningEffort !== undefined && input.reasoningEffort !== 'auto')
+      ) {
+        throw new Error('Per-task routing, model, and effort overrides require a configured Project.');
+      }
+      const {
+        projectId: _projectId,
+        budgetJobId: _budgetJobId,
+        routingPolicy: _routingPolicy,
+        modelSelection: _modelSelection,
+        reasoningEffort: _reasoningEffort,
+        ...chatInput
+      } = input;
+      return (
+        await executePremiumLocalAgent(this.directChat, this.config, {
+          ...chatInput,
+          workspace: ''
+        })
+      ).result;
+    }
     return await this.engineer.executeEngineer(input);
   }
 
@@ -171,9 +201,10 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
 function projectAware(
   legacy: ExecutionBackend,
   config: LocalCoderConfig,
-  ollama: OllamaClient
+  ollama: OllamaClient,
+  directChat: ChatClient
 ): ExecutionBackend {
-  return new ProjectAwareExecutionBackend(legacy, config, ollama);
+  return new ProjectAwareExecutionBackend(legacy, config, ollama, directChat);
 }
 
 const WORKER_NOT_CONFIGURED = 'No worker URL is set. Add one in Settings → General → Windows worker.';
@@ -207,7 +238,7 @@ export function createExecutionRuntime(
     return {
       mode: config.executionMode,
       chat: unconfigured,
-      execution: projectAware(unconfigured, config, ollama),
+      execution: projectAware(unconfigured, config, ollama, unconfigured),
       health: async () => ({
         executionMode: config.executionMode,
         workerConfigured: false,
@@ -220,7 +251,7 @@ export function createExecutionRuntime(
     return {
       mode: 'local',
       chat: ollama,
-      execution: projectAware(localExecution, config, ollama),
+      execution: projectAware(localExecution, config, ollama, ollama),
       health: async () => ({
         executionMode: 'local',
         ollama: await ollama.health()
@@ -234,7 +265,7 @@ export function createExecutionRuntime(
     return {
       mode: 'remote',
       chat: remote,
-      execution: projectAware(remote, config, ollama),
+      execution: projectAware(remote, config, ollama, remote),
       health: async () => ({
         executionMode: 'remote',
         workerUrl: config.remoteWorkerUrl,
@@ -249,7 +280,7 @@ export function createExecutionRuntime(
   return {
     mode: 'auto',
     chat: autoChat,
-    execution: projectAware(autoExecution, config, ollama),
+    execution: projectAware(autoExecution, config, ollama, autoChat),
     health: async () => {
       try {
         return {
