@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   PricingStore,
-  calculateUsageCostUsd,
-  type ModelPricing
+  estimateRequestCostUsd
 } from './pricing-store.js';
 import { ProviderSettingsStore } from './provider-settings.js';
 import type { InferenceProvider, InferenceRequest, InferenceResult } from './providers/types.js';
@@ -82,20 +81,6 @@ function reservationCost(
     .reduce((sum, reservation) => sum + reservation.upperBoundCostUsd, 0));
 }
 
-function upperBoundCost(request: InferenceRequest, pricing: ModelPricing): number | undefined {
-  const maxOutputTokens = request.maxOutputTokens;
-  if (maxOutputTokens === undefined || !Number.isFinite(maxOutputTokens) || maxOutputTokens <= 0) {
-    return undefined;
-  }
-  // One UTF-8 byte per input token is intentionally conservative. Budget enforcement
-  // must never under-reserve because a tokenizer/provider reports usage only after billing.
-  const promptBytes = Buffer.byteLength(`${request.systemPrompt}\n${request.userPrompt}`, 'utf8');
-  return calculateUsageCostUsd({
-    inputTokens: Math.max(1, promptBytes),
-    outputTokens: Math.ceil(maxOutputTokens)
-  }, pricing);
-}
-
 function reservationLeaseMs(request: InferenceRequest): number {
   const requested = request.timeoutMs ?? 1_800_000;
   return Math.max(60_000, Math.min(requested + 120_000, 7_200_000));
@@ -129,8 +114,8 @@ export class ProviderBudgetManager {
           { modelId: request.model, limitUsd }
         );
       }
-      const upper = upperBoundCost(request, pricing);
-      if (upper === undefined) {
+      const estimate = estimateRequestCostUsd(request, pricing);
+      if (!estimate) {
         throw new ProviderBudgetError(
           'output-bound-required',
           provider.id,
@@ -138,6 +123,7 @@ export class ProviderBudgetManager {
           { modelId: request.model, limitUsd }
         );
       }
+      const upper = estimate.estimatedCostUsd;
 
       const now = this.now();
       const month = completeMonthSpend(this.ledger, provider.id, now);
