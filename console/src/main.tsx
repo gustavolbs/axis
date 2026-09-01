@@ -15,9 +15,12 @@ import './reference-fidelity.css';
 import './claude-reference-overrides.css';
 import './ui-select.css';
 import './settings-panels.css';
+import './audit-v2.css';
 
 const storedTheme = localStorage.getItem('local-coder.theme');
-document.documentElement.dataset.lcTheme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : 'system';
+const theme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : 'system';
+document.documentElement.dataset.lcTheme = theme;
+void window.lc?.setTheme(theme);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
