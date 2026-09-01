@@ -38,6 +38,7 @@ import {
 import {
   ProjectStore,
   projectIsolationKey,
+  projectRepoMemoryScopeKey,
   type ModelSelection,
   type ProjectDefinition,
   type RoutingPolicy
@@ -216,6 +217,24 @@ function escalationStage(escalation: LocalEngineerEscalation): InferenceStage {
   return 'other';
 }
 
+function withProjectInstructions(
+  project: ProjectDefinition,
+  input: ProjectEngineerInput
+): ProjectEngineerInput {
+  const instructions = project.instructions?.trim();
+  if (!instructions) return input;
+  const existing = input.context?.trim();
+  return {
+    ...input,
+    context: [
+      '# PROJECT INSTRUCTIONS',
+      'These instructions apply to every conversation explicitly scoped to this Project.',
+      instructions,
+      existing ? `# TASK CONTEXT\n${existing}` : undefined
+    ].filter((value): value is string => Boolean(value)).join('\n\n')
+  };
+}
+
 function escalationPrompt(input: ProjectEngineerInput, escalation: LocalEngineerEscalation): string {
   return JSON.stringify({
     taskGoal: input.goal,
@@ -313,11 +332,10 @@ function trace(event: ProjectRouteEvent): ProjectRoutingTraceEntry {
 }
 
 /**
- * Project-aware engineer wrapper. Unregistered workspaces delegate byte-for-byte to the
- * legacy backend. Registered Project workspaces keep orchestration and workspace mutation
- * inside the standalone Mac app, then route cognitive calls to cloud directly or to local
- * Qwen inference on the Mac/Windows worker. An explicit projectId is supported by the
- * desktop runtime for Project-scoped jobs.
+ * Project-aware engineer wrapper. Projects are explicit conversation scopes, not inferred
+ * from folders. A Project may provide a default folder, but only Cowork requires a folder;
+ * Chat never resolves one. Project instructions, provider policies and credentials apply
+ * only when projectId is explicitly supplied.
  */
 export class ProjectAwareEngineerBackend {
   private readonly projects: ProjectStore;
@@ -359,6 +377,7 @@ export class ProjectAwareEngineerBackend {
       return await this.legacy.executeEngineer(legacyInput);
     }
     const { project, workspace: projectWorkspace } = resolved;
+    const scopedInput = withProjectInstructions(project, input);
 
     const budget = this.createBudgetSession(project, input.budgetJobId);
     const localProvider = createLocalInferenceProvider(
@@ -428,8 +447,10 @@ export class ProjectAwareEngineerBackend {
       reasoningEffort: _reasoningEffort,
       chatModelLimits: _chatModelLimits,
       ...agentInput
-    } = input;
-    const memoryScopeKey = projectIsolationKey(project);
+    } = scopedInput;
+    const memoryScopeKey = input.interactionMode === 'chat'
+      ? projectIsolationKey(project)
+      : projectRepoMemoryScopeKey(project, projectWorkspace);
     const execution = await this.agentExecutor(routedChat, this.config, {
       ...agentInput,
       workspace: projectWorkspace,
@@ -569,9 +590,10 @@ export class ProjectAwareEngineerBackend {
       throw new Error(`Escalation target ${option.providerId}/${option.modelId} became unavailable.`);
     }
     const provider = registry.get(option.providerId);
+    const scopedInput = withProjectInstructions(project, input);
     const inference: Omit<InferenceRequest, 'model'> = {
       systemPrompt: ESCALATION_SYSTEM_PROMPT,
-      userPrompt: escalationPrompt(input, escalation),
+      userPrompt: escalationPrompt(scopedInput, escalation),
       stage: plan.stage,
       output: { type: 'text' },
       reasoning: effort === 'none' ? undefined : { effort },
@@ -642,43 +664,30 @@ export class ProjectAwareEngineerBackend {
   private async resolveProject(
     input: ProjectEngineerInput
   ): Promise<{ project?: ProjectDefinition; workspace: string }> {
-    if (!input.projectId && this.projects.list().length === 0) {
-      return { workspace: input.workspace };
+    if (!input.projectId) {
+      if (input.interactionMode === 'chat') return { workspace: '' };
+      return { workspace: await resolveWorkspace(input.workspace) };
     }
 
-    // A chat with no project has no folder to resolve, and resolveWorkspace
-    // throws on an empty path. Nothing downstream of a chat reads it.
-    if (!input.projectId && input.interactionMode === 'chat' && !input.workspace.trim()) {
-      return { workspace: '' };
-    }
+    const project = this.projects.get(input.projectId);
+    if (!project) throw new Error(`Project not found: ${input.projectId}`);
+    if (input.interactionMode === 'chat') return { project, workspace: '' };
 
-    const workspace = await resolveWorkspace(input.workspace);
-    if (input.projectId) {
-      const project = this.projects.get(input.projectId);
-      if (!project) throw new Error(`Project not found: ${input.projectId}`);
-      const projectWorkspace = await resolveWorkspace(project.workspace);
-      if (workspace !== projectWorkspace) {
+    const requestedWorkspace = input.workspace.trim();
+    const projectWorkspace = project.workspace.trim();
+    const chosenWorkspace = projectWorkspace || requestedWorkspace;
+    if (!chosenWorkspace) {
+      throw new Error(`Cowork in Project ${project.id} requires a folder for this execution.`);
+    }
+    const resolvedWorkspace = await resolveWorkspace(chosenWorkspace);
+    if (projectWorkspace && requestedWorkspace) {
+      const requested = await resolveWorkspace(requestedWorkspace);
+      if (requested !== resolvedWorkspace) {
         throw new Error(
-          `Project ${project.id} is bound to ${projectWorkspace}; refusing workspace ${workspace}.`
+          `Project ${project.id} defaults to ${resolvedWorkspace}; refusing workspace ${requested}.`
         );
       }
-      return { project, workspace: projectWorkspace };
     }
-
-    const matches: ProjectDefinition[] = [];
-    for (const project of this.projects.list()) {
-      try {
-        if (await resolveWorkspace(project.workspace) === workspace) matches.push(project);
-      } catch {
-        // Stale/unmounted Projects must not block unrelated workspaces.
-      }
-    }
-    if (matches.length > 1) {
-      throw new Error(
-        `Workspace ${workspace} belongs to multiple Projects (${matches.map((project) => project.id).join(', ')}). ` +
-        'Select projectId explicitly.'
-      );
-    }
-    return { project: matches[0], workspace };
+    return { project, workspace: resolvedWorkspace };
   }
 }
