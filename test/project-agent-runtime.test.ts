@@ -204,6 +204,7 @@ test('registered speed-first Project invokes cloud directly from desktop app age
   });
   const settings = new ProviderSettingsStore(path.join(root, 'providers.json'));
   settings.update('anthropic', {
+    unlimitedUsage: true,
     defaultModelId: 'cloud-fast',
     models: { 'cloud-fast': { frontier: true, qualityScore: 95 } }
   });
@@ -255,7 +256,7 @@ test('registered speed-first Project invokes cloud directly from desktop app age
     } as never
   );
 
-  const result = await backend.executeEngineer({ workspace, goal: 'ship quickly' }) as ProjectEngineerResult;
+  const result = await backend.executeEngineer({ projectId: project.id, workspace, goal: 'ship quickly' }) as ProjectEngineerResult;
   assert.equal(agentCapture.calls, 1);
   assert.equal(agentCapture.repoMemoryScopeKey, projectIsolationKey(project));
   assert.equal(cloudSecret, 'cloud-secret');
@@ -296,7 +297,7 @@ test('registered Local-only Project runs desktop app agent with Qwen chat on Win
     { projects, remoteClient, agentExecutor: fakeAgent(agentCapture) }
   );
 
-  const result = await backend.executeEngineer({ workspace, goal: 'stay local' }) as ProjectEngineerResult;
+  const result = await backend.executeEngineer({ projectId: project.id, workspace, goal: 'stay local' }) as ProjectEngineerResult;
   assert.equal(agentCapture.calls, 1);
   assert.equal(remoteChatCalls, 1);
   assert.equal(agentCapture.repoMemoryScopeKey, projectIsolationKey(project));
@@ -329,7 +330,7 @@ test('explicit Project id cannot be used against a different workspace', async (
 
   await assert.rejects(
     backend.executeEngineer({ projectId: 'project-a', workspace: workspaceB, goal: 'cross boundary' }),
-    /bound to .* refusing workspace/
+    /defaults to .* refusing workspace/
   );
 });
 

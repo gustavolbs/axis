@@ -146,6 +146,7 @@ test('Project agent returns the same priced usage persisted in its ledger', asyn
   });
   const settings = new ProviderSettingsStore(path.join(root, 'providers.json'));
   settings.update('anthropic', {
+    unlimitedUsage: true,
     defaultModelId: 'cloud-model',
     models: { 'cloud-model': { frontier: true, qualityScore: 95 } }
   });
@@ -194,7 +195,11 @@ test('Project agent returns the same priced usage persisted in its ledger', asyn
     }
   );
 
-  const result = await backend.executeEngineer({ workspace, goal: 'use cloud safely' }) as ProjectEngineerResult;
+  const result = await backend.executeEngineer({
+    projectId: project.id,
+    workspace,
+    goal: 'use cloud safely'
+  }) as ProjectEngineerResult;
   assert.equal(cloud.calls, 1);
   assert.equal(result.projectExecution?.routingTrace[0]?.providerId, 'anthropic');
   assert.equal(result.projectExecution?.routingTrace[0]?.modelId, 'cloud-model');
