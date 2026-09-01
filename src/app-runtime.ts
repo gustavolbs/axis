@@ -277,6 +277,11 @@ export class DesktopAppRuntime {
       if (!job) throw new Error('Job not found.');
       return { job };
     }
+    const followUpMatch = /^\/jobs\/([A-Za-z0-9-]+)\/follow-up$/.exec(pathname);
+    if (method === 'POST' && followUpMatch) {
+      const body = objectBody(request.body);
+      return { job: await this.jobs.followUp(followUpMatch[1], requiredString(body, 'message')) };
+    }
     const cancelMatch = /^\/jobs\/([A-Za-z0-9-]+)\/cancel$/.exec(pathname);
     if (method === 'POST' && cancelMatch) return { job: await this.jobs.cancel(cancelMatch[1]) };
     const decisionMatch = /^\/jobs\/([A-Za-z0-9-]+)\/decision$/.exec(pathname);
