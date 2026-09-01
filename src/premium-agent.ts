@@ -21,9 +21,16 @@ import { assessEngineeringQuality, type QualityAssessment } from './quality-gate
 import { ResearchBroker, type ResearchOutcome } from './research-broker.js';
 import { resolveWorkspace } from './workspace.js';
 
+type DirectChatHistoryTurn = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+
 type PremiumAgentInput = LocalEngineerInput & {
   repoMemoryScopeKey?: string;
   interactionMode?: 'chat' | 'cowork';
+  /** Earlier Chat turns. The current user message remains input.goal. */
+  chatHistory?: DirectChatHistoryTurn[];
 };
 type AgentModel = Pick<OllamaClient, 'chat'>;
 
@@ -185,9 +192,33 @@ This request is in Chat mode, not Cowork mode.
 Respond directly and naturally to the user's message.
 Do not inspect, search, plan, edit, validate, review, or otherwise operate on a repository.
 Do not create implementation plans, material-decision checkpoints, or engineering escalation requests.
-Use only information the user explicitly supplied in the message or attached context.
+Use only information the user explicitly supplied in the current message, prior conversation history, or attached context.
 For casual conversation, answer casually and concisely.
 Reply in the user's language unless they ask for another language.`;
+
+const DIRECT_CHAT_HISTORY_MAX_CHARS = 24_000;
+const DIRECT_CHAT_TURN_MAX_CHARS = 12_000;
+
+function renderDirectChatHistory(turns: DirectChatHistoryTurn[] | undefined): string {
+  if (!turns?.length) return '';
+  const selected: string[] = [];
+  let used = 0;
+  let omitted = false;
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    const content = turn.content.trim().slice(0, DIRECT_CHAT_TURN_MAX_CHARS);
+    if (!content) continue;
+    const rendered = `${turn.role === 'user' ? 'USER' : 'ASSISTANT'}:\n${content}`;
+    if (used + rendered.length > DIRECT_CHAT_HISTORY_MAX_CHARS) {
+      omitted = true;
+      break;
+    }
+    selected.unshift(rendered);
+    used += rendered.length;
+  }
+  if (omitted) selected.unshift('[Older conversation turns omitted to stay inside the chat context budget.]');
+  return selected.join('\n\n');
+}
 
 function generationMeta(generation: OllamaGeneration): LocalEngineerResult['modelCalls'][number] {
   return {
@@ -204,8 +235,10 @@ async function executeDirectChat(
   config: LocalCoderConfig,
   input: PremiumAgentInput
 ): Promise<LocalEngineerExecution> {
+  const history = renderDirectChatHistory(input.chatHistory);
   const userPrompt = [
-    input.goal.trim(),
+    history ? `# CONVERSATION HISTORY\n${history}` : input.goal.trim(),
+    history ? `# CURRENT USER MESSAGE\n${input.goal.trim()}` : '',
     input.context?.trim() ? `# USER-PROVIDED CONTEXT\n${input.context.trim()}` : '',
     input.constraints?.length
       ? `# USER CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}`

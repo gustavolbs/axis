@@ -113,6 +113,12 @@ interface JobEvent {
   title: string;
   data?: Record<string, unknown>;
 }
+interface JobTurn {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+}
 interface Job {
   id: string;
   status: string;
@@ -128,6 +134,7 @@ interface Job {
     modelSelection?: ModelSelection;
     reasoningEffort?: JobReasoningEffort;
   };
+  turns: JobTurn[];
   decisionRequest?: DecisionRequest;
   escalationPlan?: EscalationPlan;
   result?: EngineerResult;
@@ -245,6 +252,9 @@ function defaultComposerSelection(catalog: ProjectCatalog): string {
 }
 function isWorking(status?: string) {
   return status === 'queued' || status === 'running';
+}
+function canFollowUp(status?: string) {
+  return status === 'success' || status === 'error' || status === 'cancelled';
 }
 function greeting(name?: string) {
   const hour = new Date().getHours();
@@ -478,6 +488,37 @@ export function AgentSurfaceV2() {
     }
   }
 
+  async function followUpChat() {
+    if (!active || active.input.interactionMode !== 'chat' || !canFollowUp(active.status) || !goal.trim()) return;
+    setSubmitting(true);
+    setError(undefined);
+    try {
+      const { job } = await api<{ job: Job }>(`/api/jobs/${active.id}/follow-up`, {
+        method: 'POST',
+        body: JSON.stringify({ message: goal.trim() })
+      });
+      setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
+      // Keep the active conversation open: a follow-up is another turn, not a new job.
+      setGoal('');
+      setExtrasOpen(false);
+      setModelMenu('closed');
+      setProjectMenu(false);
+    } catch (next) {
+      setError(next instanceof Error ? next.message : String(next));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function sendCurrentMessage() {
+    if (!goal.trim()) return;
+    if (active?.input.interactionMode === 'chat') {
+      if (canFollowUp(active.status)) await followUpChat();
+      return;
+    }
+    await createJob();
+  }
+
   async function retryRuntime() {
     try {
       await api('/api/health');
@@ -543,7 +584,7 @@ export function AgentSurfaceV2() {
   function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      void createJob();
+      void sendCurrentMessage();
     }
   }
 
@@ -614,7 +655,7 @@ export function AgentSurfaceV2() {
         submitting={submitting}
         canSubmit={Boolean(goal.trim())}
         activeWorking={Boolean(active && isWorking(active.status))}
-        createJob={createJob}
+        sendMessage={sendCurrentMessage}
         cancelActive={cancelActive}
         onKeyDown={onComposerKeyDown}
         mode={mode}
@@ -689,7 +730,7 @@ function Composer(props: {
   submitting: boolean;
   canSubmit: boolean;
   activeWorking: boolean;
-  createJob: () => Promise<void>;
+  sendMessage: () => Promise<void>;
   cancelActive: () => Promise<void>;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
 }) {
@@ -771,7 +812,7 @@ function Composer(props: {
           </div>
 
           {props.activeWorking ? <button className="lc-agent-stop-button" onClick={() => void props.cancelActive()} aria-label="Stop task"><CircleStop size={18} strokeWidth={1.65} /></button>
-            : <button className="lc-agent-send-button" disabled={props.submitting || !props.canSubmit} onClick={() => void props.createJob()} aria-label="Send task"><ArrowUp size={18} strokeWidth={2} /></button>}
+            : <button className="lc-agent-send-button" disabled={props.submitting || !props.canSubmit} onClick={() => void props.sendMessage()} aria-label="Send task"><ArrowUp size={18} strokeWidth={2} /></button>}
         </div>
       </div>
     </div>
@@ -860,9 +901,33 @@ function TaskThread(props: {
   const working = isWorking(job.status);
   const latestEvent = job.events.at(-1);
   const result = job.result;
+  const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [job.turns.length]);
+
+  const terminalAssistant =
+    working ||
+    job.status === 'waiting-guidance' ||
+    job.status === 'error' ||
+    job.status === 'cancelled' ||
+    (job.status === 'success' && job.input.interactionMode !== 'chat');
+
   return <div className="lc-agent-thread" aria-live="polite">
-    <div className="thread-user-turn"><div className="user-message">{job.input.goal}</div>{job.input.context ? <div className="user-context-note">Context attached</div> : null}</div>
-    <div className="thread-assistant-turn">
+    {job.turns.map((turn, index) => turn.role === 'user'
+      ? <div className="thread-user-turn" key={turn.id}>
+          <div className="user-message">{turn.content}</div>
+          {index === 0 && job.input.context ? <div className="user-context-note">Context attached</div> : null}
+        </div>
+      : <div className="thread-assistant-turn" key={turn.id}>
+          <div className="assistant-mark"><Sparkles size={18} strokeWidth={1.55} /></div>
+          <div className="assistant-body">
+            <div className="assistant-result-message"><p className="assistant-result-copy">{turn.content}</p></div>
+          </div>
+        </div>)}
+
+    {terminalAssistant ? <div className="thread-assistant-turn">
       <div className={`assistant-mark ${working ? 'working' : ''}`}><Sparkles size={18} strokeWidth={1.55} /></div>
       <div className="assistant-body">
         {working ? <div className="assistant-stream-state">
@@ -873,9 +938,10 @@ function TaskThread(props: {
         {job.status === 'waiting-guidance' && result?.escalation ? <GuidanceMessage job={job} guidance={props.guidance} setGuidance={props.setGuidance} onContinue={props.sendGuidance} onEscalate={props.sendEscalation} /> : null}
         {job.status === 'error' ? <div className="assistant-result-message error"><strong>Something went wrong</strong><p>{job.error ?? 'The task stopped unexpectedly.'}</p></div> : null}
         {job.status === 'cancelled' ? <div className="assistant-result-message muted-result"><strong>Task stopped</strong><p>The run was cancelled and will not resume automatically.</p></div> : null}
-        {job.status === 'success' && result ? <ResultMessage result={result} /> : null}
+        {job.status === 'success' && result && job.input.interactionMode !== 'chat' ? <ResultMessage result={result} /> : null}
       </div>
-    </div>
+    </div> : null}
+    <div ref={endRef} aria-hidden="true" />
   </div>;
 }
 

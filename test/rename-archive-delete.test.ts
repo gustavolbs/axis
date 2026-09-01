@@ -42,6 +42,17 @@ test('archiving hides without discarding, and can be undone', () => {
   assert.match(appRoot, /function ArchivedView/);
 });
 
+test('a follow-up unarchives the conversation it continues', () => {
+  // The two features meet here: an archived chat can be opened from the
+  // Archived surface, so a follow-up would resume it and keep it running while
+  // it stayed hidden from the sidebar.
+  const followUp = jobManager.slice(jobManager.indexOf('async followUp(id: string'));
+  const body = followUp.slice(0, followUp.indexOf('\n  }\n'));
+  assert.match(body, /job\.archivedAt = undefined/);
+  // And it must not consume Cowork's resume budget.
+  assert.match(body, /job\.rounds = 0/);
+});
+
 test('deleting a running conversation stops it first', () => {
   // Dropping the entry while the run was in flight would leak the run.
   const remove = jobManager.slice(jobManager.indexOf('async remove(id: string)'));

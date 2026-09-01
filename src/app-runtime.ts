@@ -292,6 +292,11 @@ export class DesktopAppRuntime {
       if (!job) throw new Error('Job not found.');
       return { job };
     }
+    const followUpMatch = /^\/jobs\/([A-Za-z0-9-]+)\/follow-up$/.exec(pathname);
+    if (method === 'POST' && followUpMatch) {
+      const body = objectBody(request.body);
+      return { job: await this.jobs.followUp(followUpMatch[1], requiredString(body, 'message')) };
+    }
     if (method === 'PATCH' && jobMatch) {
       const body = objectBody(request.body);
       const id = jobMatch[1];
