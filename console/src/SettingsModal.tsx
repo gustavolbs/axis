@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, Palette, Route, Settings2, X } from 'lucide-react';
+import { KeyRound, Palette, Route, Settings2, SlidersHorizontal, X } from 'lucide-react';
 
 import { AdminPanel, type AdminProject } from './AdminPanel.js';
+import { ApiKeySettings, ModelRoutingSettings } from './SettingsPanels.js';
 
-type SettingsTab = 'general' | 'appearance' | 'routing' | 'keys';
+type SettingsTab = 'general' | 'appearance' | 'routing' | 'keys' | 'advanced';
 type ThemeMode = 'system' | 'dark' | 'light';
 
 function applyTheme(mode: ThemeMode) {
@@ -53,6 +54,8 @@ export function SettingsModal({
         <button className={tab === 'appearance' ? 'active' : ''} onClick={() => setTab('appearance')}><Palette size={15} /><span>Appearance</span></button>
         <button className={tab === 'routing' ? 'active' : ''} onClick={() => setTab('routing')}><Route size={15} /><span>Model routing</span></button>
         <button className={tab === 'keys' ? 'active' : ''} onClick={() => setTab('keys')}><KeyRound size={15} /><span>API keys</span></button>
+        <div className="settings-rail-spacer" />
+        <button className={tab === 'advanced' ? 'active' : ''} onClick={() => setTab('advanced')}><SlidersHorizontal size={15} /><span>Advanced</span></button>
       </aside>
 
       <div className="settings-content">
@@ -79,8 +82,9 @@ export function SettingsModal({
           </div>
         </div> : null}
 
-        {tab === 'routing' ? <div className="settings-admin-view settings-view-routing"><AdminPanel onRunProject={onRunProject} /></div> : null}
-        {tab === 'keys' ? <div className="settings-admin-view settings-view-credentials"><AdminPanel onRunProject={onRunProject} /></div> : null}
+        {tab === 'routing' ? <ModelRoutingSettings /> : null}
+        {tab === 'keys' ? <ApiKeySettings /> : null}
+        {tab === 'advanced' ? <div className="settings-admin-view settings-view-advanced"><AdminPanel onRunProject={onRunProject} /></div> : null}
       </div>
     </section>
   </div>;
