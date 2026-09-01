@@ -44,8 +44,9 @@ function provider(
   kind: 'local' | 'cloud' = 'cloud',
   invoke?: InferenceProvider['invoke']
 ): InferenceProvider {
+  const providerId = kind === 'local' ? 'ollama' : 'future-ai';
   return {
-    id: kind === 'local' ? 'ollama' : 'future-ai',
+    id: providerId,
     kind,
     capabilities,
     async listModels() {
@@ -55,7 +56,7 @@ function provider(
       return { providerId: this.id, ok: true, checkedAt: new Date(0).toISOString(), latencyMs: 1 };
     },
     invoke: invoke ?? (async (input) => ({
-      providerId: this.id,
+      providerId,
       model: input.model,
       content: 'ok',
       latencyMs: 1,
