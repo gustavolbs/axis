@@ -25,6 +25,7 @@ export interface CommandResult {
 export type KeychainCommandRunner = (args: string[], input?: string) => CommandResult;
 
 const DEFAULT_KEYCHAIN_SERVICE = 'com.local-coder-mcp.secrets';
+const KEYCHAIN_COMMAND_TIMEOUT_MS = 8_000;
 const SAFE_SECRET_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$/;
 
 function assertSecretId(id: string): string {
@@ -46,7 +47,9 @@ function defaultRunner(args: string[], input?: string): CommandResult {
     encoding: 'utf8',
     input,
     windowsHide: true,
-    maxBuffer: 1024 * 1024
+    maxBuffer: 1024 * 1024,
+    timeout: KEYCHAIN_COMMAND_TIMEOUT_MS,
+    killSignal: 'SIGKILL'
   });
   return {
     status: result.status,
@@ -75,8 +78,12 @@ function commandFailure(action: string, result: CommandResult, secret?: string):
 /**
  * Stores small Local Coder secrets as generic password items in the user's macOS keychain.
  *
- * The `security` tool itself warns that passing a password after `-w` is insecure. We therefore
- * put `-w` last and feed the password through stdin, so the secret never appears in process argv.
+ * Apple's `security add-generic-password` does not read the password value from stdin when
+ * `-w` is supplied without an argument; a bare `-w` opens an interactive prompt on the
+ * controlling terminal instead. The desktop app has no terminal interaction contract, so
+ * writes must supply the value as the `-w` argument. The command is spawned directly (no
+ * shell), its arguments are never logged, failures redact the secret, and the subprocess has
+ * a hard timeout so a Keychain prompt can never leave Settings stuck on "Saving…" forever.
  */
 export class MacOSKeychainSecretStore implements SecretStore {
   readonly backend = 'macos-keychain' as const;
@@ -116,8 +123,8 @@ export class MacOSKeychainSecretStore implements SecretStore {
       '-a', account,
       '-s', this.service,
       '-U',
-      '-w'
-    ], `${secret}\n`);
+      '-w', secret
+    ]);
     if (result.error || result.status !== 0) throw commandFailure('write', result, secret);
   }
 
