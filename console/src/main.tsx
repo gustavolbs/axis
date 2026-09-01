@@ -9,6 +9,7 @@ import './runs.css';
 import './runs-fixes.css';
 import './cancellation.css';
 import './claude-shell.css';
+import './claude-agent.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
