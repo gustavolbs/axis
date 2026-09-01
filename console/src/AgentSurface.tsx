@@ -312,14 +312,8 @@ export function AgentSurface() {
   }
 
   async function createJob() {
-    if (!goal.trim()) return;
     const effectiveWorkspace = selectedProject?.workspace ?? workspace.trim();
-    if (!effectiveWorkspace) {
-      setModelMenu('closed');
-      if (projects.length > 0) setProjectMenu(true);
-      else setExtrasOpen(true);
-      return;
-    }
+    if (!effectiveWorkspace || !goal.trim()) return;
     setSubmitting(true);
     setError(undefined);
     try {
@@ -450,7 +444,7 @@ export function AgentSurface() {
         thinkingEnabled={thinkingEnabled}
         setThinkingEnabled={setThinkingEnabled}
         submitting={submitting}
-        canSubmit={Boolean(goal.trim())}
+        canSubmit={Boolean(goal.trim() && (selectedProject || workspace.trim()))}
         activeWorking={Boolean(active && isWorking(active.status))}
         createJob={createJob}
         cancelActive={cancelActive}
@@ -713,7 +707,7 @@ function ResultMessage({ result }: { result: EngineerResult }) {
     <p className="assistant-result-copy">{result.summary}</p>
     {result.changedFiles.length ? <div className="result-chip-row"><span>{result.changedFiles.length} file{result.changedFiles.length === 1 ? '' : 's'} changed</span><span>{result.validation.filter((item) => item.ok).length}/{result.validation.length} checks passed</span>{result.repairRounds ? <span>{result.repairRounds} repair round{result.repairRounds === 1 ? '' : 's'}</span> : null}</div> : null}
     {result.changedFiles.length ? <details className="assistant-details"><summary>Changed files</summary><ul>{result.changedFiles.map((file) => <li key={file}><code>{file}</code></li>)}</ul></details> : null}
-    {result.validation.length ? <details className="assistant-details"><summary>Validation</summary><div className="validation-list">{result.validation.map((check, index) => <div key={`${check.command}-${index}`}><span className={check.ok ? 'validation-ok' : 'validation-fail'}>{check.ok ? '✓' : '×'}</span><code>{check.command} {check.args.join(' ')}</code></div>)}</details> : null}
+    {result.validation.length ? <details className="assistant-details"><summary>Validation</summary><div className="validation-list">{result.validation.map((check, index) => <div key={`${check.command}-${index}`}><span className={check.ok ? 'validation-ok' : 'validation-fail'}>{check.ok ? '✓' : '×'}</span><code>{check.command} {check.args.join(' ')}</code></div>)}</div></details> : null}
     {result.diff ? <details className="assistant-details"><summary>Diff</summary><pre className="thread-diff">{result.diff}</pre></details> : null}
   </div>;
 }
