@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 
-import { ConsoleRoot as AppRoot } from './ConsoleRoot.js';
+import { AppRoot } from './AppRoot.js';
 import { installRuntimeTransport } from './runtime-shim.js';
 import './styles.css';
 import './runs.css';
