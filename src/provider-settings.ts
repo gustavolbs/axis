@@ -27,7 +27,9 @@ export interface ProviderRuntimeSettings {
   enabled: boolean;
   /** Model selected from provider discovery; no provider-specific model id is hardcoded here. */
   defaultModelId?: string;
-  /** Undefined means unlimited provider API spend. */
+  /** True only after an explicit Unlimited choice. Undefined/false is not unlimited. */
+  unlimitedUsage?: boolean;
+  /** Finite provider API spend cap. Mutually exclusive with unlimitedUsage=true. */
   monthlyBudgetUsd?: number;
   /** Central policy inherited by every provider invocation. Old callers may omit it; defaults are fail-safe. */
   capabilities?: ProviderCapabilityPolicy;
@@ -38,7 +40,9 @@ export interface ProviderRuntimeSettingsPatch {
   enabled?: boolean;
   /** `null` clears the provider default and returns selection to Auto. */
   defaultModelId?: string | null;
-  /** `null` disables the provider budget and returns usage to Unlimited. */
+  /** Explicitly allow unlimited provider spend. False means a finite budget is required for cloud. */
+  unlimitedUsage?: boolean;
+  /** `null` clears a finite budget. With unlimitedUsage=false this disables cloud spend. */
   monthlyBudgetUsd?: number | null;
   capabilities?: ProviderCapabilityPolicyPatch;
   models?: Record<string, ModelRoutingProfile>;
@@ -53,11 +57,6 @@ interface ProviderSettingsFile {
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const CAPABILITY_KINDS: ProviderCapabilityKind[] = ['skills', 'abilities', 'mcps', 'plugins', 'tools'];
 
-/**
- * Pure prompt-level skills/abilities are enabled by default. Anything that can
- * cross a process/network/tool boundary is opt-in so a newly added adapter never
- * silently gains authority for every model.
- */
 export const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilityPolicy = {
   skills: { enabled: true },
   abilities: { enabled: true },
@@ -143,10 +142,12 @@ function normalizeSettings(input: Partial<ProviderRuntimeSettings> = {}): Provid
   if (defaultModelId && models[defaultModelId]?.enabled === false) {
     throw new Error(`Default model ${defaultModelId} is disabled in provider settings.`);
   }
+  const unlimitedUsage = input.unlimitedUsage === true;
   return {
     enabled: input.enabled ?? true,
     defaultModelId,
-    monthlyBudgetUsd: monthlyBudget(input.monthlyBudgetUsd),
+    unlimitedUsage,
+    monthlyBudgetUsd: unlimitedUsage ? undefined : monthlyBudget(input.monthlyBudgetUsd),
     capabilities: normalizeCapabilities(input.capabilities),
     models
   };
@@ -176,6 +177,15 @@ export class ProviderSettingsStore {
     const mergedModels = patch.models
       ? { ...current.models, ...patch.models }
       : current.models;
+    const explicitUnlimited = patch.unlimitedUsage === true ||
+      (patch.unlimitedUsage === undefined && patch.monthlyBudgetUsd === null);
+    const unlimitedUsage = patch.unlimitedUsage !== undefined
+      ? patch.unlimitedUsage
+      : patch.monthlyBudgetUsd === null
+        ? true
+        : patch.monthlyBudgetUsd !== undefined
+          ? false
+          : current.unlimitedUsage === true;
     const next = normalizeSettings({
       enabled: patch.enabled ?? current.enabled,
       defaultModelId:
@@ -184,12 +194,15 @@ export class ProviderSettingsStore {
           : patch.defaultModelId === null
             ? undefined
             : patch.defaultModelId,
+      unlimitedUsage,
       monthlyBudgetUsd:
-        patch.monthlyBudgetUsd === undefined
-          ? current.monthlyBudgetUsd
-          : patch.monthlyBudgetUsd === null
-            ? undefined
-            : patch.monthlyBudgetUsd,
+        explicitUnlimited
+          ? undefined
+          : patch.monthlyBudgetUsd === undefined
+            ? current.monthlyBudgetUsd
+            : patch.monthlyBudgetUsd === null
+              ? undefined
+              : patch.monthlyBudgetUsd,
       capabilities: normalizeCapabilities(patch.capabilities, current.capabilities),
       models: mergedModels
     });
