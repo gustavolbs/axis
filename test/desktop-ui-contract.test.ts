@@ -62,9 +62,9 @@ test('Agent surface is thread-first with Claude-like message and composer hierar
   ]) {
     assert.equal(agentSurface.includes(required), true, `missing Claude-like Agent primitive: ${required}`);
   }
-  assert.match(agentSurface, />Working</);
-  assert.match(agentSurface, />Thinking</);
-  assert.match(agentSurface, />Writing</);
+  assert.match(agentSurface, /'Working'/);
+  assert.match(agentSurface, /'Thinking'/);
+  assert.match(agentSurface, /'Writing'/);
   assert.doesNotMatch(agentSurface, /thinkingChars/);
 });
 
@@ -95,7 +95,7 @@ test('responsive layout covers progress rail collapse and narrow desktop fallbac
   assert.match(agent, /@media \(max-height: 640px\)/);
   assert.match(agent, /\.claude-progress-rail\s*\{[\s\S]*?display:\s*none/);
   assert.match(agent, /grid-template-columns:\s*1fr/);
-  assert.match(agent, /max-width:\s*calc\(100vw - 20px\)/);
+  assert.match(fidelity, /max-width:\s*calc\(100vw - 20px\)/);
 });
 
 test('final Claude fidelity styles load after all legacy console styles', () => {
