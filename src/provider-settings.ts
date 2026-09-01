@@ -12,6 +12,8 @@ export interface ProviderRuntimeSettings {
   enabled: boolean;
   /** Model selected from provider discovery; no provider-specific model id is hardcoded here. */
   defaultModelId?: string;
+  /** Undefined means unlimited provider API spend. */
+  monthlyBudgetUsd?: number;
   models: Record<string, ModelRoutingProfile>;
 }
 
@@ -19,6 +21,8 @@ export interface ProviderRuntimeSettingsPatch {
   enabled?: boolean;
   /** `null` clears the provider default and returns selection to Auto. */
   defaultModelId?: string | null;
+  /** `null` disables the provider budget and returns usage to Unlimited. */
+  monthlyBudgetUsd?: number | null;
   models?: Record<string, ModelRoutingProfile>;
 }
 
@@ -42,6 +46,14 @@ function modelId(value: string): string {
     throw new Error('Model id must be 1-240 characters without control line breaks.');
   }
   return trimmed;
+}
+
+function monthlyBudget(value: number | null | undefined): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error('Provider monthly budget must be a positive USD amount.');
+  }
+  return Math.round(value * 1_000_000) / 1_000_000;
 }
 
 function normalizeProfile(input: ModelRoutingProfile = {}): ModelRoutingProfile {
@@ -68,6 +80,7 @@ function normalizeSettings(input: Partial<ProviderRuntimeSettings> = {}): Provid
   return {
     enabled: input.enabled ?? true,
     defaultModelId,
+    monthlyBudgetUsd: monthlyBudget(input.monthlyBudgetUsd),
     models
   };
 }
@@ -104,6 +117,12 @@ export class ProviderSettingsStore {
           : patch.defaultModelId === null
             ? undefined
             : patch.defaultModelId,
+      monthlyBudgetUsd:
+        patch.monthlyBudgetUsd === undefined
+          ? current.monthlyBudgetUsd
+          : patch.monthlyBudgetUsd === null
+            ? undefined
+            : patch.monthlyBudgetUsd,
       models: mergedModels
     });
     state.providers[id] = next;
