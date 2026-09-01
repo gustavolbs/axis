@@ -42,6 +42,7 @@ type ProviderMode = 'ollama' | 'anthropic' | 'openai' | 'local-first';
 
 const NEW_TASK_ID = '__new__';
 type ComposerMode = 'chat' | 'cowork';
+const APPROX_CHARS_PER_TOKEN = 3.5;
 
 const MOCK_DECISION_COMMAND = /^\/mock[-\s]?decision$/i;
 
@@ -152,6 +153,8 @@ interface CatalogModel {
   id: string;
   displayName: string;
   available: boolean;
+  contextWindow?: number;
+  maxOutputTokens?: number;
   providerDefault: boolean;
   projectDefault: boolean;
 }
@@ -173,7 +176,16 @@ interface ModelOption {
   label: string;
   description: string;
   available: boolean;
+  contextWindow?: number;
+  maxOutputTokens?: number;
   reason?: string;
+}
+interface ConversationContextInfo {
+  estimatedTokens: number;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  modelLabel: string;
+  providerLabel: string;
 }
 
 const effortOptions: Array<{ id: ReasoningEffortSelection; label: string; description: string }> = [
@@ -199,6 +211,15 @@ function duration(ms?: number) {
   if (!Number.isFinite(ms)) return '';
   if ((ms ?? 0) < 60_000) return `${Math.max(1, Math.round((ms ?? 0) / 1000))}s`;
   return `${Math.floor((ms ?? 0) / 60_000)}m`;
+}
+function compactTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}m`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1).replace(/\.0$/, '')}k`;
+  return String(Math.max(0, Math.round(value)));
+}
+function estimateTokens(parts: Array<string | undefined>): number {
+  const chars = parts.reduce((sum, part) => sum + (part?.length ?? 0), 0);
+  return Math.ceil(chars / APPROX_CHARS_PER_TOKEN);
 }
 function providerLabel(providerId: string): string {
   if (providerId === 'anthropic') return 'Claude';
@@ -393,6 +414,8 @@ export function AgentSurfaceV2() {
           label: model.displayName,
           description: provider.kind === 'local' ? 'Local model' : `Cloud · ${providerLabel(provider.id)}`,
           available: provider.ready && model.available,
+          contextWindow: model.contextWindow,
+          maxOutputTokens: model.maxOutputTokens,
           reason: provider.reason
         });
       }
@@ -409,6 +432,59 @@ export function AgentSurfaceV2() {
   const modelLabel = selectedModeConfig.label;
   const effortLabel = effortOptions.find((option) => option.id === effort)?.label ?? 'Default';
   const displayedEffortLabel = thinkingEnabled ? effortLabel : 'Thinking off';
+
+  const conversationContext = useMemo<ConversationContextInfo | undefined>(() => {
+    const conversationMode = active?.input.interactionMode ?? mode;
+    if (conversationMode !== 'chat') return undefined;
+
+    const selection = active?.input.modelSelection ?? (selectedProject ? parseModelValue(modelSelection) : undefined);
+    const providerId = selection?.mode === 'explicit'
+      ? selection.providerId
+      : selection?.mode === 'local-first'
+        ? 'ollama'
+        : selectedModeConfig.providerId;
+    const modelId = selection && selection.mode !== 'auto' ? selection.modelId : selectedModelId;
+    const model = modelOptions.find((candidate) =>
+      candidate.providerId === providerId && candidate.modelId === modelId
+    );
+    const visibleParts: Array<string | undefined> = [];
+
+    if (active?.input.interactionMode === 'chat') {
+      for (const turn of active.turns) {
+        visibleParts.push(editingTurnId === turn.id ? goal : turn.content);
+      }
+      if (!editingTurnId && goal.trim()) visibleParts.push(goal);
+      visibleParts.push(active.input.context);
+    } else {
+      visibleParts.push(goal, context);
+    }
+
+    const estimatedTokens = estimateTokens(visibleParts);
+    const localFallback = providerId === 'ollama';
+    return {
+      estimatedTokens,
+      contextWindow: model?.contextWindow ?? (localFallback ? 16_384 : undefined),
+      maxOutputTokens: model?.maxOutputTokens ?? (localFallback ? 2_048 : undefined),
+      modelLabel: model?.label ?? currentInference?.model ?? modelId || providerLabel(providerId),
+      providerLabel: providerLabel(providerId)
+    };
+  }, [
+    active?.id,
+    active?.input.interactionMode,
+    active?.input.modelSelection,
+    active?.input.context,
+    active?.turns,
+    context,
+    currentInference?.model,
+    editingTurnId,
+    goal,
+    mode,
+    modelOptions,
+    modelSelection,
+    selectedModeConfig.providerId,
+    selectedModelId,
+    selectedProject
+  ]);
 
   function chooseProject(projectId: string) {
     setSelectedProjectId(projectId);
@@ -674,6 +750,7 @@ export function AgentSurfaceV2() {
         setModelSelection={setModelSelection}
         modelLabel={modelLabel}
         selectedModelLabel={selectedModel?.label}
+        contextInfo={conversationContext}
         effort={effort}
         setEffort={setEffort}
         effortLabel={displayedEffortLabel}
@@ -724,6 +801,35 @@ function Suggestions({ onPick }: { onPick: (value: string) => void }) {
   </div>;
 }
 
+function ConversationContextBadge({ info }: { info: ConversationContextInfo }) {
+  const remaining = info.contextWindow === undefined
+    ? undefined
+    : Math.max(0, info.contextWindow - info.estimatedTokens);
+  const ratio = info.contextWindow && info.contextWindow > 0
+    ? info.estimatedTokens / info.contextWindow
+    : 0;
+  const level = ratio >= 0.95 ? 'critical' : ratio >= 0.8 ? 'warning' : 'normal';
+  const label = info.contextWindow
+    ? `≈${compactTokens(info.estimatedTokens)} / ${compactTokens(info.contextWindow)}`
+    : `≈${compactTokens(info.estimatedTokens)} tokens`;
+  const tooltip = [
+    `${info.providerLabel} · ${info.modelLabel}`,
+    `Visible conversation estimate: ~${info.estimatedTokens.toLocaleString()} tokens`,
+    info.contextWindow ? `Model context window: ${info.contextWindow.toLocaleString()} tokens` : 'Model context window: unavailable from provider metadata',
+    remaining !== undefined ? `Raw window headroom: ~${remaining.toLocaleString()} tokens before system instructions and output reserves` : undefined,
+    info.maxOutputTokens ? `Maximum configured/model output: ${info.maxOutputTokens.toLocaleString()} tokens` : undefined,
+    `Estimate uses visible conversation text at ~${APPROX_CHARS_PER_TOKEN} characters/token; provider tokenization may differ.`
+  ].filter(Boolean).join('\n');
+
+  return <span
+    className="conversation-context-badge"
+    data-level={level}
+    title={tooltip}
+    aria-label={tooltip.replace(/\n/g, '. ')}
+    tabIndex={0}
+  >{label}</span>;
+}
+
 function Composer(props: {
   goal: string;
   setGoal: (value: string) => void;
@@ -748,6 +854,7 @@ function Composer(props: {
   setModelSelection: (value: string) => void;
   modelLabel: string;
   selectedModelLabel?: string;
+  contextInfo?: ConversationContextInfo;
   effort: ReasoningEffortSelection;
   setEffort: (value: ReasoningEffortSelection) => void;
   effortLabel: string;
@@ -840,6 +947,7 @@ function Composer(props: {
         </div>
 
         <div className="composer-toolbar-right">
+          {props.contextInfo ? <ConversationContextBadge info={props.contextInfo} /> : null}
           <div className="composer-menu-anchor model-menu-anchor">
             <button className="model-effort-trigger" aria-haspopup="menu" aria-expanded={props.modelMenu !== 'closed'} onClick={() => { props.setExtrasOpen(false); props.setProjectMenu(false); props.setModelMenu(props.modelMenu === 'closed' ? 'models' : 'closed'); }}>
               <Zap size={13} strokeWidth={1.7} />
