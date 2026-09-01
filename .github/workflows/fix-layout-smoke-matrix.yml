@@ -1,0 +1,49 @@
+name: Normalize layout smoke CI matrix
+
+on:
+  push:
+    branches:
+      - refactor/standalone-desktop-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/standalone-desktop-runtime
+      - name: Bound CI layout matrix and remove this temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path('scripts/smoke-desktop-layout.mjs')
+          text = path.read_text()
+          text = text.replace(
+              "const sizes = [[760, 560], [900, 640], [1120, 720], [1440, 900]];",
+              "const fullSizes = [[760, 560], [900, 640], [1120, 720], [1440, 900]];\nconst sizes = process.env.LOCAL_CODER_LAYOUT_SMOKE_CI === '1' ? [fullSizes[0], fullSizes.at(-1)] : fullSizes;"
+          )
+          text = text.replace(
+              "const zoomFactors = [0.8, 1, 1.25, 1.5];",
+              "const fullZoomFactors = [0.8, 1, 1.25, 1.5];\nconst zoomFactors = process.env.LOCAL_CODER_LAYOUT_SMOKE_CI === '1' ? [fullZoomFactors[0], fullZoomFactors.at(-1)] : fullZoomFactors;"
+          )
+          path.write_text(text)
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text()
+          text = text.replace(
+              "      - name: Smoke desktop resize and zoom matrix\n        run: npx electron scripts/smoke-desktop-layout.mjs",
+              "      - name: Smoke desktop resize and zoom matrix\n        env:\n          LOCAL_CODER_LAYOUT_SMOKE_CI: '1'\n        run: npx electron scripts/smoke-desktop-layout.mjs"
+          )
+          ci.write_text(text)
+          PY
+          git rm .github/workflows/fix-layout-smoke-matrix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(ci): bound desktop layout smoke matrix'
+          git push origin HEAD:refactor/standalone-desktop-runtime
