@@ -7,9 +7,11 @@ const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.ELECTRON_NO_ATTACH_CONSOLE;
 
+const forwarded = process.argv.slice(2);
+const args = forwarded.length > 0 ? forwarded : ['.'];
 console.log(`[Local Coder desktop] launching Electron GUI: ${electronPath}`);
 
-const child = spawn(electronPath, ['.'], {
+const child = spawn(electronPath, args, {
   cwd: process.cwd(),
   env,
   stdio: 'inherit'
