@@ -67,6 +67,7 @@ export class OllamaInferenceProvider implements InferenceProvider {
       providerId: this.id,
       id: model,
       displayName: model,
+      contextWindow: health.numCtx,
       capabilities: this.capabilities,
       metadata: {
         configuredFastModel: model === health.fastModel,
