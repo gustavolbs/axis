@@ -8,8 +8,10 @@ import { app, BrowserWindow } from 'electron';
 
 const root = path.resolve(import.meta.dirname, '..');
 const appDist = path.join(root, 'app-dist');
-const sizes = [[760, 560], [900, 640], [1120, 720], [1440, 900]];
-const zoomFactors = [0.8, 1, 1.25, 1.5];
+const fullSizes = [[760, 560], [900, 640], [1120, 720], [1440, 900]];
+const sizes = process.env.LOCAL_CODER_LAYOUT_SMOKE_CI === '1' ? [fullSizes[0], fullSizes.at(-1)] : fullSizes;
+const fullZoomFactors = [0.8, 1, 1.25, 1.5];
+const zoomFactors = process.env.LOCAL_CODER_LAYOUT_SMOKE_CI === '1' ? [fullZoomFactors[0], fullZoomFactors.at(-1)] : fullZoomFactors;
 const surfaces = [
   { label: 'Agent', nav: 'New chat', selector: '.lc-agent-agent-shell' },
   { label: 'Chats', nav: 'Chats', selector: '.chat-history-page' },
