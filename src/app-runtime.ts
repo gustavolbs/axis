@@ -114,14 +114,39 @@ function createCredentialInput(body: JsonObject): CreateCredentialInput {
 }
 
 /** The slice of ~/.local-coder/settings.json that Settings can edit. */
-type RuntimeSettings = Pick<AppSettingsFile, 'ollamaBaseUrl' | 'executionMode'>;
+type RuntimeSettings = Pick<AppSettingsFile, 'remoteWorkerUrl' | 'workerHealthPath'>;
 
-/** Exported for tests: the endpoint the user typed must be rejected here, not
- *  three layers down inside a fetch error. */
+/** What the worker health check answers on, if nothing is configured. */
+export const DEFAULT_WORKER_HEALTH_PATH = '/v1/health';
+
+/**
+ * Exported for tests. The route is user-supplied because it is not ours to
+ * assume: a different deployment can serve health anywhere, and probing a
+ * hardcoded path returned 404.
+ */
+export function normalizeHealthPath(value: string): string {
+  const raw = value.trim();
+  if (!raw) throw new Error('workerHealthPath is required.');
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
+    throw new Error('workerHealthPath must be a path like /v1/health, not a full URL.');
+  }
+  // Collapse repeated slashes so `${base}${path}` never doubles them.
+  return `/${raw.replace(/^\/+/, '').replace(/\/{2,}/g, '/')}`;
+}
+
+function toResponse(patch: RuntimeSettings): Record<string, unknown> {
+  return {
+    ...(patch.remoteWorkerUrl !== undefined ? { workerUrl: patch.remoteWorkerUrl } : {}),
+    ...(patch.workerHealthPath !== undefined ? { workerHealthPath: patch.workerHealthPath } : {})
+  };
+}
+
+/** Exported for tests: the URL the user typed must be rejected here, not three
+ *  layers down inside a fetch error. */
 export function normalizeBaseUrl(value: string): string {
   const raw = value.trim();
-  if (!raw) throw new Error('ollamaBaseUrl is required.');
-  const invalid = new Error(`"${value}" is not a valid URL. Expected something like http://127.0.0.1:11434`);
+  if (!raw) throw new Error('A URL is required.');
+  const invalid = new Error(`"${value}" is not a valid URL. Expected something like http://192.168.0.10:7337`);
   // `localhost:11434` is what people type; accept it rather than making them
   // remember the scheme. Infer before trimming slashes, or a bare "http://"
   // becomes the hostname.
@@ -133,17 +158,22 @@ export function normalizeBaseUrl(value: string): string {
     throw invalid;
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('ollamaBaseUrl must use http or https.');
+    throw new Error('The URL must use http or https.');
   }
   if (!parsed.hostname) throw invalid;
   // Serialize from the parsed URL so the stored value is canonical, then drop
-  // the path: requests append their own (/api/tags, /api/chat, ...).
+  // the path: callers append their own (/v1/health, /v1/chat, ...).
   return `${parsed.protocol}//${parsed.host}`;
 }
 
 export class DesktopAppRuntime {
   private readonly listeners = new Set<AppRuntimeListener>();
-  private readonly config = loadConfig();
+  /**
+   * The desktop app is worker-only: the agent runs on the Windows machine, and
+   * the only thing to configure is that machine's URL. There is no execution
+   * mode to choose, so it is not read from settings here.
+   */
+  private readonly config = { ...loadConfig(), executionMode: 'remote' as const };
   private readonly ollama = new OllamaClient(this.config);
   private readonly execution = createExecutionRuntime(this.config, this.ollama);
   private readonly projects = new ProjectAdminService({
@@ -157,11 +187,22 @@ export class DesktopAppRuntime {
 
   /**
    * Merges into ~/.local-coder/settings.json instead of replacing it. loadConfig
-   * reads executionMode, remoteWorkerUrl, remoteWorkerCredentialRef and model
-   * from that same file, so writing a fresh object would silently drop them.
+   * reads executionMode, remoteWorkerCredentialRef and model from that same
+   * file, so writing a fresh object would silently drop them.
    */
   private patchSettings(patch: RuntimeSettings): void {
     writeAppSettings({ ...readAppSettings(), ...patch });
+  }
+
+  private get workerHealthPath(): string {
+    return readAppSettings()?.workerHealthPath ?? DEFAULT_WORKER_HEALTH_PATH;
+  }
+
+  private connectionSettings(): Record<string, unknown> {
+    return {
+      workerUrl: this.config.remoteWorkerUrl,
+      workerHealthPath: this.workerHealthPath
+    };
   }
 
   static async create(): Promise<DesktopAppRuntime> {
@@ -305,60 +346,41 @@ export class DesktopAppRuntime {
     }
 
     if (method === 'GET' && pathname === '/settings') {
-      return {
-        settings: {
-          ollamaBaseUrl: this.config.ollamaBaseUrl,
-          executionMode: this.config.executionMode,
-          workerTokenOptional: true,
-          requiresWorkerToken: false
-        }
-      };
+      return { settings: this.connectionSettings() };
     }
     if (method === 'PUT' && pathname === '/settings') {
       const body = objectBody(request.body);
       const patch: RuntimeSettings = {};
 
-      if (body.ollamaBaseUrl !== undefined) {
-        const next = normalizeBaseUrl(requiredString(body, 'ollamaBaseUrl'));
-        // OllamaClient reads config.ollamaBaseUrl per request, so this applies
-        // to the next call without a restart.
-        this.config.ollamaBaseUrl = next;
-        patch.ollamaBaseUrl = next;
+      if (body.workerUrl !== undefined) {
+        patch.remoteWorkerUrl = normalizeBaseUrl(requiredString(body, 'workerUrl'));
       }
-
-      if (body.executionMode !== undefined) {
-        const mode = requiredString(body, 'executionMode');
-        if (mode !== 'local' && mode !== 'remote' && mode !== 'auto') {
-          throw new Error("executionMode must be 'local', 'remote' or 'auto'.");
-        }
-        // The execution runtime is built once from this value, so unlike the
-        // endpoint it only takes effect on the next launch.
-        patch.executionMode = mode;
+      if (body.workerHealthPath !== undefined) {
+        patch.workerHealthPath = normalizeHealthPath(requiredString(body, 'workerHealthPath'));
       }
 
       if (Object.keys(patch).length === 0) throw new Error('No supported settings in request.');
+      // The execution runtime is built once at startup from these values, so a
+      // change lands on the next launch.
       this.patchSettings(patch);
-      return {
-        settings: {
-          ollamaBaseUrl: this.config.ollamaBaseUrl,
-          executionMode: patch.executionMode ?? this.config.executionMode,
-          workerTokenOptional: true,
-          requiresWorkerToken: false,
-          restartRequired: patch.executionMode !== undefined && patch.executionMode !== this.config.executionMode
-        }
-      };
+      return { settings: { ...this.connectionSettings(), ...toResponse(patch), restartRequired: true } };
     }
-    /** Probes a URL without saving it, so Settings can show whether it works. */
-    if (method === 'POST' && pathname === '/settings/probe-ollama') {
+
+    /** Probes without saving, so a URL can be checked before it is committed. */
+    if (method === 'POST' && pathname === '/settings/probe-worker') {
       const body = objectBody(request.body);
-      const target = normalizeBaseUrl(requiredString(body, 'ollamaBaseUrl'));
+      const target = normalizeBaseUrl(requiredString(body, 'workerUrl'));
+      const healthPath = normalizeHealthPath(body.workerHealthPath === undefined
+        ? this.workerHealthPath
+        : requiredString(body, 'workerHealthPath'));
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 4_000);
       try {
-        const response = await fetch(`${target}/api/tags`, { signal: controller.signal });
-        if (!response.ok) return { reachable: false, error: `HTTP ${response.status}` };
-        const payload = (await response.json()) as { models?: Array<{ name?: string }> };
-        return { reachable: true, models: (payload.models ?? []).map((model) => model.name).filter(Boolean).length };
+        const response = await fetch(`${target}${healthPath}`, { signal: controller.signal });
+        if (!response.ok) return { reachable: false, status: response.status, error: `HTTP ${response.status} from ${healthPath}` };
+        // The body is whatever that deployment returns; report it, do not parse it.
+        const text = (await response.text().catch(() => '')).trim();
+        return { reachable: true, status: response.status, detail: text.slice(0, 120) || undefined };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return { reachable: false, error: controller.signal.aborted ? 'Timed out after 4s' : message };
@@ -366,6 +388,7 @@ export class DesktopAppRuntime {
         clearTimeout(timeout);
       }
     }
+
     if (method === 'GET' && pathname === '/fs/exists') {
       const raw = url.searchParams.get('path')?.trim();
       if (!raw) return { exists: false };

@@ -632,47 +632,251 @@
    18. Ollama endpoint field in Settings → General.
    ----------------------------------------------------------------------- */
 
-.settings-mode-choice {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 8px;
+/* --------------------------------------------------------------------------
+   Decision picker. Matched against the reference: no card border, the active
+   row is a rounded pill inset from the card edges, separators are inset too
+   and vanish around the active row, the free-text row is bare text rather
+   than a boxed input, and the shortcut legend lives under the composer.
+   Try it with /mock-decision in the composer.
+   ----------------------------------------------------------------------- */
+
+/* Same surface as the composer: the two sit next to each other and the
+   reference gives them one colour. */
+.decision-picker {
+  width: min(760px, 100%);
+  margin: 0 auto 10px;
+  padding: 6px 0 8px;
+  border-radius: 16px;
+  background: var(--lc-surface);
 }
 
-.settings-mode-choice button {
+.decision-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 18px 6px;
+}
+
+.decision-picker-head strong {
+  color: var(--lc-text);
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.decision-picker-head button {
   display: grid;
-  gap: 3px;
-  padding: 10px 12px;
-  border: 1px solid var(--lc-border);
-  border-radius: 9px;
-  background: var(--lc-surface-1);
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--lc-muted);
+}
+
+.decision-picker-head button:hover {
+  background: var(--lc-hover);
+  color: var(--lc-text);
+}
+
+.decision-picker-options {
+  display: grid;
+}
+
+.decision-picker-options:focus-visible {
+  outline: none;
+}
+
+/* Rows are inset, so both the active pill and the separators stop short of the
+   card edge the way the reference does. */
+.decision-picker-options > button,
+.decision-picker-custom {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-inline: 8px;
+  padding: 9px 10px;
+  border: 0;
+  border-top: 1px solid var(--lc-border);
+  border-radius: 10px;
+  background: transparent;
   color: var(--lc-text-soft);
   text-align: left;
 }
 
-.settings-mode-choice button:hover:not(:disabled) {
-  border-color: var(--lc-border-strong);
-  background: var(--lc-surface-2);
+.decision-picker-options > button:first-child {
+  border-top-color: transparent;
 }
 
-.settings-mode-choice button.selected {
-  border-color: var(--lc-accent);
-  background: var(--lc-accent-soft);
+.decision-picker-options > button.active {
+  border-top-color: transparent;
+  background: var(--lc-surface-3);
   color: var(--lc-text);
 }
 
-.settings-mode-choice strong {
-  font-size: 13px;
-  font-weight: 500;
+/* A separator directly under the active pill would cut into its rounded edge. */
+.decision-picker-options > button.active + button,
+.decision-picker-options > button.active + .decision-picker-custom {
+  border-top-color: transparent;
 }
 
-.settings-mode-choice small {
+.decision-picker-options > button > i {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lc-faint);
+  font-size: 13px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.decision-picker-options > button.active > i {
+  background: color-mix(in srgb, var(--lc-text) 10%, var(--lc-surface-3));
+  color: var(--lc-text);
+}
+
+.decision-picker-options > button > span {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 2px;
+}
+
+.decision-option-label {
+  font-size: 15px;
+}
+
+.decision-picker-options > button small {
   color: var(--lc-muted);
+  font-size: 12px;
+}
+
+.decision-picker-options > button > kbd {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--lc-faint);
+}
+
+.decision-picker-custom > i {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--lc-faint);
+}
+
+/* Bare text, not a field: a bordered box with a focus ring read as a form.
+   The 2px of padding is for the caret — at padding 0 it is drawn on the box
+   edge and clipped. The matching negative margin keeps the text lined up with
+   the option labels above. */
+.decision-picker-custom input {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-inline: -2px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--lc-text);
+  font-size: 15px;
+}
+
+.decision-picker-custom input:focus,
+.decision-picker-custom input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.decision-picker-custom:focus-within {
+  background: var(--lc-surface-3);
+}
+
+.decision-picker-custom input::placeholder {
+  color: var(--lc-faint);
+}
+
+.decision-picker-custom button {
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--lc-surface-3);
+  color: var(--lc-text);
+  font-size: 13px;
+}
+
+.decision-picker-custom button:hover {
+  background: var(--lc-hover);
+}
+
+/* Under the composer, because "or type below" refers to the composer. */
+.decision-picker-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: min(760px, 100%);
+  margin: 12px auto 0;
+  padding-inline: 10px;
+  color: var(--lc-faint);
+  font-size: 12px;
+}
+
+.decision-picker-hint kbd {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0 5px;
+  border: 1px solid var(--lc-border);
+  border-radius: 5px;
+  background: var(--lc-surface-2);
+  color: var(--lc-text-soft);
+  font-family: inherit;
   font-size: 11px;
 }
 
-.settings-mode-choice button:disabled {
-  cursor: default;
-  opacity: .6;
+.decision-picker-hint em {
+  font-style: normal;
+}
+
+/* Shows what the mock would have sent, so /mock-decision is verifiable. */
+.decision-picker-echo {
+  width: min(760px, 100%);
+  margin: 0 auto 10px;
+  padding: 12px 16px;
+  border: 1px dashed var(--lc-border);
+  border-radius: 12px;
+  color: var(--lc-text-soft);
+  font-size: 13px;
+}
+
+.decision-picker-echo strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--lc-text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.decision-picker-echo ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+}
+
+.decision-picker-echo code {
+  color: var(--lc-accent);
+  font-size: 12px;
 }
 
 .settings-endpoint-row {
@@ -697,6 +901,12 @@
   border-color: var(--lc-border-strong);
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--lc-accent) 18%, transparent);
+}
+
+/* The health route is a short value; it should not fight the URL for width. */
+.settings-endpoint-path {
+  flex: 0 1 140px !important;
+  min-width: 90px;
 }
 
 .settings-endpoint-row button {
@@ -742,11 +952,11 @@
 }
 
 .theme-preview.theme-dark {
-  background: #24231f;
+  background: #151515;
 }
 
 .theme-preview.theme-dark::before {
-  background: #191815;
+  background: #111111;
 }
 
 .theme-preview.theme-dark i {
@@ -754,11 +964,11 @@
 }
 
 .theme-preview.theme-system {
-  background: #24231f;
+  background: #151515;
 }
 
 .theme-preview.theme-system::before {
-  background: #191815;
+  background: #111111;
 }
 
 .theme-preview.theme-system i {

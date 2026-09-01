@@ -176,11 +176,45 @@ function projectAware(
   return new ProjectAwareExecutionBackend(legacy, config, ollama);
 }
 
+const WORKER_NOT_CONFIGURED = 'No worker URL is set. Add one in Settings → General → Windows worker.';
+
+/**
+ * Stands in for the worker until a URL exists. RemoteWorkerClient throws from
+ * its constructor, and the runtime builds it in a class field initializer — so
+ * an unconfigured worker used to kill the process before any window opened,
+ * which also made the settings screen that fixes it unreachable. Fail per call
+ * instead, with a message that says what to do.
+ */
+class UnconfiguredWorkerBackend implements ExecutionBackend, ChatClient {
+  private fail(): never {
+    throw new RemoteWorkerError(WORKER_NOT_CONFIGURED, true);
+  }
+
+  async chat(): Promise<OllamaGeneration> { return this.fail(); }
+  async executeTask(): Promise<AgenticExecutionResult> { return this.fail(); }
+  async executePlan(): Promise<LocalExecutionPlanResult> { return this.fail(); }
+  async executeEngineer(): Promise<LocalEngineerResult> { return this.fail(); }
+}
+
 export function createExecutionRuntime(
   config: LocalCoderConfig,
   ollama: OllamaClient
 ): ExecutionRuntime {
   const localExecution = new LocalExecutionBackend(ollama, config);
+
+  if (config.executionMode !== 'local' && !config.remoteWorkerUrl) {
+    const unconfigured = new UnconfiguredWorkerBackend();
+    return {
+      mode: config.executionMode,
+      chat: unconfigured,
+      execution: projectAware(unconfigured, config, ollama),
+      health: async () => ({
+        executionMode: config.executionMode,
+        workerConfigured: false,
+        error: WORKER_NOT_CONFIGURED
+      })
+    };
+  }
 
   if (config.executionMode === 'local') {
     return {

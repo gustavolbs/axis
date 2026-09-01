@@ -16,11 +16,13 @@
   --lc-traffic-w: 78px;
   --lc-traffic-gap: 10px;
 
-  /* surfaces. The sidebar sits one hair below the canvas, not a visible step:
-     the reference app separates them with a hairline, not a fill change. */
-  --lc-bg: #1f1e1b;
-  --lc-sidebar: #1c1b18;
-  --lc-surface: #282722;
+  /* Surfaces, darkest first. --lc-bg is the chat canvas, --lc-sidebar sits a
+     step below it, and --lc-surface is the raised panel shared by the composer
+     and the decision picker. Keep BrowserWindow.backgroundColor and the
+     theme-color meta in step with --lc-bg or the window flashes on launch. */
+  --lc-bg: #151515;
+  --lc-sidebar: #111111;
+  --lc-surface: #20201f;
   --lc-surface-1: #24231f;
   --lc-surface-2: #2c2a26;
   --lc-surface-3: #37342f;

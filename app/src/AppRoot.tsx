@@ -175,6 +175,10 @@ export function AppRoot() {
 
   function startNewTask() {
     localStorage.removeItem('local-coder.open-job');
+    // The composer seeds its project from this key, so leaving it behind made
+    // "New chat" silently inherit the last project — and the conversation then
+    // landed inside a collapsed project disclosure instead of Chats.
+    localStorage.removeItem('local-coder.project');
     selectSurface('agent');
     setAgentEpoch((value) => value + 1);
   }
@@ -208,7 +212,18 @@ export function AppRoot() {
     setJobMenuId(undefined);
     markRead(job.id, true);
     localStorage.setItem('local-coder.open-job', job.id);
-    if (job.input.projectId) localStorage.setItem('local-coder.project', job.input.projectId);
+    if (job.input.projectId) {
+      localStorage.setItem('local-coder.project', job.input.projectId);
+      // Never leave the open conversation hidden inside a closed disclosure.
+      setExpandedProjects((current) => {
+        if (current.has(job.input.projectId!)) return current;
+        const next = new Set(current).add(job.input.projectId!);
+        persistIds(EXPANDED_KEY, next);
+        return next;
+      });
+    } else {
+      localStorage.removeItem('local-coder.project');
+    }
     selectSurface('agent');
     setAgentEpoch((value) => value + 1);
   }

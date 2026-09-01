@@ -85,7 +85,7 @@ test('desktop denies in-app external navigation and opens safe https links exter
 
 test('desktop startup avoids white flash without returning to silent invisible startup', () => {
   assert.match(desktopMain, /show:\s*false/);
-  assert.match(desktopMain, /backgroundColor:\s*'#1f1e1b'/);
+  assert.match(desktopMain, /backgroundColor:\s*'#151515'/);
   assert.match(desktopMain, /once\('ready-to-show'/);
   assert.match(desktopMain, /ready-to-show fallback fired/);
   assert.match(desktopMain, /did-fail-load/);

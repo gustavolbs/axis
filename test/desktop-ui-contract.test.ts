@@ -74,7 +74,12 @@ test('only lc-base.css defines tokens, :root and document-level elements', () =>
     assert.doesNotMatch(source, /^\s*(html|body|#root)\s*[,{]/m, `${name} must not declare html/body/#root`);
     assert.doesNotMatch(source, /^\s*--lc-[a-z0-9-]+\s*:/m, `${name} must not define design tokens`);
   }
-  assert.match(baseCss, /--lc-bg:\s*#1f1e1b/);
+  // The four surfaces are specified values, not derived ones.
+  assert.match(baseCss, /--lc-bg:\s*#151515/, 'chat canvas');
+  assert.match(baseCss, /--lc-sidebar:\s*#111111/, 'sidebar');
+  assert.match(baseCss, /--lc-surface:\s*#20201f/, 'composer and decision picker');
+  // The picker shares the composer surface rather than carrying a second token.
+  assert.match(fixesCss, /\.decision-picker\s*\{[^}]*background:\s*var\(--lc-surface\)/);
   assert.match(baseCss, /html\[data-lc-theme='light'\]/);
   assert.match(baseCss, /@media \(prefers-color-scheme: light\)/);
   assert.match(main, /dataset\.lcTheme/);
@@ -318,12 +323,12 @@ test('desktop restores window bounds and avoids white boot flash', () => {
   }
   assert.match(desktop, /MIN_WINDOW_WIDTH = 760/);
   assert.match(desktop, /MIN_WINDOW_HEIGHT = 560/);
-  assert.match(desktop, /backgroundColor:\s*'#1f1e1b'/);
+  assert.match(desktop, /backgroundColor:\s*'#151515'/);
   assert.match(desktop, /show:\s*false/);
   assert.match(desktop, /once\('ready-to-show'/);
   // The window background, the meta colour and --lc-bg must agree or the app
   // flashes a different colour before the stylesheet lands.
-  assert.match(indexHtml, /theme-color" content="#1f1e1b"/);
+  assert.match(indexHtml, /theme-color" content="#151515"/);
   assert.doesNotMatch(indexHtml, /<style/, "CSP is style-src 'self'; inline <style> would be blocked");
 });
 

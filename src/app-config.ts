@@ -7,12 +7,13 @@ export interface AppSettingsFile {
   executionMode?: 'remote' | 'auto' | 'local';
   remoteWorkerUrl?: string;
   remoteWorkerCredentialRef?: string;
-  /**
-   * Base URL of the Ollama the runtime talks to. Set this to a machine on the
-   * LAN and `executionMode: 'local'` reaches a remote Ollama directly — no
-   * worker, and therefore no bearer token.
-   */
+  /** Base URL of the Ollama the runtime talks to when running locally. */
   ollamaBaseUrl?: string;
+  /**
+   * Route the worker answers its health check on. Not ours to assume: a
+   * different deployment can serve it anywhere, and a hardcoded path 404s.
+   */
+  workerHealthPath?: string;
   model?: string;
   updatedAt?: string;
 }
@@ -46,6 +47,7 @@ function parseSettings(raw: string, source: string): AppSettingsFile | undefined
     remoteWorkerUrl: typeof value.remoteWorkerUrl === 'string' ? value.remoteWorkerUrl.trim() : undefined,
     remoteWorkerCredentialRef: typeof value.remoteWorkerCredentialRef === 'string' ? value.remoteWorkerCredentialRef.trim() : undefined,
     ollamaBaseUrl: typeof value.ollamaBaseUrl === 'string' ? value.ollamaBaseUrl.trim() : undefined,
+    workerHealthPath: typeof value.workerHealthPath === 'string' ? value.workerHealthPath.trim() : undefined,
     model: typeof value.model === 'string' ? value.model.trim() : undefined,
     updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : undefined
   };
@@ -65,6 +67,7 @@ export function writeAppSettings(settings: AppSettingsFile): void {
     remoteWorkerUrl: settings.remoteWorkerUrl?.trim() || undefined,
     remoteWorkerCredentialRef: settings.remoteWorkerCredentialRef?.trim() || undefined,
     ollamaBaseUrl: settings.ollamaBaseUrl?.trim() || undefined,
+    workerHealthPath: settings.workerHealthPath?.trim() || undefined,
     model: settings.model?.trim() || undefined,
     updatedAt: new Date().toISOString()
   };

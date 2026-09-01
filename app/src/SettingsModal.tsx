@@ -3,7 +3,7 @@ import { KeyRound, Palette, Route, Settings2, X } from 'lucide-react';
 
 import type { AdminProject } from './app-types.js';
 import { FolderField } from './FolderField.js';
-import { ApiKeySettings, ModelRoutingSettings, OllamaEndpointSetting } from './SettingsPanels.js';
+import { ApiKeySettings, ModelRoutingSettings, WorkerConnectionSetting } from './SettingsPanels.js';
 import type { ThemeMode } from './native.js';
 
 type SettingsTab = 'general' | 'appearance' | 'routing' | 'keys';
@@ -83,7 +83,7 @@ export function SettingsModal({
 
         {tab === 'general' ? <div className="settings-simple-page">
           <h1 className="page-title">General</h1>
-          <OllamaEndpointSetting />
+          <WorkerConnectionSetting />
           <div className="settings-card settings-card-column">
             <div><strong>Default workspace</strong><p>Used for a chat when you do not choose a configured Project.</p></div>
             <FolderField value={defaultWorkspace} onChange={updateDefaultWorkspace} placeholder="/Users/you/code/project" />

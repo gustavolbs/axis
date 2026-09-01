@@ -3,9 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type Dispatch,
-  type KeyboardEvent,
-  type SetStateAction
+  type KeyboardEvent
 } from 'react';
 import {
   ArrowUp,
@@ -15,11 +13,13 @@ import {
   ChevronLeft,
   CircleStop,
   Code,
+  CornerDownLeft,
   FileText,
   FlaskConical,
   FolderGit2,
   Lightbulb,
   LoaderCircle,
+  Pencil,
   Plus,
   Sparkles,
   X,
@@ -42,6 +42,29 @@ const NEW_TASK_ID = '__new__';
  * can run anything. Chat is a loose conversation — a project is optional.
  */
 type ComposerMode = 'chat' | 'cowork';
+
+/**
+ * Typing this in the composer renders the decision picker with canned data, so
+ * the interaction can be checked without waiting for a run to actually need a
+ * decision. It never reaches the backend.
+ */
+const MOCK_DECISION_COMMAND = /^\/mock[-\s]?decision$/i;
+
+const MOCK_DECISION: DecisionRequest = {
+  message: 'Mock decision',
+  questions: [
+    {
+      id: 'mock-1',
+      question: 'Choose an option:',
+      rationale: 'Canned data for checking the picker.',
+      options: [
+        { id: 'a', label: 'Option A', tradeoff: '' },
+        { id: 'b', label: 'Option B', tradeoff: '' },
+        { id: 'c', label: 'Other (I will type it)', tradeoff: '' }
+      ]
+    }
+  ]
+};
 
 function storedMode(): ComposerMode {
   return localStorage.getItem('local-coder.composer-mode') === 'cowork' ? 'cowork' : 'chat';
@@ -250,6 +273,8 @@ export function AgentSurfaceV2() {
   const [goal, setGoal] = useState('');
   const [context, setContext] = useState('');
   const [mode, setMode] = useState<ComposerMode>(storedMode);
+  const [mockDecision, setMockDecision] = useState<DecisionRequest>();
+  const [mockAnswers, setMockAnswers] = useState<Array<{ questionId: string; value: string }>>([]);
   const [submitting, setSubmitting] = useState(false);
   const [modelSelection, setModelSelection] = useState('auto');
   const [effort, setEffort] = useState<ReasoningEffortSelection>('auto');
@@ -262,6 +287,8 @@ export function AgentSurfaceV2() {
   const [profileName, setProfileName] = useState<string>();
 
   const active = activeId === NEW_TASK_ID ? undefined : jobs.find((job) => job.id === activeId);
+  const pendingDecision = mockDecision
+    ?? (active?.status === 'waiting-decision' ? active.decisionRequest : undefined);
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
   const currentInference = worker?.inference?.current ?? undefined;
 
@@ -393,11 +420,27 @@ export function AgentSurfaceV2() {
 
   async function createJob() {
     if (!goal.trim()) return;
-    const effectiveWorkspace = selectedProject?.workspace ?? workspace.trim();
+
+    if (MOCK_DECISION_COMMAND.test(goal.trim())) {
+      setGoal('');
+      setMockAnswers([]);
+      setMockDecision(MOCK_DECISION);
+      return;
+    }
+
+    // With no project, fall back to the default workspace from Settings —
+    // which is what that setting is for. Only a genuinely empty configuration
+    // blocks the send.
+    const defaultWorkspace = localStorage.getItem('local-coder.workspace')?.trim() ?? '';
+    const effectiveWorkspace = selectedProject?.workspace ?? (workspace.trim() || defaultWorkspace);
     if (!effectiveWorkspace) {
+      // Reopening the project menu with no message read as the picker
+      // "jumping" for no reason. Say what is missing and open the field that
+      // fixes it.
       setModelMenu('closed');
-      if (projects.length > 0) setProjectMenu(true);
-      else setExtrasOpen(true);
+      setProjectMenu(false);
+      setExtrasOpen(true);
+      setError('This chat needs a folder to work in. Set one here, pick a project, or set a default workspace in Settings → General.');
       return;
     }
     if (selectedProject && modelSelection === 'auto') {
@@ -515,14 +558,31 @@ export function AgentSurfaceV2() {
       {!active ? <EmptyStart selectedProject={selectedProject} profileName={profileName} /> : <TaskThread
         job={active}
         currentInference={currentInference}
-        decisionSelections={decisionSelections}
-        setDecisionSelections={setDecisionSelections}
-        sendDecision={sendDecision}
         guidance={guidance}
         setGuidance={setGuidance}
         sendGuidance={sendGuidance}
         sendEscalation={sendEscalation}
       />}
+
+      {/* One render site for both the real request and the mock, so what you
+          check with /mock-decision is the same component that ships. */}
+      {pendingDecision ? <DecisionPicker
+        request={pendingDecision}
+        onAnswer={(questionId, value) => {
+          if (mockDecision) setMockAnswers((current) => [...current, { questionId, value }]);
+          else setDecisionSelections((current) => ({ ...current, [questionId]: value }));
+        }}
+        onDismiss={() => {
+          if (mockDecision) setMockDecision(undefined);
+          else void sendDecision();
+        }}
+      /> : null}
+
+      {mockAnswers.length && !mockDecision ? <div className="decision-picker-echo" role="status">
+        <strong>Mock answers</strong>
+        <ul>{mockAnswers.map((answer, position) => <li key={position}><code>{answer.questionId}</code> → {answer.value}</li>)}</ul>
+        <button className="btn-secondary" onClick={() => setMockAnswers([])}>Clear</button>
+      </div> : null}
 
       <Composer
         goal={goal}
@@ -558,10 +618,15 @@ export function AgentSurfaceV2() {
         onKeyDown={onComposerKeyDown}
         mode={mode}
         chooseMode={chooseMode}
+        placeholder={pendingDecision ? 'Or answer directly…' : undefined}
       />
 
+      {/* The legend belongs under the composer: "or type below" means the
+          composer, so it cannot live inside the card above it. */}
+      {pendingDecision ? <DecisionHint request={pendingDecision} /> : null}
+
       {/* Chat offers starting points; Cowork says which folder it will act on. */}
-      {!active && mode === 'chat' ? <Suggestions onPick={setGoal} /> : null}
+      {!active && !pendingDecision && mode === 'chat' ? <Suggestions onPick={setGoal} /> : null}
       {!active && mode === 'cowork' ? <p className="lc-agent-cowork-hint">
         {selectedProject ? `Cowork runs in ${selectedProject.name}.` : workspace.trim() ? `Cowork runs in ${workspace.trim()}.` : 'Pick a project or folder for Cowork to act on.'}
       </p> : null}
@@ -610,6 +675,7 @@ function Composer(props: {
   chooseProject: (id: string) => void;
   mode: ComposerMode;
   chooseMode: (value: ComposerMode) => void;
+  placeholder?: string;
   extrasOpen: boolean;
   setExtrasOpen: (value: boolean) => void;
   modelMenu: ModelMenuView;
@@ -653,7 +719,7 @@ function Composer(props: {
         onChange={(event) => props.setGoal(event.target.value)}
         onKeyDown={props.onKeyDown}
         rows={1}
-        placeholder="How can I help you today?"
+        placeholder={props.placeholder ?? 'How can I help you today?'}
         aria-label="Task prompt"
       />
 
@@ -790,9 +856,6 @@ function ModelMenu(props: {
 function TaskThread(props: {
   job: Job;
   currentInference?: NonNullable<WorkerStatus['inference']>['current'];
-  decisionSelections: Record<string, string>;
-  setDecisionSelections: Dispatch<SetStateAction<Record<string, string>>>;
-  sendDecision: () => Promise<void>;
   guidance: string;
   setGuidance: (value: string) => void;
   sendGuidance: () => Promise<void>;
@@ -812,7 +875,6 @@ function TaskThread(props: {
           <p>{latestEvent?.title ?? 'Starting the task…'}</p>
           <div className="assistant-stream-meta">{currentInference?.stage ? <span>{currentInference.stage}</span> : null}{currentInference?.model ? <span>{currentInference.model}</span> : null}{currentInference?.runningMs ? <span>{duration(currentInference.runningMs)}</span> : null}</div>
         </div> : null}
-        {job.status === 'waiting-decision' && job.decisionRequest ? <DecisionMessage request={job.decisionRequest} selections={props.decisionSelections} setSelections={props.setDecisionSelections} onContinue={props.sendDecision} /> : null}
         {job.status === 'waiting-guidance' && result?.escalation ? <GuidanceMessage job={job} guidance={props.guidance} setGuidance={props.setGuidance} onContinue={props.sendGuidance} onEscalate={props.sendEscalation} /> : null}
         {job.status === 'error' ? <div className="assistant-result-message error"><strong>Something went wrong</strong><p>{job.error ?? 'The task stopped unexpectedly.'}</p></div> : null}
         {job.status === 'cancelled' ? <div className="assistant-result-message muted-result"><strong>Task stopped</strong><p>The run was cancelled and will not resume automatically.</p></div> : null}
@@ -822,12 +884,128 @@ function TaskThread(props: {
   </div>;
 }
 
-function DecisionMessage(props: { request: DecisionRequest; selections: Record<string, string>; setSelections: Dispatch<SetStateAction<Record<string, string>>>; onContinue: () => Promise<void> }) {
-  return <div className="assistant-decision-message">
-    <h2>{props.request.message}</h2>
-    {props.request.questions.map((question) => <div className="inline-decision" key={question.id}><strong>{question.question}</strong><p>{question.rationale}</p><div className="inline-choice-list">{question.options.map((option) => <button key={option.id} className={props.selections[question.id] === option.id ? 'selected' : ''} onClick={() => props.setSelections((current) => ({ ...current, [question.id]: option.id }))}><span>{option.label}</span>{option.id === question.recommendedOptionId ? <small>Recommended</small> : null}</button>)}</div></div>)}
-    <button className="lc-agent-secondary-action" onClick={() => void props.onContinue()}>Continue</button>
+/**
+ * One question at a time, keyboard-first: ↑/↓ move, 1–9 jump straight to an
+ * option, Enter picks, Esc dismisses. The last row is a free-text answer, for
+ * when none of the options is what the person meant.
+ */
+function DecisionPicker(props: {
+  request: DecisionRequest;
+  onAnswer: (questionId: string, value: string) => void;
+  onDismiss: () => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const [active, setActive] = useState(0);
+  const [custom, setCustom] = useState('');
+  /** While the free-text row has focus it is the answer, so no option row may
+   *  also look selected — two highlighted rows at once read as a glitch. */
+  const [customFocused, setCustomFocused] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const question = props.request.questions[index];
+  const isLast = index >= props.request.questions.length - 1;
+
+  // A new question resets the cursor, otherwise it points at the wrong row.
+  useEffect(() => {
+    setActive(question?.recommendedOptionId
+      ? Math.max(0, question.options.findIndex((option) => option.id === question.recommendedOptionId))
+      : 0);
+    setCustom('');
+    listRef.current?.focus();
+  }, [index, question]);
+
+  if (!question) return null;
+
+  function answer(value: string) {
+    props.onAnswer(question.id, value);
+    if (isLast) props.onDismiss();
+    else setIndex((current) => current + 1);
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const count = question.options.length;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActive((current) => (current + (event.key === 'ArrowDown' ? 1 : count - 1)) % count);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      answer(question.options[active]!.id);
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      props.onDismiss();
+      return;
+    }
+    // Number keys jump to an option, the way the reference picker does.
+    const digit = Number.parseInt(event.key, 10);
+    if (Number.isInteger(digit) && digit >= 1 && digit <= count) {
+      event.preventDefault();
+      setActive(digit - 1);
+      answer(question.options[digit - 1]!.id);
+    }
+  }
+
+  return <div className="decision-picker" role="group" aria-label={question.question}>
+    <div className="decision-picker-head">
+      <strong>{question.question}</strong>
+      <button onClick={props.onDismiss} aria-label="Dismiss"><X size={15} /></button>
+    </div>
+
+    <div className="decision-picker-options" ref={listRef} tabIndex={0} onKeyDown={onKeyDown} role="listbox" aria-activedescendant={`${question.id}-${active}`}>
+      {question.options.map((option, position) => <button
+        key={option.id}
+        id={`${question.id}-${position}`}
+        role="option"
+        aria-selected={!customFocused && position === active}
+        className={!customFocused && position === active ? 'active' : ''}
+        onMouseEnter={() => { setCustomFocused(false); setActive(position); }}
+        onClick={() => answer(option.id)}
+      >
+        <i aria-hidden="true">{position + 1}</i>
+        <span>
+          <span className="decision-option-label">{option.label}</span>
+          {option.tradeoff ? <small>{option.tradeoff}</small> : null}
+        </span>
+        {!customFocused && position === active ? <kbd aria-hidden="true"><CornerDownLeft size={13} /></kbd> : null}
+      </button>)}
+
+      <div className="decision-picker-custom">
+        <i aria-hidden="true"><Pencil size={13} /></i>
+        <input
+          value={custom}
+          onChange={(event) => setCustom(event.target.value)}
+          onFocus={() => setCustomFocused(true)}
+          onBlur={() => setCustomFocused(false)}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === 'Enter' && custom.trim()) answer(custom.trim());
+            if (event.key === 'Escape') props.onDismiss();
+          }}
+          placeholder="Another option"
+          aria-label="Answer in your own words"
+        />
+        <button onClick={() => custom.trim() ? answer(custom.trim()) : props.onDismiss()}>
+          {custom.trim() ? 'Send' : 'Skip'}
+        </button>
+      </div>
+    </div>
   </div>;
+}
+
+/**
+ * The shortcut legend sits below the composer, not inside the card — the last
+ * line it refers to ("or type below") is the composer itself.
+ */
+function DecisionHint({ request }: { request: DecisionRequest }) {
+  return <p className="decision-picker-hint" aria-hidden="true">
+    <kbd>↑</kbd><kbd>↓</kbd><span>to navigate</span>
+    <kbd>↵</kbd><span>to select</span>
+    <span>· or type below</span>
+    {request.questions.length > 1 ? <em>{request.questions.length} questions</em> : null}
+  </p>;
 }
 
 function GuidanceMessage(props: {
