@@ -16,7 +16,8 @@ export type RoutingPolicy =
 
 export type ModelSelection =
   | { mode: 'auto' }
-  | { mode: 'explicit'; providerId: string; modelId: string };
+  | { mode: 'explicit'; providerId: string; modelId: string }
+  | { mode: 'local-first'; modelId: string };
 
 export interface ProjectPrivacyPolicy {
   /** Cloud transmission is forbidden unless this is explicitly true. */
@@ -128,6 +129,12 @@ function normalizePrivacy(input?: ProjectPrivacyPolicy): ProjectPrivacyPolicy {
 
 function normalizeModel(input: ModelSelection | undefined): ModelSelection {
   if (!input || input.mode === 'auto') return { mode: 'auto' };
+  if (input.mode === 'local-first') {
+    return {
+      mode: 'local-first',
+      modelId: text(input.modelId, 'Local-first model id', 240)
+    };
+  }
   return {
     mode: 'explicit',
     providerId: safeId(input.providerId, 'Model provider id'),
@@ -161,6 +168,9 @@ function normalizeProject(
     throw new Error(
       `Explicit model provider ${defaultModel.providerId} is not allowed by the project provider allowlist.`
     );
+  }
+  if (defaultModel.mode === 'local-first' && !privacy.allowedProviderIds.includes('ollama')) {
+    throw new Error('Local-first mode requires ollama in the project provider allowlist.');
   }
   return {
     id: safeId(input.id ?? existing?.id ?? randomUUID(), 'Project id'),

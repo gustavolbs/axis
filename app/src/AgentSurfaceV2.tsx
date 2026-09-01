@@ -33,6 +33,7 @@ import { displayProfileName } from './native.js';
 type ReasoningEffortSelection = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 type JobReasoningEffort = ReasoningEffortSelection | 'none';
 type ModelMenuView = 'closed' | 'models' | 'effort';
+type ProviderMode = 'ollama' | 'anthropic' | 'openai' | 'local-first';
 
 const NEW_TASK_ID = '__new__';
 
@@ -70,6 +71,17 @@ interface EngineerResult {
   plan?: { confidence: number; tasks: Array<{ id: string; task: string; dependsOn: string[]; editableFiles: string[] }>; riskTags: string[] };
   modelCalls?: Array<{ stage: string; model: string; promptTokens?: number; completionTokens?: number }>;
 }
+interface EscalationOption {
+  providerId: string;
+  modelId: string;
+  supportsReasoning: boolean;
+}
+interface EscalationPlan {
+  stage: string;
+  recommended?: EscalationOption & { reasoningEffort: JobReasoningEffort };
+  options: EscalationOption[];
+  reasons: string[];
+}
 interface JobEvent {
   id: string;
   jobId: string;
@@ -93,6 +105,7 @@ interface Job {
     reasoningEffort?: JobReasoningEffort;
   };
   decisionRequest?: DecisionRequest;
+  escalationPlan?: EscalationPlan;
   result?: EngineerResult;
   error?: string;
   events: JobEvent[];
@@ -129,7 +142,6 @@ interface ProjectCatalog {
   providers: CatalogProvider[];
 }
 interface ModelOption {
-  value: string;
   providerId: string;
   modelId: string;
   label: string;
@@ -147,6 +159,13 @@ const effortOptions: Array<{ id: ReasoningEffortSelection; label: string; descri
   { id: 'max', label: 'Max', description: 'Maximum supported reasoning depth' }
 ];
 
+const providerModes: Array<{ id: ProviderMode; label: string; description: string; providerId: string }> = [
+  { id: 'ollama', label: 'Ollama', description: 'Use Ollama only for every stage', providerId: 'ollama' },
+  { id: 'anthropic', label: 'Claude', description: 'Use the selected Anthropic model directly', providerId: 'anthropic' },
+  { id: 'openai', label: 'GPT', description: 'Use the selected OpenAI model directly', providerId: 'openai' },
+  { id: 'local-first', label: 'Local-first', description: 'Start on Ollama; ask before bounded cloud escalation', providerId: 'ollama' }
+];
+
 function time(value?: string) {
   return value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
 }
@@ -155,14 +174,50 @@ function duration(ms?: number) {
   if ((ms ?? 0) < 60_000) return `${Math.max(1, Math.round((ms ?? 0) / 1000))}s`;
   return `${Math.floor((ms ?? 0) / 60_000)}m`;
 }
+function providerLabel(providerId: string): string {
+  if (providerId === 'anthropic') return 'Claude';
+  if (providerId === 'openai') return 'GPT';
+  if (providerId === 'ollama') return 'Ollama';
+  return providerId;
+}
 function modelValue(selection: ModelSelection): string {
-  return selection.mode === 'auto' ? 'auto' : `${selection.providerId}\0${selection.modelId}`;
+  if (selection.mode === 'auto') return 'auto';
+  if (selection.mode === 'local-first') return `local-first\0${selection.modelId}`;
+  return `${selection.providerId}\0${selection.modelId}`;
 }
 function parseModelValue(value: string): ModelSelection {
   if (value === 'auto') return { mode: 'auto' };
   const split = value.indexOf('\0');
   if (split <= 0) return { mode: 'auto' };
-  return { mode: 'explicit', providerId: value.slice(0, split), modelId: value.slice(split + 1) };
+  const providerId = value.slice(0, split);
+  const modelId = value.slice(split + 1);
+  return providerId === 'local-first'
+    ? { mode: 'local-first', modelId }
+    : { mode: 'explicit', providerId, modelId };
+}
+function providerMode(value: string): ProviderMode {
+  if (value.startsWith('local-first\0')) return 'local-first';
+  if (value.startsWith('anthropic\0')) return 'anthropic';
+  if (value.startsWith('openai\0')) return 'openai';
+  return 'ollama';
+}
+function modeValue(mode: ProviderMode, modelId: string): string {
+  return `${mode === 'local-first' ? 'local-first' : mode}\0${modelId}`;
+}
+function firstAvailableModel(catalog: ProjectCatalog, providerId: string): CatalogModel | undefined {
+  const provider = catalog.providers.find((item) => item.id === providerId && item.ready);
+  return provider?.models.find((model) => model.available);
+}
+function defaultComposerSelection(catalog: ProjectCatalog): string {
+  const configured = modelValue(catalog.defaultModel);
+  if (configured !== 'auto') return configured;
+  const local = firstAvailableModel(catalog, 'ollama');
+  if (local) return modeValue('local-first', local.id);
+  const claude = firstAvailableModel(catalog, 'anthropic');
+  if (claude) return modeValue('anthropic', claude.id);
+  const gpt = firstAvailableModel(catalog, 'openai');
+  if (gpt) return modeValue('openai', gpt.id);
+  return 'auto';
 }
 function isWorking(status?: string) {
   return status === 'queued' || status === 'running';
@@ -260,7 +315,7 @@ export function AgentSurfaceV2() {
     void api<{ catalog: ProjectCatalog }>(`/api/projects/${encodeURIComponent(selectedProjectId)}/catalog`)
       .then(({ catalog: next }) => {
         setCatalog(next);
-        setModelSelection(modelValue(next.defaultModel));
+        setModelSelection(defaultComposerSelection(next));
       })
       .catch((next) => {
         setCatalog(undefined);
@@ -295,11 +350,10 @@ export function AgentSurfaceV2() {
     for (const provider of catalog?.providers ?? []) {
       for (const model of provider.models) {
         options.push({
-          value: `${provider.id}\0${model.id}`,
           providerId: provider.id,
           modelId: model.id,
           label: model.displayName,
-          description: provider.kind === 'local' ? `Local · ${provider.id}` : `Cloud · ${provider.id}`,
+          description: provider.kind === 'local' ? 'Local model' : `Cloud · ${providerLabel(provider.id)}`,
           available: provider.ready && model.available,
           reason: provider.reason
         });
@@ -308,8 +362,13 @@ export function AgentSurfaceV2() {
     return options;
   }, [catalog]);
 
-  const selectedModel = modelOptions.find((model) => model.value === modelSelection);
-  const modelLabel = modelSelection === 'auto' ? 'Auto' : selectedModel?.label ?? 'Model';
+  const selectedMode = providerMode(modelSelection);
+  const selectedModeConfig = providerModes.find((item) => item.id === selectedMode)!;
+  const selectedModelId = modelSelection.includes('\0') ? modelSelection.slice(modelSelection.indexOf('\0') + 1) : '';
+  const selectedModel = modelOptions.find(
+    (model) => model.providerId === selectedModeConfig.providerId && model.modelId === selectedModelId
+  );
+  const modelLabel = selectedModeConfig.label;
   const effortLabel = effortOptions.find((option) => option.id === effort)?.label ?? 'Default';
   const displayedEffortLabel = thinkingEnabled ? effortLabel : 'Thinking off';
 
@@ -339,6 +398,10 @@ export function AgentSurfaceV2() {
       setModelMenu('closed');
       if (projects.length > 0) setProjectMenu(true);
       else setExtrasOpen(true);
+      return;
+    }
+    if (selectedProject && modelSelection === 'auto') {
+      setError('No configured provider model is available for this Project. Check Model routing settings.');
       return;
     }
     setSubmitting(true);
@@ -415,6 +478,24 @@ export function AgentSurfaceV2() {
     }
   }
 
+  async function sendEscalation(
+    providerId: string,
+    modelId: string,
+    reasoningEffort?: JobReasoningEffort
+  ) {
+    if (!active) return;
+    try {
+      const { job } = await api<{ job: Job }>(`/api/jobs/${active.id}/escalate`, {
+        method: 'POST',
+        body: JSON.stringify({ providerId, modelId, reasoningEffort })
+      });
+      setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
+    } catch (next) {
+      setError(next instanceof Error ? next.message : String(next));
+      throw next;
+    }
+  }
+
   function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
@@ -440,6 +521,7 @@ export function AgentSurfaceV2() {
         guidance={guidance}
         setGuidance={setGuidance}
         sendGuidance={sendGuidance}
+        sendEscalation={sendEscalation}
       />}
 
       <Composer
@@ -462,6 +544,7 @@ export function AgentSurfaceV2() {
         modelSelection={modelSelection}
         setModelSelection={setModelSelection}
         modelLabel={modelLabel}
+        selectedModelLabel={selectedModel?.label}
         effort={effort}
         setEffort={setEffort}
         effortLabel={displayedEffortLabel}
@@ -535,6 +618,7 @@ function Composer(props: {
   modelSelection: string;
   setModelSelection: (value: string) => void;
   modelLabel: string;
+  selectedModelLabel?: string;
   effort: ReasoningEffortSelection;
   setEffort: (value: ReasoningEffortSelection) => void;
   effortLabel: string;
@@ -619,7 +703,7 @@ function Composer(props: {
           <div className="composer-menu-anchor model-menu-anchor">
             <button className="model-effort-trigger" aria-haspopup="menu" aria-expanded={props.modelMenu !== 'closed'} onClick={() => { props.setExtrasOpen(false); props.setProjectMenu(false); props.setModelMenu(props.modelMenu === 'closed' ? 'models' : 'closed'); }}>
               <Zap size={13} strokeWidth={1.7} />
-              <span>{props.modelLabel}</span><span className="model-trigger-dot">·</span><span>{props.effortLabel}</span>
+              <span>{props.modelLabel}</span>{props.selectedModelLabel ? <><span className="model-trigger-dot">·</span><span>{props.selectedModelLabel}</span></> : null}<span className="model-trigger-dot">·</span><span>{props.effortLabel}</span>
               <ChevronDown size={13} strokeWidth={1.6} />
             </button>
             {props.modelMenu !== 'closed' ? <ModelMenu {...props} /> : null}
@@ -656,20 +740,41 @@ function ModelMenu(props: {
     </div>;
   }
 
-  const providers = [...new Set(props.modelOptions.map((model) => model.providerId))];
+  const currentMode = providerMode(props.modelSelection);
+  const currentModeConfig = providerModes.find((mode) => mode.id === currentMode)!;
+  const currentModels = props.modelOptions.filter((model) => model.providerId === currentModeConfig.providerId);
+  const selectedModelId = props.modelSelection.includes('\0')
+    ? props.modelSelection.slice(props.modelSelection.indexOf('\0') + 1)
+    : '';
+
+  function modeReady(mode: ProviderMode): boolean {
+    const config = providerModes.find((item) => item.id === mode)!;
+    return props.modelOptions.some((model) => model.providerId === config.providerId && model.available);
+  }
+
+  function chooseProviderMode(mode: ProviderMode) {
+    const config = providerModes.find((item) => item.id === mode)!;
+    const model = props.modelOptions.find((option) => option.providerId === config.providerId && option.available);
+    if (!model) return;
+    props.setModelSelection(modeValue(mode, model.modelId));
+  }
+
   return <div className="lc-agent-popover model-popover" role="menu">
-    <button className={props.modelSelection === 'auto' ? 'selected' : ''} onClick={() => { props.setModelSelection('auto'); props.setModelMenu('closed'); }}>
-      <span><strong>Auto</strong><small>Route each stage to the best allowed model</small></span>
-      {props.modelSelection === 'auto' ? <Check size={16} /> : null}
-    </button>
-    {providers.map((providerId) => <div className="model-provider-group" key={providerId}>
-      <div className="model-provider-label">{providerId}</div>
-      {props.modelOptions.filter((model) => model.providerId === providerId).map((model) => <button key={model.value} className={props.modelSelection === model.value ? 'selected' : ''} disabled={!model.available} title={!model.available ? model.reason ?? 'Provider unavailable' : undefined} onClick={() => { props.setModelSelection(model.value); props.setModelMenu('closed'); }}>
-        <span><strong>{model.label}</strong><small>{model.description}{model.available ? '' : ` · ${model.reason ?? 'unavailable'}`}</small></span>
-        {props.modelSelection === model.value ? <Check size={16} /> : null}
-      </button>)}
-    </div>)}
-    {props.modelOptions.length === 0 ? <div className="model-menu-note">Choose or create a project to discover provider models. Auto remains available.</div> : null}
+    <div className="model-provider-label">Mode</div>
+    {providerModes.map((mode) => {
+      const ready = modeReady(mode.id);
+      return <button key={mode.id} className={currentMode === mode.id ? 'selected' : ''} disabled={!ready} onClick={() => chooseProviderMode(mode.id)}>
+        <span><strong>{mode.label}</strong><small>{mode.description}{ready ? '' : ' · unavailable'}</small></span>
+        {currentMode === mode.id ? <Check size={16} /> : null}
+      </button>;
+    })}
+    <div className="popover-separator" />
+    <div className="model-provider-label">{currentModeConfig.label} model</div>
+    {currentModels.map((model) => <button key={`${currentMode}-${model.modelId}`} className={selectedModelId === model.modelId ? 'selected' : ''} disabled={!model.available} title={!model.available ? model.reason ?? 'Provider unavailable' : undefined} onClick={() => { props.setModelSelection(modeValue(currentMode, model.modelId)); props.setModelMenu('closed'); }}>
+      <span><strong>{model.label}</strong><small>{model.description}{model.available ? '' : ` · ${model.reason ?? 'unavailable'}`}</small></span>
+      {selectedModelId === model.modelId ? <Check size={16} /> : null}
+    </button>)}
+    {props.modelOptions.length === 0 ? <div className="model-menu-note">Choose or create a project to discover Ollama, Claude and GPT models.</div> : null}
     <div className="popover-separator" />
     <button className="popover-row-link" onClick={() => props.setModelMenu('effort')}>
       <span><strong>Effort</strong><small>Control how deeply the selected model reasons</small></span>
@@ -691,6 +796,7 @@ function TaskThread(props: {
   guidance: string;
   setGuidance: (value: string) => void;
   sendGuidance: () => Promise<void>;
+  sendEscalation: (providerId: string, modelId: string, reasoningEffort?: JobReasoningEffort) => Promise<void>;
 }) {
   const { job, currentInference } = props;
   const working = isWorking(job.status);
@@ -707,7 +813,7 @@ function TaskThread(props: {
           <div className="assistant-stream-meta">{currentInference?.stage ? <span>{currentInference.stage}</span> : null}{currentInference?.model ? <span>{currentInference.model}</span> : null}{currentInference?.runningMs ? <span>{duration(currentInference.runningMs)}</span> : null}</div>
         </div> : null}
         {job.status === 'waiting-decision' && job.decisionRequest ? <DecisionMessage request={job.decisionRequest} selections={props.decisionSelections} setSelections={props.setDecisionSelections} onContinue={props.sendDecision} /> : null}
-        {job.status === 'waiting-guidance' && result?.escalation ? <GuidanceMessage result={result} guidance={props.guidance} setGuidance={props.setGuidance} onContinue={props.sendGuidance} /> : null}
+        {job.status === 'waiting-guidance' && result?.escalation ? <GuidanceMessage job={job} guidance={props.guidance} setGuidance={props.setGuidance} onContinue={props.sendGuidance} onEscalate={props.sendEscalation} /> : null}
         {job.status === 'error' ? <div className="assistant-result-message error"><strong>Something went wrong</strong><p>{job.error ?? 'The task stopped unexpectedly.'}</p></div> : null}
         {job.status === 'cancelled' ? <div className="assistant-result-message muted-result"><strong>Task stopped</strong><p>The run was cancelled and will not resume automatically.</p></div> : null}
         {job.status === 'success' && result ? <ResultMessage result={result} /> : null}
@@ -724,9 +830,85 @@ function DecisionMessage(props: { request: DecisionRequest; selections: Record<s
   </div>;
 }
 
-function GuidanceMessage(props: { result: EngineerResult; guidance: string; setGuidance: (value: string) => void; onContinue: () => Promise<void> }) {
-  const escalation = props.result.escalation!;
-  return <div className="assistant-decision-message"><h2>{escalation.reason}</h2>{escalation.questions.map((question) => <p key={question}>{question}</p>)}<textarea className="inline-guidance-input" rows={3} value={props.guidance} onChange={(event) => props.setGuidance(event.target.value)} placeholder="Add the missing decision or evidence…" /><button className="lc-agent-secondary-action" disabled={!props.guidance.trim()} onClick={() => void props.onContinue()}>Resume</button></div>;
+function GuidanceMessage(props: {
+  job: Job;
+  guidance: string;
+  setGuidance: (value: string) => void;
+  onContinue: () => Promise<void>;
+  onEscalate: (providerId: string, modelId: string, reasoningEffort?: JobReasoningEffort) => Promise<void>;
+}) {
+  const escalation = props.job.result!.escalation!;
+  const plan = props.job.escalationPlan;
+  const recommended = plan?.recommended;
+  const initialTarget = recommended
+    ? `${recommended.providerId}\0${recommended.modelId}`
+    : plan?.options[0]
+      ? `${plan.options[0].providerId}\0${plan.options[0].modelId}`
+      : '';
+  const [target, setTarget] = useState(initialTarget);
+  const [escalationEffort, setEscalationEffort] = useState<JobReasoningEffort>(recommended?.reasoningEffort ?? 'high');
+  const [escalating, setEscalating] = useState(false);
+
+  useEffect(() => {
+    if (!recommended) return;
+    setTarget(`${recommended.providerId}\0${recommended.modelId}`);
+    setEscalationEffort(recommended.reasoningEffort);
+  }, [recommended?.providerId, recommended?.modelId, recommended?.reasoningEffort]);
+
+  const selectedOption = plan?.options.find(
+    (option) => `${option.providerId}\0${option.modelId}` === target
+  );
+
+  async function escalate() {
+    if (!selectedOption) return;
+    setEscalating(true);
+    try {
+      await props.onEscalate(
+        selectedOption.providerId,
+        selectedOption.modelId,
+        selectedOption.supportsReasoning ? escalationEffort : 'none'
+      );
+    } finally {
+      setEscalating(false);
+    }
+  }
+
+  return <div className="assistant-decision-message">
+    <h2>{escalation.reason}</h2>
+    {escalation.questions.map((question) => <p key={question}>{question}</p>)}
+
+    {plan?.options.length ? <div className="inline-decision">
+      <strong>Ollama can ask a cloud model for bounded guidance.</strong>
+      {recommended ? <p>Recommended: {providerLabel(recommended.providerId)} · {recommended.modelId} · {recommended.reasoningEffort} effort. Ollama remains the task owner and resumes after the answer.</p> : null}
+      <label className="composer-popover-field"><span><strong>Escalation model</strong></span>
+        <select value={target} onChange={(event) => {
+          const next = event.target.value;
+          setTarget(next);
+          const option = plan.options.find((item) => `${item.providerId}\0${item.modelId}` === next);
+          if (option && !option.supportsReasoning) setEscalationEffort('none');
+          else if (escalationEffort === 'none') setEscalationEffort('high');
+        }}>
+          {plan.options.map((option) => <option key={`${option.providerId}-${option.modelId}`} value={`${option.providerId}\0${option.modelId}`}>{providerLabel(option.providerId)} · {option.modelId}{recommended?.providerId === option.providerId && recommended.modelId === option.modelId ? ' — Recommended' : ''}</option>)}
+        </select>
+      </label>
+      {selectedOption?.supportsReasoning ? <label className="composer-popover-field"><span><strong>Escalation effort</strong></span>
+        <select value={escalationEffort === 'auto' ? 'high' : escalationEffort} onChange={(event) => setEscalationEffort(event.target.value as JobReasoningEffort)}>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="xhigh">Extra high</option>
+          <option value="max">Max</option>
+        </select>
+      </label> : null}
+      <button className="lc-agent-secondary-action" disabled={escalating || !selectedOption} onClick={() => void escalate()}>{escalating ? 'Consulting…' : recommended && target === `${recommended.providerId}\0${recommended.modelId}` ? `Escalate to recommended ${providerLabel(recommended.providerId)}` : 'Escalate to selected model'}</button>
+    </div> : plan ? <p>{plan.reasons[0] ?? 'No cloud escalation target is available.'}</p> : null}
+
+    <div className="inline-decision">
+      <strong>Or continue manually</strong>
+      <textarea className="inline-guidance-input" rows={3} value={props.guidance} onChange={(event) => props.setGuidance(event.target.value)} placeholder="Add the missing decision or evidence…" />
+      <button className="lc-agent-secondary-action" disabled={!props.guidance.trim()} onClick={() => void props.onContinue()}>Resume with manual guidance</button>
+    </div>
+  </div>;
 }
 
 function ResultMessage({ result }: { result: EngineerResult }) {
@@ -744,8 +926,14 @@ function ProgressRail({ job, currentInference }: { job: Job; currentInference?: 
   const result = job.result;
   const thinking = job.input.reasoningEffort === 'none' ? 'Off' : 'On';
   const effort = job.input.reasoningEffort === 'none' ? '—' : job.input.reasoningEffort === 'auto' || !job.input.reasoningEffort ? result?.preflight?.cognitive?.effort ?? 'Auto' : job.input.reasoningEffort;
+  const selection = job.input.modelSelection;
+  const mode = selection?.mode === 'local-first'
+    ? 'Local-first'
+    : selection?.mode === 'explicit'
+      ? providerLabel(selection.providerId)
+      : 'Auto';
   return <aside className="lc-agent-progress-rail" aria-label="Task progress">
     <details className="progress-panel" open><summary>Progress <ChevronDown size={14} /></summary><div className="progress-list">{events.length === 0 ? <p>No progress yet.</p> : events.slice(0, 12).map((event, index) => <div className="progress-row" key={event.id}><span className={`progress-index ${index === 0 && isWorking(job.status) ? 'active' : ''}`}>{index === 0 && isWorking(job.status) ? <LoaderCircle size={11} /> : events.length - index}</span><div><strong>{event.title}</strong><small>{time(event.timestamp)}</small></div></div>)}</div></details>
-    <details className="progress-panel"><summary>Context <ChevronDown size={14} /></summary><div className="context-list"><div><span>Workspace</span><code>{job.input.workspace}</code></div><div><span>Model</span><strong>{currentInference?.model ?? result?.modelCalls?.at(-1)?.model ?? 'Auto'}</strong></div><div><span>Effort</span><strong>{effort}</strong></div><div><span>Thinking</span><strong>{thinking}</strong></div><div><span>Round</span><strong>{job.rounds}</strong></div></div></details>
+    <details className="progress-panel"><summary>Context <ChevronDown size={14} /></summary><div className="context-list"><div><span>Workspace</span><code>{job.input.workspace}</code></div><div><span>Mode</span><strong>{mode}</strong></div><div><span>Model</span><strong>{currentInference?.model ?? result?.modelCalls?.at(-1)?.model ?? (selection && selection.mode !== 'auto' ? selection.modelId : 'Auto')}</strong></div><div><span>Effort</span><strong>{effort}</strong></div><div><span>Thinking</span><strong>{thinking}</strong></div><div><span>Round</span><strong>{job.rounds}</strong></div></div></details>
   </aside>;
 }

@@ -158,8 +158,17 @@ export class ProjectProviderRuntime {
         .map(([modelId]) => modelId);
 
       let requestedIds: string[];
-      if (selection.mode === 'explicit' && selection.providerId === provider.id) {
+      if (selection.mode === 'local-first') {
+        // Local-first is a strict execution mode, not a scoring preference. Normal
+        // agent stages must remain on Ollama. Cloud is reachable only through the
+        // explicit escalation broker after the local agent returns needs-guidance.
+        requestedIds = provider.kind === 'local' ? [selection.modelId] : [];
+      } else if (selection.mode === 'explicit' && selection.providerId === provider.id) {
         requestedIds = [selection.modelId];
+      } else if (selection.mode === 'explicit') {
+        // Direct Ollama / Claude / GPT selection is exact. Do not keep unrelated
+        // providers around as fallback candidates for provider failures.
+        requestedIds = [];
       } else if (provider.kind === 'local') {
         const configuredFast = discovered.find(
           (model) => model.metadata?.configuredFastModel === true

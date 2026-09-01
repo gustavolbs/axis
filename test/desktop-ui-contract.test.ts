@@ -376,14 +376,20 @@ test('workspace entry has native Browse and browser recent-folder fallback', () 
   assert.match(css, /\.path-browse-button/);
 });
 
-test('model menu exposes real provider groups plus Effort and Thinking', () => {
+test('model menu exposes Ollama Claude GPT Local-first plus Effort and Thinking', () => {
   assert.match(agentSurface, /className="model-effort-trigger"/);
-  assert.match(agentSurface, /model-provider-group/);
-  assert.match(agentSurface, /<strong>Auto<\/strong>/);
+  assert.match(agentSurface, /type ProviderMode = 'ollama' \| 'anthropic' \| 'openai' \| 'local-first'/);
+  for (const label of ['Ollama', 'Claude', 'GPT', 'Local-first']) {
+    assert.match(agentSurface, new RegExp(`label: '${label}'`), `missing provider mode: ${label}`);
+  }
+  assert.match(agentSurface, /Start on Ollama; ask before bounded cloud escalation/);
+  assert.doesNotMatch(agentSurface, /<strong>Auto<\/strong>/, 'Auto must not appear as a fifth provider mode');
   assert.match(agentSurface, /<strong>Effort<\/strong>/);
   assert.match(agentSurface, /<strong>Thinking<\/strong>/);
   for (const label of ['Low', 'Medium', 'High', 'Extra high', 'Max']) assert.match(agentSurface, new RegExp(`label: '${label}'`));
   assert.match(agentSurface, /reasoningEffort:\s*selectedProject \? \(thinkingEnabled \? effort : 'none'\)/);
+  assert.match(agentSurface, /\/api\/jobs\/\$\{active\.id\}\/escalate/);
+  assert.match(agentSurface, /Ollama remains the task owner and resumes after the answer/);
   assert.match(css, /\.lc-agent-switch\.on/);
 });
 

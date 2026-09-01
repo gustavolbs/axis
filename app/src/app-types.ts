@@ -1,5 +1,8 @@
 export type RoutingPolicy = 'auto' | 'local-first' | 'balanced' | 'speed-first' | 'deep' | 'frontier-only';
-export type ModelSelection = { mode: 'auto' } | { mode: 'explicit'; providerId: string; modelId: string };
+export type ModelSelection =
+  | { mode: 'auto' }
+  | { mode: 'explicit'; providerId: string; modelId: string }
+  | { mode: 'local-first'; modelId: string };
 
 export interface AdminProject {
   id: string;

@@ -1,6 +1,11 @@
 import type { LocalCoderConfig } from './config.js';
-import { classifyInferenceStage } from './inference-status.js';
+import {
+  routeCognitiveStage,
+  type RoutingCandidate
+} from './cognitive-router.js';
+import { classifyInferenceStage, type InferenceStage } from './inference-status.js';
 import type {
+  LocalEngineerEscalation,
   LocalEngineerExecution,
   LocalEngineerInput,
   LocalEngineerResult
@@ -40,6 +45,8 @@ import {
 import type {
   InferenceOutputFormat,
   InferenceProvider,
+  InferenceRequest,
+  InferenceUsage,
   ReasoningEffort
 } from './providers/types.js';
 import type { RemoteWorkerHealth } from './remote-protocol.js';
@@ -60,6 +67,34 @@ export type ProjectEngineerInput = LocalEngineerInput & {
   /** Optional standalone override. Auto preserves the Agent Runtime stage policy. */
   reasoningEffort?: 'auto' | ReasoningEffort;
 };
+
+export interface ProjectEscalationOption {
+  providerId: string;
+  modelId: string;
+  supportsReasoning: boolean;
+}
+
+export interface ProjectEscalationPlan {
+  stage: InferenceStage;
+  recommended?: ProjectEscalationOption & { reasoningEffort: ReasoningEffort };
+  options: ProjectEscalationOption[];
+  reasons: string[];
+}
+
+export interface ProjectEscalationChoice {
+  providerId: string;
+  modelId: string;
+  reasoningEffort?: ReasoningEffort;
+}
+
+export interface ProjectEscalationGuidance {
+  providerId: string;
+  modelId: string;
+  reasoningEffort: ReasoningEffort;
+  content: string;
+  latencyMs: number;
+  usage: InferenceUsage;
+}
 
 export interface LegacyEngineerExecutor {
   executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult>;
@@ -115,6 +150,11 @@ export interface ProjectEngineerBackendOptions {
   routingHistory?: RoutingHistoryStore;
 }
 
+const ESCALATION_SYSTEM_PROMPT = `You are a bounded consulting model for a local software-engineering agent.
+The local Ollama agent remains the owner of the task and implementation.
+Resolve only the uncertainty described in the escalation capsule. Do not take over the whole task, do not invent repository facts, and do not propose unrelated changes.
+Return concise, actionable guidance that can be injected back into the local agent as authoritative external guidance. If evidence is insufficient, say exactly what remains unknown.`;
+
 function reasoningEffort(think: OllamaThinkingLevel | undefined): ReasoningEffort | undefined {
   if (think === undefined) return undefined;
   if (think === false) return 'none';
@@ -142,6 +182,42 @@ function streamProgress(
     state: state === 'generating' ? 'generating' : 'thinking',
     lastActivityAt: timestamp
   };
+}
+
+function escalationStage(escalation: LocalEngineerEscalation): InferenceStage {
+  if (escalation.kind === 'external-research') return 'investigation';
+  if (escalation.kind === 'review-failure') return 'review';
+  if (escalation.kind === 'execution-failure') return 'implementation';
+  if (escalation.kind === 'decision' || escalation.kind === 'sensitive-decision') return 'deliberation';
+  return 'other';
+}
+
+function escalationPrompt(input: ProjectEngineerInput, escalation: LocalEngineerEscalation): string {
+  return JSON.stringify({
+    taskGoal: input.goal,
+    taskContext: input.context ?? null,
+    taskConstraints: input.constraints ?? [],
+    escalation: {
+      kind: escalation.kind,
+      reason: escalation.reason,
+      questions: escalation.questions,
+      researchRequests: escalation.researchRequests,
+      evidence: escalation.evidence
+    },
+    responseContract: {
+      owner: 'local Ollama agent',
+      purpose: 'bounded guidance only',
+      implementationOwnership: 'do not take over implementation'
+    }
+  }, null, 2);
+}
+
+function isStrictLegacyLocal(project: ProjectDefinition): boolean {
+  return (
+    project.privacy.cloudAllowed === false &&
+    project.privacy.allowedProviderIds.length === 1 &&
+    project.privacy.allowedProviderIds[0] === 'ollama'
+  );
 }
 
 /** Adapts one already-selected local provider back to the legacy agent chat contract. */
@@ -259,22 +335,13 @@ export class ProjectAwareEngineerBackend {
     }
     const { project, workspace: projectWorkspace } = resolved;
 
-    const budget = this.options.budgetSessionFactory?.(project, input.budgetJobId) ??
-      new ProjectBudgetSession(project, undefined, undefined, input.budgetJobId ? { jobId: input.budgetJobId } : {});
+    const budget = this.createBudgetSession(project, input.budgetJobId);
     const localProvider = createLocalInferenceProvider(
       this.config,
       this.ollama,
       this.remoteClient
     );
-    const configuredRuntime = this.options.providerRuntime ?? {};
-    const providerRuntime = new ProjectProviderRuntime({
-      ...configuredRuntime,
-      metrics: mergeRoutingMetricsSources(
-        configuredRuntime.metrics,
-        this.routingHistory.forProject(project)
-      ),
-      localProvider
-    });
+    const providerRuntime = this.createProviderRuntime(project, localProvider);
     const localChat: LegacyAgentChatClient =
       this.config.executionMode === 'local'
         ? this.ollama
@@ -328,6 +395,196 @@ export class ProjectAwareEngineerBackend {
       budget: budget.snapshot()
     };
     return result;
+  }
+
+  async prepareEscalation(
+    input: ProjectEngineerInput,
+    escalation: LocalEngineerEscalation
+  ): Promise<ProjectEscalationPlan> {
+    const resolved = await this.resolveProject(input);
+    const project = resolved.project;
+    if (!project) throw new Error('Cloud escalation requires a configured Project.');
+    const selection = input.modelSelection ?? project.defaultModel;
+    if (selection.mode !== 'local-first') {
+      throw new Error('Cloud consultation is only available for Local-first jobs.');
+    }
+
+    const stage = escalationStage(escalation);
+    if (!project.privacy.cloudAllowed) {
+      return {
+        stage,
+        options: [],
+        reasons: ['Project privacy policy does not allow cloud inference. Manual guidance is still available.']
+      };
+    }
+
+    const localProvider = createLocalInferenceProvider(this.config, this.ollama, this.remoteClient);
+    const providerRuntime = this.createProviderRuntime(project, localProvider);
+    const { candidates } = await providerRuntime.routingCandidates(project, {
+      stage,
+      modelSelection: { mode: 'auto' }
+    });
+    const cloudCandidates = candidates.filter(
+      (candidate) => candidate.providerKind === 'cloud' && candidate.available
+    );
+    if (cloudCandidates.length === 0) {
+      return {
+        stage,
+        options: [],
+        reasons: ['No configured cloud model is currently available for this Project. Manual guidance is still available.']
+      };
+    }
+
+    const decision = routeCognitiveStage({
+      project,
+      stage,
+      candidates: cloudCandidates,
+      policy: 'deep',
+      modelSelection: { mode: 'auto' }
+    });
+    const scores = new Map(
+      decision.considered.map((candidate) => [
+        `${candidate.providerId}\0${candidate.modelId}`,
+        candidate.score ?? -Infinity
+      ])
+    );
+    const ordered = [...cloudCandidates].sort(
+      (a, b) =>
+        (scores.get(`${b.providerId}\0${b.modelId}`) ?? -Infinity) -
+        (scores.get(`${a.providerId}\0${a.modelId}`) ?? -Infinity)
+    );
+    const options: ProjectEscalationOption[] = ordered.map((candidate) => ({
+      providerId: candidate.providerId,
+      modelId: candidate.modelId,
+      supportsReasoning: candidate.capabilities?.reasoning === true
+    }));
+    const recommendedOption = options.find(
+      (option) =>
+        option.providerId === decision.selected.providerId &&
+        option.modelId === decision.selected.modelId
+    );
+
+    return {
+      stage,
+      recommended: recommendedOption
+        ? {
+            ...recommendedOption,
+            reasoningEffort: recommendedOption.supportsReasoning ? 'high' : 'none'
+          }
+        : undefined,
+      options,
+      reasons: decision.reasons
+    };
+  }
+
+  async consultEscalation(
+    input: ProjectEngineerInput,
+    escalation: LocalEngineerEscalation,
+    choice: ProjectEscalationChoice
+  ): Promise<ProjectEscalationGuidance> {
+    const resolved = await this.resolveProject(input);
+    const project = resolved.project;
+    if (!project) throw new Error('Cloud escalation requires a configured Project.');
+    const plan = await this.prepareEscalation(input, escalation);
+    const option = plan.options.find(
+      (candidate) =>
+        candidate.providerId === choice.providerId &&
+        candidate.modelId === choice.modelId
+    );
+    if (!option) {
+      throw new Error(`Escalation target ${choice.providerId}/${choice.modelId} is not available for this Project.`);
+    }
+
+    const effort = choice.reasoningEffort ?? (option.supportsReasoning ? 'high' : 'none');
+    if (effort !== 'none' && !option.supportsReasoning) {
+      throw new Error(`${choice.providerId}/${choice.modelId} does not advertise reasoning support.`);
+    }
+
+    const localProvider = createLocalInferenceProvider(this.config, this.ollama, this.remoteClient);
+    const providerRuntime = this.createProviderRuntime(project, localProvider);
+    const { registry, candidates } = await providerRuntime.routingCandidates(project, {
+      stage: plan.stage,
+      modelSelection: { mode: 'auto' }
+    });
+    const candidate = candidates.find(
+      (item) =>
+        item.providerKind === 'cloud' &&
+        item.available &&
+        item.providerId === option.providerId &&
+        item.modelId === option.modelId
+    );
+    if (!candidate) {
+      throw new Error(`Escalation target ${option.providerId}/${option.modelId} became unavailable.`);
+    }
+    const provider = registry.get(option.providerId);
+    const inference: Omit<InferenceRequest, 'model'> = {
+      systemPrompt: ESCALATION_SYSTEM_PROMPT,
+      userPrompt: escalationPrompt(input, escalation),
+      stage: plan.stage,
+      output: { type: 'text' },
+      reasoning: effort === 'none' ? undefined : { effort },
+      maxOutputTokens: 4_096,
+      timeoutMs: 300_000
+    };
+    const budget = this.createBudgetSession(project, input.budgetJobId);
+    const admission = await budget.authorize(candidate, inference);
+    const startedAt = Date.now();
+
+    try {
+      const result = await provider.invoke({ ...inference, model: option.modelId });
+      if (result.providerId !== option.providerId) {
+        throw new Error(
+          `Escalation provider identity mismatch: expected ${option.providerId}, received ${result.providerId}.`
+        );
+      }
+      budget.record(plan.stage, candidate, result, false, admission);
+      this.routingHistory.record(project, {
+        stage: plan.stage,
+        candidate,
+        outcome: 'success',
+        latencyMs: result.latencyMs,
+        fallback: false
+      });
+      return {
+        providerId: result.providerId,
+        modelId: result.model,
+        reasoningEffort: effort,
+        content: result.content,
+        latencyMs: result.latencyMs,
+        usage: result.usage
+      };
+    } catch (error) {
+      budget.releaseAttempt(admission);
+      this.routingHistory.record(project, {
+        stage: plan.stage,
+        candidate,
+        outcome: 'error',
+        latencyMs: Math.max(0, Date.now() - startedAt),
+        fallback: false,
+        failureKind: 'fatal'
+      });
+      throw error;
+    }
+  }
+
+  private createBudgetSession(project: ProjectDefinition, jobId?: string): ProjectBudgetSession {
+    return this.options.budgetSessionFactory?.(project, jobId) ??
+      new ProjectBudgetSession(project, undefined, undefined, jobId ? { jobId } : {});
+  }
+
+  private createProviderRuntime(
+    project: ProjectDefinition,
+    localProvider: InferenceProvider
+  ): ProjectProviderRuntime {
+    const configuredRuntime = this.options.providerRuntime ?? {};
+    return new ProjectProviderRuntime({
+      ...configuredRuntime,
+      metrics: mergeRoutingMetricsSources(
+        configuredRuntime.metrics,
+        this.routingHistory.forProject(project)
+      ),
+      localProvider
+    });
   }
 
   private async resolveProject(

@@ -60,14 +60,20 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 function modelValue(selection: ModelSelection): string {
-  return selection.mode === 'auto' ? 'auto' : `${selection.providerId}\0${selection.modelId}`;
+  if (selection.mode === 'auto') return 'auto';
+  if (selection.mode === 'local-first') return `local-first\0${selection.modelId}`;
+  return `${selection.providerId}\0${selection.modelId}`;
 }
 
 function parseModel(value: string): ModelSelection {
   if (value === 'auto') return { mode: 'auto' };
   const index = value.indexOf('\0');
   if (index <= 0) return { mode: 'auto' };
-  return { mode: 'explicit', providerId: value.slice(0, index), modelId: value.slice(index + 1) };
+  const providerId = value.slice(0, index);
+  const modelId = value.slice(index + 1);
+  return providerId === 'local-first'
+    ? { mode: 'local-first', modelId }
+    : { mode: 'explicit', providerId, modelId };
 }
 
 function optionalBudget(value: string): number | null {
@@ -87,6 +93,7 @@ interface RuntimeSettingsResponse {
   ollamaBaseUrl: string;
   executionMode: ExecutionMode;
   requiresWorkerToken: boolean;
+  workerTokenOptional?: boolean;
   restartRequired?: boolean;
 }
 
@@ -168,13 +175,13 @@ export function OllamaEndpointSetting() {
     <div className="settings-card settings-card-column">
       <div>
         <strong>Where work runs</strong>
-        <p>Direct talks straight to Ollama over the network — no worker and no bearer token. Windows worker runs the whole agent on the other machine and needs one.</p>
+        <p>Direct talks straight to Ollama over the network. Windows worker can run the whole local agent remotely. Bearer authentication is optional; the restricted Windows firewall remains the network boundary when no token is configured.</p>
       </div>
       <div className="settings-mode-choice" role="radiogroup" aria-label="Execution mode">
         {([
-          ['local', 'Direct to Ollama', 'No token'],
-          ['auto', 'Worker, fall back to direct', 'Needs a token'],
-          ['remote', 'Windows worker only', 'Needs a token']
+          ['local', 'Direct to Ollama', 'No worker token'],
+          ['auto', 'Worker, fall back to direct', 'Token optional'],
+          ['remote', 'Windows worker only', 'Token optional']
         ] as const).map(([id, label, note]) => <button
           key={id}
           role="radio"
@@ -271,6 +278,14 @@ export function ModelRoutingSettings() {
     const result: UiSelectOption[] = [{ value: 'auto', label: 'Auto', description: 'Use this project’s routing policy' }];
     for (const provider of catalog?.providers ?? []) {
       for (const model of provider.models) {
+        if (provider.id === 'ollama') {
+          result.push({
+            value: `local-first\0${model.id}`,
+            label: `Local-first · ${model.displayName}`,
+            description: 'Always start on Ollama; cloud only after an explicit bounded escalation',
+            disabled: !provider.ready || !model.available
+          });
+        }
         result.push({
           value: `${provider.id}\0${model.id}`,
           label: model.displayName,
@@ -344,7 +359,7 @@ export function ModelRoutingSettings() {
         </section>
 
         <section className="settings-form-section">
-          <div className="settings-section-copy"><strong>Default model</strong><p>Auto keeps stage-level routing. An explicit model is an exact selection.</p></div>
+          <div className="settings-section-copy"><strong>Default model</strong><p>Local-first is strict Ollama-first with user-approved cloud consultation. Explicit models are exact provider/model selections.</p></div>
           <UiSelect ariaLabel="Default model" value={modelValue(draft.defaultModel)} options={modelOptions} onChange={(value) => setDraft({ ...draft, defaultModel: parseModel(value) })} />
         </section>
 
