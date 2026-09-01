@@ -12,6 +12,10 @@ const agentSurface = fs.readFileSync(path.join(root, 'console/src/AgentSurface.t
 const consoleRoot = fs.readFileSync(path.join(root, 'console/src/ConsoleRoot.tsx'), 'utf8');
 const projectGallery = fs.readFileSync(path.join(root, 'console/src/ProjectGallery.tsx'), 'utf8');
 const settingsModal = fs.readFileSync(path.join(root, 'console/src/SettingsModal.tsx'), 'utf8');
+const settingsPanels = fs.readFileSync(path.join(root, 'console/src/SettingsPanels.tsx'), 'utf8');
+const uiSelect = fs.readFileSync(path.join(root, 'console/src/UiSelect.tsx'), 'utf8');
+const uiSelectCss = fs.readFileSync(path.join(root, 'console/src/ui-select.css'), 'utf8');
+const settingsPanelsCss = fs.readFileSync(path.join(root, 'console/src/settings-panels.css'), 'utf8');
 const main = fs.readFileSync(path.join(root, 'console/src/main.tsx'), 'utf8');
 const desktop = fs.readFileSync(path.join(root, 'desktop/main.mjs'), 'utf8');
 
@@ -141,18 +145,29 @@ test('Projects search stays usable and sort/new-project controls are real', () =
   assert.match(reference, /\.reference-project-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2/);
 });
 
-test('Settings is a modal with appearance, model routing and API key tabs', () => {
+test('Settings is a modal with focused routing, API key and advanced tabs', () => {
   assert.match(consoleRoot, /<SettingsModal/);
-  for (const label of ['General', 'Appearance', 'Model routing', 'API keys']) assert.match(settingsModal, new RegExp(label));
+  for (const label of ['General', 'Appearance', 'Model routing', 'API keys', 'Advanced']) assert.match(settingsModal, new RegExp(label));
+  assert.match(settingsModal, /<ModelRoutingSettings/);
+  assert.match(settingsModal, /<ApiKeySettings/);
   assert.match(settingsModal, /local-coder\.theme/);
   assert.match(overrides, /\.settings-modal\s*\{/);
-  assert.match(overrides, /\.settings-view-routing \.credentials-section/);
-  assert.match(overrides, /\.settings-view-credentials \.admin-toolbar/);
+  assert.match(settingsPanelsCss, /\.focused-settings-page/);
+});
+
+test('normal routing and API key settings use custom popover selects instead of native selects', () => {
+  assert.match(settingsPanels, /<UiSelect/);
+  assert.doesNotMatch(settingsPanels, /<select/);
+  for (const label of ['Routing policy', 'Default model', 'Provider', 'Backend']) assert.match(settingsPanels, new RegExp(label));
+  assert.match(uiSelect, /role="listbox"/);
+  assert.match(uiSelect, /role="option"/);
+  assert.match(uiSelectCss, /\.ui-select-popover/);
 });
 
 test('reference palette uses consolidated tokens and supports system/light/dark appearance', () => {
   const imports = main.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith("import './"));
-  assert.equal(imports.at(-1), "import './claude-reference-overrides.css';");
+  assert.ok(imports.includes("import './claude-reference-overrides.css';"));
+  assert.equal(imports.at(-1), "import './settings-panels.css';");
   assert.match(overrides, /--ref-bg:\s*#1f1e1b/);
   assert.match(overrides, /--ref-sidebar:\s*#191815/);
   assert.match(overrides, /--ref-accent:\s*#d97757/);
@@ -167,8 +182,8 @@ test('labels avoid the mixed Portuguese-English primary UI', () => {
   }
 });
 
-test('advanced settings restyle raw form controls and avoid all-caps emphasis', () => {
-  assert.match(overrides, /\.settings-admin-view select,[\s\S]*?appearance:\s*none/);
+test('advanced legacy panel is isolated from normal settings and all-caps emphasis is visually normalized', () => {
+  assert.match(settingsModal, /settings-view-advanced/);
   assert.match(overrides, /\.settings-admin-view \.eyebrow[\s\S]*?text-transform:\s*none !important/);
 });
 
