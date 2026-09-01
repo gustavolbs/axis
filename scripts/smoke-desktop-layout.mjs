@@ -44,9 +44,9 @@ const usagePeriod = { events: 0, cloudEvents: 0, localEvents: 0, knownCostUsd: 0
 const emptyUsage = { projectId: smokeProject.id, budgets: smokeProject.budgets, daily: usagePeriod, monthly: usagePeriod, activeReservations: { count: 0, upperBoundUsd: 0 } };
 
 const watchdog = setTimeout(() => {
-  console.error('Desktop layout smoke exceeded its 90 second safety limit.');
+  console.error('Desktop layout smoke exceeded its 110 second safety limit.');
   app.exit(2);
-}, 90_000);
+}, 110_000);
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -228,13 +228,52 @@ async function checkAgentMenus(window, size, zoom) {
   await closeOpenComposerMenu(window);
 }
 
+async function openUiSelect(window, label) {
+  await window.webContents.executeJavaScript(`(() => {
+    const trigger = [...document.querySelectorAll('.ui-select-trigger')]
+      .find((button) => button.getAttribute('aria-label') === ${JSON.stringify(label)});
+    if (!trigger) throw new Error('Missing UiSelect trigger: ${label}');
+    trigger.click();
+  })()`, true);
+  await waitFor(window, "document.querySelector('.ui-select-popover')");
+}
+
+async function closeUiSelect(window) {
+  await window.webContents.executeJavaScript("document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))", true);
+  await waitFor(window, "!document.querySelector('.ui-select-popover')");
+}
+
 async function checkSettings(window, size, zoom) {
   await clickByText(window, '.reference-sidebar-footer > button', 'Settings');
   await waitFor(window, "document.querySelector('.settings-modal')");
-  const result = await measurePopover(window, '.settings-modal');
-  assertPopover(result, `settings modal at ${size.join('x')} zoom ${zoom}`);
+  assertPopover(await measurePopover(window, '.settings-modal'), `settings modal at ${size.join('x')} zoom ${zoom}`);
+
   await clickByText(window, '.settings-rail button', 'Appearance');
   await waitFor(window, "document.querySelector('.settings-option-group')");
+
+  await clickByText(window, '.settings-rail button', 'Model routing');
+  await waitFor(window, "document.querySelector('.routing-settings-page')");
+  await openUiSelect(window, 'Project');
+  assertPopover(await measurePopover(window, '.ui-select-popover'), `project settings select at ${size.join('x')} zoom ${zoom}`);
+  await closeUiSelect(window);
+  await openUiSelect(window, 'Routing policy');
+  assertPopover(await measurePopover(window, '.ui-select-popover'), `routing-policy select at ${size.join('x')} zoom ${zoom}`);
+  await closeUiSelect(window);
+
+  await clickByText(window, '.settings-rail button', 'API keys');
+  await waitFor(window, "document.querySelector('.api-key-settings-page')");
+  await clickByText(window, '.api-key-settings-page .settings-save-button', 'Add key');
+  await waitFor(window, "document.querySelector('.nested-settings-dialog')");
+  assertPopover(await measurePopover(window, '.nested-settings-dialog'), `add API key dialog at ${size.join('x')} zoom ${zoom}`);
+  await openUiSelect(window, 'Provider');
+  assertPopover(await measurePopover(window, '.ui-select-popover'), `provider select at ${size.join('x')} zoom ${zoom}`);
+  await closeUiSelect(window);
+  await openUiSelect(window, 'Backend');
+  assertPopover(await measurePopover(window, '.ui-select-popover'), `backend select at ${size.join('x')} zoom ${zoom}`);
+  await closeUiSelect(window);
+  await clickByText(window, '.nested-settings-dialog-actions button', 'Cancel');
+  await waitFor(window, "!document.querySelector('.nested-settings-dialog')");
+
   await window.webContents.executeJavaScript("document.querySelector('.settings-close').click()", true);
   await waitFor(window, "!document.querySelector('.settings-modal')");
 }
@@ -272,7 +311,8 @@ try {
     checks,
     layoutChecks: sizes.length * zoomFactors.length * surfaces.length,
     interactiveComposerChecks: sizes.length * zoomFactors.length * 3,
-    settingsChecks: sizes.length * zoomFactors.length
+    settingsChecks: sizes.length * zoomFactors.length,
+    focusedSettingsSelectChecks: sizes.length * zoomFactors.length * 4
   }, null, 2));
 } finally {
   clearTimeout(watchdog);
