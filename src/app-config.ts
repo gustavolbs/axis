@@ -7,6 +7,8 @@ export interface AppSettingsFile {
   executionMode?: 'remote' | 'auto' | 'local';
   remoteWorkerUrl?: string;
   remoteWorkerCredentialRef?: string;
+  /** Read-only migration value. Never persisted by writeAppSettings. */
+  legacyRemoteWorkerToken?: string;
   model?: string;
   updatedAt?: string;
 }
@@ -43,6 +45,7 @@ function parseSettings(raw: string, source: string): AppSettingsFile | undefined
     executionMode,
     remoteWorkerUrl: typeof value.remoteWorkerUrl === 'string' ? value.remoteWorkerUrl.trim() : undefined,
     remoteWorkerCredentialRef: typeof value.remoteWorkerCredentialRef === 'string' ? value.remoteWorkerCredentialRef.trim() : undefined,
+    legacyRemoteWorkerToken: typeof value.remoteWorkerToken === 'string' ? value.remoteWorkerToken.trim() : undefined,
     model: typeof value.model === 'string' ? value.model.trim() : undefined,
     updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : undefined
   };
