@@ -29,8 +29,8 @@ export interface ProviderRuntimeSettings {
   defaultModelId?: string;
   /** Undefined means unlimited provider API spend. */
   monthlyBudgetUsd?: number;
-  /** Central policy inherited by every provider invocation. */
-  capabilities: ProviderCapabilityPolicy;
+  /** Central policy inherited by every provider invocation. Old callers may omit it; defaults are fail-safe. */
+  capabilities?: ProviderCapabilityPolicy;
   models: Record<string, ModelRoutingProfile>;
 }
 
@@ -109,7 +109,6 @@ function normalizeProfile(input: ModelRoutingProfile = {}): ModelRoutingProfile 
 }
 
 function normalizeCapabilityAccess(
-  kind: ProviderCapabilityKind,
   input: Partial<ProviderCapabilityAccess> | undefined,
   fallback: ProviderCapabilityAccess
 ): ProviderCapabilityAccess {
@@ -124,12 +123,13 @@ function normalizeCapabilityAccess(
 
 function normalizeCapabilities(
   input: ProviderCapabilityPolicyPatch | ProviderCapabilityPolicy | undefined,
-  fallback: ProviderCapabilityPolicy = DEFAULT_PROVIDER_CAPABILITIES
+  fallback?: ProviderCapabilityPolicy
 ): ProviderCapabilityPolicy {
   const source = input ?? {};
+  const base = fallback ?? DEFAULT_PROVIDER_CAPABILITIES;
   const result = {} as ProviderCapabilityPolicy;
   for (const kind of CAPABILITY_KINDS) {
-    result[kind] = normalizeCapabilityAccess(kind, source[kind], fallback[kind]);
+    result[kind] = normalizeCapabilityAccess(source[kind], base[kind]);
   }
   return result;
 }
