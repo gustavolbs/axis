@@ -48,8 +48,6 @@ jobs:
                       updated = updated.replace(old, new)
                   lines = updated.splitlines(keepends=True)
                   updated = ''.join(line for line in lines if not any(token in line for token in retired_line_tokens))
-                  if path.as_posix() == 'src/worker-server.ts':
-                      updated = updated.replace("    microsoftLearn: config.microsoftLearnResearchEnabled !== false,\n", '')
                   if updated != text:
                       path.write_text(updated)
 
@@ -71,8 +69,12 @@ jobs:
               updated = text
               for old, new in exact_file_refs.items():
                   updated = updated.replace(old, new)
+              updated = updated.replace('local-coder.admin-project', 'local-coder.settings-project')
+              updated = updated.replace('admin-shell', 'lc-admin-shell')
               updated = updated.replace('claude-', 'lc-agent-')
               updated = updated.replace('reference-', 'lc-shell-')
+              if path.suffix == '.css':
+                  updated = updated.replace('.admin-', '.lc-admin-')
               if updated != text:
                   path.write_text(updated)
 
