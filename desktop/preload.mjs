@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('lc', {
   isElectron: true,
   platform: process.platform,
   pickDirectory: (defaultPath) => ipcRenderer.invoke('local-coder:pick-directory', defaultPath),
+  copyText: (text) => ipcRenderer.invoke('local-coder:copy-text', String(text)),
   setTheme: (theme) => ipcRenderer.invoke('local-coder:set-theme', theme),
   getProfile: () => ipcRenderer.invoke('local-coder:get-profile'),
   getLoginItemSettings: () => ipcRenderer.invoke('local-coder:get-login-item-settings'),

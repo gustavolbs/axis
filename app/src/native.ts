@@ -8,6 +8,7 @@ export interface LocalCoderBridge {
   platform: string;
   request<T>(request: RuntimeRequest): Promise<T>;
   pickDirectory(defaultPath?: string): Promise<string | null>;
+  copyText(text: string): Promise<boolean>;
   setTheme(theme: ThemeMode): Promise<boolean>;
   getProfile(): Promise<{ userName: string; home: string }>;
   getLoginItemSettings(): Promise<{ openAtLogin: boolean }>;

@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -261,6 +262,7 @@ function installNativeBridge(runtime) {
   for (const channel of [
     'local-coder:runtime-request',
     'local-coder:pick-directory',
+    'local-coder:copy-text',
     'local-coder:set-theme',
     'local-coder:get-profile',
     'local-coder:get-login-item-settings',
@@ -276,6 +278,11 @@ function installNativeBridge(runtime) {
       buttonLabel: 'Use this folder'
     });
     return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  ipcMain.handle('local-coder:copy-text', (_event, text) => {
+    if (typeof text !== 'string') throw new Error('copy text must be a string.');
+    clipboard.writeText(text);
+    return true;
   });
   ipcMain.handle('local-coder:set-theme', (_event, source) => {
     const next = source === 'light' || source === 'dark' ? source : 'system';
