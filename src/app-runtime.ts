@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { loadConfig } from './config.js';
 import { createExecutionRuntime } from './execution-runtime.js';
-import { createControlPlaneLocalProvider } from './local-inference-provider.js';
+import { createLocalInferenceProvider } from './local-inference-provider.js';
 import { OllamaClient } from './ollama.js';
 import { ProjectAdminService, type CreateCredentialInput } from './project-admin.js';
 import type { ModelSelection, CreateProjectInput } from './project-store.js';
@@ -109,7 +109,7 @@ export class DesktopAppRuntime {
   private readonly ollama = new OllamaClient(this.config);
   private readonly execution = createExecutionRuntime(this.config, this.ollama);
   private readonly projects = new ProjectAdminService({
-    localProvider: createControlPlaneLocalProvider(this.config, this.ollama)
+    localProvider: createLocalInferenceProvider(this.config, this.ollama)
   });
   private readonly jobs = new StandaloneJobManager(
     this.execution.execution,
