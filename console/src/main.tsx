@@ -12,6 +12,10 @@ import './claude-shell.css';
 import './claude-agent.css';
 import './claude-fidelity.css';
 import './reference-fidelity.css';
+import './claude-reference-overrides.css';
+
+const storedTheme = localStorage.getItem('local-coder.theme');
+document.documentElement.dataset.lcTheme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : 'system';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
