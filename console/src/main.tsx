@@ -15,6 +15,7 @@ import './reference-fidelity.css';
 import './claude-reference-overrides.css';
 import './ui-select.css';
 import './settings-panels.css';
+import './chat-history.css';
 import './audit-v2.css';
 import './audit-v2-components.css';
 
