@@ -6,7 +6,7 @@ const themeListeners = new Map();
 const commandListeners = new Map();
 const runtimeListeners = new Map();
 
-contextBridge.exposeInMainWorld('localCoder', {
+const bridge = {
   isElectron: true,
   platform: process.platform,
   request: (request) => ipcRenderer.invoke('local-coder:runtime-request', request),
@@ -45,4 +45,7 @@ contextBridge.exposeInMainWorld('localCoder', {
       commandListeners.delete(listener);
     };
   }
-});
+};
+
+contextBridge.exposeInMainWorld('localCoder', bridge);
+contextBridge.exposeInMainWorld('lc', bridge);
