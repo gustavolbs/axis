@@ -7,9 +7,10 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   root,
+  base: './',
   plugins: [react()],
   build: {
-    outDir: path.resolve(root, '..', 'console-dist'),
+    outDir: path.resolve(root, '..', 'app-dist'),
     emptyOutDir: true,
     sourcemap: true
   }
