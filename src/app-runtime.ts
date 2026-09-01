@@ -8,6 +8,7 @@ import { createExecutionRuntime } from './execution-runtime.js';
 import { createLocalInferenceProvider } from './local-inference-provider.js';
 import { OllamaClient } from './ollama.js';
 import { ProjectAdminService, type CreateCredentialInput } from './project-admin.js';
+import { ProjectProviderRuntime } from './project-provider-runtime.js';
 import type { ModelSelection, CreateProjectInput } from './project-store.js';
 import type { ProviderRuntimeSettingsPatch } from './provider-settings.js';
 import {
@@ -170,9 +171,9 @@ export class DesktopAppRuntime {
   private readonly config = { ...loadConfig(), executionMode: 'remote' as const };
   private readonly ollama = new OllamaClient(this.config);
   private readonly execution = createExecutionRuntime(this.config, this.ollama);
-  private readonly projects = new ProjectAdminService({
-    localProvider: createLocalInferenceProvider(this.config, this.ollama)
-  });
+  private readonly localProvider = createLocalInferenceProvider(this.config, this.ollama);
+  private readonly personalProviders = new ProjectProviderRuntime({ localProvider: this.localProvider });
+  private readonly projects = new ProjectAdminService({ localProvider: this.localProvider });
   private readonly jobs = new StandaloneJobManager(
     this.execution.execution,
     path.join(path.dirname(this.config.runStorePath), 'sessions')
@@ -259,8 +260,15 @@ export class DesktopAppRuntime {
         modelSelection: parseModelSelection(body.modelSelection),
         reasoningEffort: parseReasoningEffort(body.reasoningEffort)
       };
-      if (!projectId && (input.modelSelection || (input.reasoningEffort && input.reasoningEffort !== 'auto'))) {
-        throw new Error('Model and effort overrides require a configured Project.');
+      if (
+        !projectId &&
+        interactionMode !== 'chat' &&
+        (input.modelSelection || (input.reasoningEffort && input.reasoningEffort !== 'auto'))
+      ) {
+        throw new Error('Model and effort overrides require a configured Project for Cowork.');
+      }
+      if (!projectId && interactionMode === 'chat' && input.modelSelection?.mode === 'local-first') {
+        throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
       }
       return { job: this.jobs.create(input) };
     }
@@ -331,6 +339,10 @@ export class DesktopAppRuntime {
           reasoningEffort: effort === 'auto' ? undefined : effort
         })
       };
+    }
+
+    if (method === 'GET' && pathname === '/chat/catalog') {
+      return { catalog: await this.personalProviders.personalChatCatalog() };
     }
 
     if (method === 'GET' && pathname === '/projects') {
