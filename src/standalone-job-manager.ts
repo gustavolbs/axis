@@ -103,6 +103,13 @@ function boundTurns(turns: StandaloneJobTurn[]): StandaloneJobTurn[] {
   return turns.slice(-MAX_PERSISTED_TURNS);
 }
 
+function lastUserTurnIndex(turns: StandaloneJobTurn[]): number {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    if (turns[index]?.role === 'user') return index;
+  }
+  return -1;
+}
+
 function normalizeRestoredTurns(job: PersistedJob): StandaloneJobTurn[] {
   if (Array.isArray(job.turns)) {
     const turns = job.turns.filter((turn): turn is StandaloneJobTurn =>
@@ -518,12 +525,12 @@ export class StandaloneJobManager {
           : job.rounds > 0 ? 'Local agent resumed' : 'Local agent started');
 
         if (isChat) {
-          const currentIndex = job.turns.findLastIndex((turn) => turn.role === 'user');
+          const currentIndex = lastUserTurnIndex(job.turns);
           const currentTurn = currentIndex >= 0 ? job.turns[currentIndex] : undefined;
           if (!currentTurn) throw new Error('Chat has no user turn to answer.');
 
           job.rounds = 1;
-          const input = {
+          const input: ProjectEngineerInput = {
             ...job.input,
             goal: currentTurn.content,
             userGuidance: job.guidance,
@@ -532,8 +539,6 @@ export class StandaloneJobManager {
               role: turn.role,
               content: turn.content
             }))
-          } as ProjectEngineerInput & {
-            chatHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
           };
           this.emit(job, 'status', 'Generating chat response');
           const result = await this.execution.executeEngineer(input);
