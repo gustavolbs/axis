@@ -31,6 +31,11 @@ jobs:
               'createControlPlaneLocalProvider': 'createLocalInferenceProvider',
               'Local Coder Console': 'Local Coder',
           }
+          retired_line_tokens = (
+              'microsoftLearnResearchEnabled',
+              'microsoftLearnMcpUrl',
+              'microsoftLearnMcpToolName',
+          )
           for root in text_roots:
               if not root.exists():
                   continue
@@ -41,6 +46,8 @@ jobs:
                   updated = text
                   for old, new in replacements.items():
                       updated = updated.replace(old, new)
+                  lines = updated.splitlines(keepends=True)
+                  updated = ''.join(line for line in lines if not any(token in line for token in retired_line_tokens))
                   if path.as_posix() == 'src/worker-server.ts':
                       updated = updated.replace("    microsoftLearn: config.microsoftLearnResearchEnabled !== false,\n", '')
                   if updated != text:
@@ -85,7 +92,7 @@ jobs:
                   unused.unlink()
           PY
 
-          if git grep -nE 'claudeGuidance|needs-claude|microsoftLearnResearchEnabled|createControlPlaneLocalProvider' -- src test docs; then
+          if git grep -nE 'claudeGuidance|needs-claude|microsoftLearnResearchEnabled|microsoftLearnMcp|MICROSOFT_LEARN_MCP|createControlPlaneLocalProvider' -- src test docs; then
             echo 'Retired runtime contract remains' >&2
             exit 1
           fi
