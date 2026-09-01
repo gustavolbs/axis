@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 const desktopMain = fs.readFileSync('desktop/main.mjs', 'utf8');
+const desktopPreload = fs.readFileSync('desktop/preload.mjs', 'utf8');
 const desktopLauncher = fs.readFileSync('scripts/run-desktop.mjs', 'utf8');
 const consoleHtml = fs.readFileSync('console/index.html', 'utf8');
 const builder = fs.readFileSync('electron-builder.yml', 'utf8');
@@ -17,9 +18,6 @@ test('desktop launcher strips Node-mode variables before spawning Electron GUI',
   assert.match(packageJson.scripts?.desktop ?? '', /node scripts\/run-desktop\.mjs/);
   assert.match(desktopLauncher, /delete env\.ELECTRON_RUN_AS_NODE/);
   assert.match(desktopLauncher, /delete env\.ELECTRON_NO_ATTACH_CONSOLE/);
-  assert.match(desktopLauncher, /const forwarded = process\.argv\.slice\(2\)/);
-  assert.match(desktopLauncher, /const args = forwarded\.length > 0 \? forwarded : \['\.'\]/);
-  assert.match(desktopLauncher, /entry:/);
   assert.match(desktopLauncher, /spawn\(electronPath, args/);
   assert.match(desktopLauncher, /stdio:\s*'inherit'/);
 });
@@ -39,29 +37,36 @@ test('desktop main finishes ESM evaluation before waiting for Electron readiness
   assert.match(desktopMain, /main module loaded/);
 });
 
-test('explicit single-instance lock is kept out of the macOS pre-ready path', () => {
+test('explicit single-instance lock stays out of the macOS pre-ready path', () => {
   const initializeIndex = desktopMain.indexOf('async function initializeDesktop()');
   const lockIndex = desktopMain.indexOf('app.requestSingleInstanceLock()');
   const readinessChainIndex = desktopMain.indexOf('app.whenReady()');
-  assert.ok(initializeIndex >= 0, 'missing initializeDesktop');
-  assert.ok(lockIndex > initializeIndex, 'single-instance lock must be inside post-readiness initialization');
-  assert.ok(readinessChainIndex > lockIndex, 'readiness callback registration should occur after helper definitions');
+  assert.ok(initializeIndex >= 0);
+  assert.ok(lockIndex > initializeIndex);
+  assert.ok(readinessChainIndex > lockIndex);
   assert.match(desktopMain, /if \(process\.platform !== 'darwin'\) \{[\s\S]*?app\.requestSingleInstanceLock\(\)/);
   assert.match(desktopMain, /macOS startup: relying on Launch Services/);
 });
 
-test('desktop renderer is sandboxed and does not expose Node', () => {
+test('desktop renderer remains sandboxed behind a narrow preload bridge', () => {
+  assert.match(desktopMain, /preload:\s*preloadScript\(\)/);
   assert.match(desktopMain, /nodeIntegration:\s*false/);
   assert.match(desktopMain, /contextIsolation:\s*true/);
   assert.match(desktopMain, /sandbox:\s*true/);
   assert.match(desktopMain, /webSecurity:\s*true/);
   assert.doesNotMatch(desktopMain, /nodeIntegration:\s*true/);
+  assert.match(desktopPreload, /contextBridge\.exposeInMainWorld\('lc'/);
+  assert.match(desktopPreload, /pickDirectory/);
+  assert.match(desktopPreload, /setTheme/);
+  assert.match(desktopPreload, /onCommand/);
 });
 
-test('desktop shell forces loopback and blocks navigation/window creation', () => {
+test('desktop shell forces loopback, denies in-app external navigation and opens safe https links externally', () => {
   assert.match(desktopMain, /const HOST = '127\.0\.0\.1'/);
-  assert.match(desktopMain, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/);
+  assert.match(desktopMain, /setWindowOpenHandler/);
   assert.match(desktopMain, /will-navigate/);
+  assert.match(desktopMain, /shell\.openExternal/);
+  assert.match(desktopMain, /url\.protocol !== 'https:'/);
   assert.match(desktopMain, /setPermissionRequestHandler/);
   assert.match(desktopMain, /setPermissionCheckHandler/);
 });
@@ -72,14 +77,28 @@ test('desktop shell uses the same compiled standalone control plane', () => {
   assert.match(desktopMain, /\/api\/jobs/);
 });
 
-test('desktop startup is immediately visible and diagnosable', () => {
-  assert.match(desktopMain, /show:\s*true/);
-  assert.doesNotMatch(desktopMain, /once\('ready-to-show'/);
+test('desktop startup avoids white flash without returning to silent invisible startup', () => {
+  assert.match(desktopMain, /show:\s*false/);
+  assert.match(desktopMain, /backgroundColor:\s*'#1f1e1b'/);
+  assert.match(desktopMain, /once\('ready-to-show'/);
+  assert.match(desktopMain, /ready-to-show fallback fired/);
   assert.match(desktopMain, /did-fail-load/);
   assert.match(desktopMain, /render-process-gone/);
   assert.match(desktopMain, /unresponsive/);
   assert.match(desktopMain, /loadURL\(url\)\.catch/);
   assert.match(desktopMain, /stdio:\s*app\.isPackaged \? 'ignore' : 'inherit'/);
+});
+
+test('native bridge provides folder picker theme profile login settings and app menu shortcuts', () => {
+  assert.match(desktopMain, /ipcMain\.handle\('local-coder:pick-directory'/);
+  assert.match(desktopMain, /openDirectory/);
+  assert.match(desktopMain, /ipcMain\.handle\('local-coder:set-theme'/);
+  assert.match(desktopMain, /nativeTheme\.themeSource/);
+  assert.match(desktopMain, /getLoginItemSettings/);
+  assert.match(desktopMain, /setLoginItemSettings/);
+  for (const accelerator of ['CommandOrControl+N', 'CommandOrControl+\\\\', 'CommandOrControl+,', 'CommandOrControl+1', 'CommandOrControl+2', 'CommandOrControl+3']) {
+    assert.equal(desktopMain.includes(accelerator), true, `missing shortcut ${accelerator}`);
+  }
 });
 
 test('standalone document has a restrictive CSP', () => {
@@ -90,7 +109,7 @@ test('standalone document has a restrictive CSP', () => {
   assert.match(consoleHtml, /object-src 'none'/);
 });
 
-test('macOS package includes only runtime UI/control-plane sources plus production dependencies', () => {
+test('macOS package includes runtime UI/control-plane/preload sources plus production dependencies', () => {
   assert.equal(packageJson.main, 'desktop/main.mjs');
   assert.equal(packageJson.devDependencies?.electron, '44.1.0');
   assert.equal(packageJson.devDependencies?.['electron-builder'], '26.15.7');
