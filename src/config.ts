@@ -34,8 +34,6 @@ export interface LocalCoderConfig {
   maxDeliberationPasses?: number;
   qualityGateMinScore?: number;
   researchEnabled?: boolean;
-  microsoftLearnResearchEnabled?: boolean;
-  microsoftLearnMcpUrl?: string;
   searxngUrl?: string;
   researchTimeoutMs?: number;
   researchMaxResults?: number;
@@ -161,8 +159,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalCoderConf
     maxDeliberationPasses: Math.min(4, parsePositiveInt(env.LOCAL_CODER_MAX_DELIBERATION_PASSES, 3)),
     qualityGateMinScore: Math.min(100, parsePositiveInt(env.LOCAL_CODER_QUALITY_GATE_MIN_SCORE, 80)),
     researchEnabled: parseBoolean(env.LOCAL_CODER_RESEARCH_ENABLED, true),
-    microsoftLearnResearchEnabled: parseBoolean(env.LOCAL_CODER_MICROSOFT_LEARN_RESEARCH_ENABLED, true),
-    microsoftLearnMcpUrl: env.LOCAL_CODER_MICROSOFT_LEARN_MCP_URL?.trim() || 'https://learn.microsoft.com/api/mcp?maxTokenBudget=2400',
     searxngUrl: trimTrailingSlash(env.LOCAL_CODER_SEARXNG_URL),
     researchTimeoutMs: parsePositiveInt(env.LOCAL_CODER_RESEARCH_TIMEOUT_MS, 45_000),
     researchMaxResults: Math.min(12, parsePositiveInt(env.LOCAL_CODER_RESEARCH_MAX_RESULTS, 6)),
