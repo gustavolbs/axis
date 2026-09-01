@@ -30,8 +30,9 @@ The release workflow is fail-closed: if any required secret is absent, it exits 
 - [ ] `main` CI is green on Linux, Windows, and macOS packaging.
 - [ ] The intended commit is reviewed and immutable for the release.
 - [ ] `package.json` version reflects the version you intend to distribute.
-- [ ] Migration compatibility has been checked against an existing v0.14 Local-only install.
-- [ ] A new Local-only Project still defaults to `cloudAllowed: false` and `ollama` only.
+- [ ] A new Project defaults to `cloudAllowed: false` and `ollama` only.
+- [ ] Standalone settings are stored under `~/.local-coder/settings.json` and do not contain raw worker bearer tokens.
+- [ ] Worker credentials use an explicit environment token or `remoteWorkerCredentialRef` backed by macOS Keychain.
 - [ ] No provider API key or Windows worker bearer token appears in repository files, logs, telemetry, eval output, or pricing metadata.
 - [ ] Provider pricing used for budgeted cloud routing has a current source and verification timestamp.
 - [ ] Real Anthropic/OpenAI smoke validation has been run when credentials are available and the release changes provider transport behavior.
@@ -86,30 +87,27 @@ Before wider distribution:
 
 - [ ] install the DMG on a separate/current macOS user environment;
 - [ ] launch without Gatekeeper bypasses such as disabling Gatekeeper or removing quarantine attributes;
-- [ ] verify the desktop shell starts or attaches to the loopback control plane correctly;
-- [ ] create a new Local-only Project and run a small validated task;
+- [ ] verify `Local Coder.app` starts its in-process `DesktopAppRuntime` without a localhost control service;
+- [ ] create a new local-only Project and run a small validated task;
+- [ ] verify the native folder picker, theme synchronization, keyboard shortcuts and restored window bounds;
 - [ ] verify a configured cloud Project can discover models and run direct-to-cloud without Ollama pre-inference;
 - [ ] verify cancellation and Runs inspection from the desktop UI;
-- [ ] verify `npm run console` remains usable as a fallback from the same release commit.
+- [ ] verify an authenticated Windows worker can provide local inference when configured;
+- [ ] verify external HTTPS links open in the system browser rather than navigating the renderer.
 
-## Migration checks
-
-Existing users may already have:
-
-```text
-~/.local-coder-mcp/control-plane.json
-```
+## Standalone state and isolation checks
 
 Release verification must preserve these rules:
 
-- [ ] legacy v0.14 Local-only settings remain readable;
-- [ ] legacy inline `remoteWorkerToken` remains read-compatible only;
-- [ ] any new control-plane write produces version 2 and omits inline worker tokens;
-- [ ] secure worker setup writes `remoteWorkerCredentialRef` and stores the bearer token in macOS Keychain;
-- [ ] Projects do not silently enable cloud access during migration;
+- [ ] `~/.local-coder/settings.json` is the standalone settings source;
+- [ ] settings persist worker credential references, never raw worker bearer tokens;
+- [ ] Projects do not silently enable cloud access;
 - [ ] credentials cannot be rebound across Organization IDs;
 - [ ] the same workspace cannot be assigned to conflicting organizations;
-- [ ] usage, routing history, Repo Intelligence, policy, and budget state remain Project-scoped.
+- [ ] usage, routing history, Repo Intelligence, policy and budget state remain Project-scoped;
+- [ ] explicit provider/model selection remains exact-or-fail;
+- [ ] budget admission occurs before cloud provider I/O;
+- [ ] the Windows worker remains compute infrastructure rather than a UI or product host.
 
 ## Credential safety checks
 
@@ -121,6 +119,7 @@ Never include secret values in:
 - release notes;
 - Git commits;
 - Project JSON;
+- app settings;
 - telemetry or eval reports.
 
 GitHub Actions secrets are injected only into the signing/notarization steps. The workflow's preflight prints missing **variable names** only, never their values.

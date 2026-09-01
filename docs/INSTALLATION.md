@@ -1,67 +1,53 @@
 # Local Coder installation and first run
 
-This guide covers the standalone macOS application, the browser-accessible fallback, provider setup, Project isolation, and migration from the v0.14 Local-only configuration.
+This guide covers the standalone macOS application, provider setup, Project isolation and the optional Windows inference worker.
+
+Local Coder does not require Claude Desktop, MCP configuration, a browser console or a localhost control-plane service.
 
 ## 1. Install on macOS
 
-### Signed distribution build
-
-Use a DMG produced by the manual **macOS Signed Release** workflow. That workflow is intentionally separate from normal CI and only succeeds after Developer ID signing, Apple notarization, stapler validation, and Gatekeeper assessment.
-
-1. Download the verified DMG artifact from the release workflow.
-2. Open the DMG.
-3. Drag `Local Coder.app` to `/Applications`.
-4. Launch Local Coder normally.
-
-A valid distribution artifact should not require bypassing Gatekeeper with `xattr`, disabling Gatekeeper, or using an ad-hoc signature. Treat instructions that require those steps as a release defect.
-
-### Development / unsigned build
-
-For local development from the repository:
+### Development from the repository
 
 ```bash
 npm install
 npm run desktop
 ```
 
-To produce an unsigned local package for testing:
+The command builds the Node runtime and React renderer, then launches Electron. `DesktopAppRuntime` runs inside the Electron main process and the renderer talks to it through isolated preload IPC.
+
+### Unsigned local package
 
 ```bash
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run desktop:pack:mac
 ```
 
-Unsigned artifacts are development outputs only. The ordinary CI job deliberately produces unsigned `.app`/DMG/ZIP artifacts and is not a distribution channel.
+Unsigned `.app`/DMG/ZIP artifacts are development outputs only.
 
-### Browser-accessible fallback
+### Signed distribution
 
-The same Agent Runtime can run without Electron:
+Use a DMG produced by the manual **macOS Signed Release** workflow. A valid distribution artifact is Developer-ID signed, notarized and independently validated by the release workflow.
 
-```bash
-npm run console
-```
+1. Download the verified DMG.
+2. Open it.
+3. Drag `Local Coder.app` to `/Applications`.
+4. Launch Local Coder normally.
 
-Default URL:
-
-```text
-http://127.0.0.1:7557
-```
-
-The desktop application and browser fallback use the same local control plane and persistent stores.
+A valid release should not require disabling Gatekeeper, removing quarantine manually or accepting an ad-hoc signature.
 
 ## 2. First run: create a Project
 
-Open **Projects** and create a Project for the repository you want Local Coder to operate on.
+Open **Projects** and create a Project for the repository Local Coder should operate on.
 
 Required identity fields:
 
 - **Name** — human-readable Project name;
-- **Workspace** — repository/worktree path;
+- **Workspace** — repository/worktree folder selected with the native folder picker;
 - **Organization ID** — stable company/account isolation boundary;
 - **Organization name** — optional display label.
 
-The Organization ID is a security boundary, not a cosmetic tag. A workspace already assigned to one Organization ID cannot also be assigned to a different Organization ID.
+The Organization ID is a security boundary, not a cosmetic tag. A workspace assigned to one Organization ID cannot also be assigned to a different one.
 
-Local-safe defaults are intentionally conservative:
+Conservative first-run defaults:
 
 ```text
 routing: local-first
@@ -71,15 +57,58 @@ allowed providers: ollama
 concurrency: 1
 ```
 
-A new Project therefore remains Local-only until cloud access is explicitly enabled.
+A new Project therefore remains local-only until cloud access is explicitly enabled.
 
-## 3. Configure providers
+## 3. Standalone app state
 
-### Ollama / local compute
+Local Coder uses one state root:
 
-Ollama remains the default local provider. Local compute may run on the Mac or on the authenticated Windows Worker, depending on `LOCAL_CODER_EXECUTION_MODE` and shared control-plane configuration.
+```text
+~/.local-coder/
+```
 
-Recommended Windows GPU worker baseline:
+Primary settings:
+
+```text
+~/.local-coder/settings.json
+```
+
+Optional overrides:
+
+```text
+LOCAL_CODER_HOME=/custom/path
+LOCAL_CODER_SETTINGS_PATH=/custom/path/settings.json
+```
+
+There is no shared `control-plane.json` in the current product.
+
+## 4. Configure local inference
+
+### Ollama on the Mac
+
+Ollama is the default local provider.
+
+Example:
+
+```bash
+ollama pull qwen3.8:27b
+```
+
+Typical configuration:
+
+```text
+LOCAL_CODER_EXECUTION_MODE=local
+LOCAL_CODER_MODEL=qwen3.8:27b
+LOCAL_CODER_NUM_CTX=16384
+```
+
+If the 27B model is too heavy for the Mac, use the optional Windows worker.
+
+### Windows inference worker
+
+The Windows worker is local inference compute only. The Mac app still owns Project state, repository access, routing, planning, mutation, validation, review and Repo Intelligence.
+
+Recommended baseline:
 
 ```text
 LOCAL_CODER_MODEL=qwen3.8:27b
@@ -89,31 +118,41 @@ OLLAMA_MAX_LOADED_MODELS=1
 LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS=1
 ```
 
-### Anthropic or OpenAI
+Execution modes:
 
-In **Projects**:
+| Mode | Behavior |
+| --- | --- |
+| `local` | Local inference uses Ollama on the Mac. |
+| `remote` | Local inference requires the authenticated Windows worker. |
+| `auto` | Prefer the Windows worker and fall back to Mac Ollama when policy allows. |
 
-1. Add or replace the provider credential.
-2. On macOS, durable API keys are stored in Keychain and Project JSON stores only a credential reference.
-3. Test the provider connection.
-4. Discover available models from the provider API.
-5. Add the provider to the Project allowlist.
-6. Enable `cloudAllowed` only when cloud transmission is acceptable for that Project.
-7. Keep **Auto** model selection or choose an explicit provider/model.
+See [WINDOWS_REMOTE_SETUP.md](WINDOWS_REMOTE_SETUP.md).
 
-For headless use, credentials may reference environment variables rather than Keychain.
+Worker tokens may be supplied through `LOCAL_CODER_REMOTE_WORKER_TOKEN` or referenced from macOS Keychain with `LOCAL_CODER_REMOTE_WORKER_CREDENTIAL_REF`. `settings.json` does not persist the raw worker bearer token.
+
+## 5. Configure Anthropic or OpenAI
+
+Open **Settings → API keys**:
+
+1. add the provider credential;
+2. use macOS Keychain for durable API-key storage;
+3. verify provider availability;
+4. open **Settings → Model routing** or the Project settings;
+5. add the provider to the Project allowlist;
+6. enable `cloudAllowed` only when cloud transmission is acceptable for that Project;
+7. keep **Auto** selection or choose an explicit provider/model.
 
 Raw provider API keys must never be placed in:
 
 - `projects.json`;
-- `control-plane.json`;
-- provider pricing metadata;
+- app settings;
+- pricing metadata;
 - telemetry;
 - routing history;
 - prompts;
 - repository files.
 
-## 4. Routing policy
+## 6. Routing policy
 
 Supported Project routing policies:
 
@@ -136,9 +175,9 @@ Key semantics:
 - Project provider allowlists and `cloudAllowed` are hard constraints before scoring;
 - budget admission occurs before cloud provider I/O.
 
-## 5. Pricing and budgets
+## 7. Pricing and budgets
 
-Before using budgeted cloud routing, configure provider/model pricing with its source and verification timestamp.
+Before budgeted cloud routing, configure provider/model pricing with its source and verification timestamp.
 
 Projects support:
 
@@ -150,7 +189,7 @@ Projects support:
 
 The Usage Ledger records normalized usage and known cost without recording prompts or model output. Concurrent cloud attempts reserve a conservative upper bound before execution to prevent budget races.
 
-## 6. Project and company isolation
+## 8. Project and company isolation
 
 Local Coder isolates by Project plus stable Organization ID.
 
@@ -160,54 +199,32 @@ Enforced boundaries include:
 - a Project can reference only credentials whose provider and Organization ID match;
 - provider allowlists and `cloudAllowed` are Project-specific;
 - Repo Intelligence scope is Project-specific;
-- routing history is isolated by Project/organization and stores operational observations only;
+- routing history is isolated by Project/organization;
 - usage and budget accounting are Project-specific;
-- explicit credentials, budgets, model policy, and routing policy are not inherited across companies.
+- credentials, budgets, model policy and routing policy are not inherited across companies.
 
-When working for multiple companies, create separate Projects and separate organization-bound credentials even if the same provider is used.
+When working for multiple companies, create separate Projects and separate organization-bound credentials even when they use the same provider.
 
-## 7. Migration from v0.14 / Local-only
+## 9. Optional external research
 
-The shared control-plane source remains:
+Research is disabled from the network unless a backend is configured. To use a trusted SearXNG instance:
 
 ```text
-~/.local-coder-mcp/control-plane.json
+LOCAL_CODER_RESEARCH_ENABLED=true
+LOCAL_CODER_SEARXNG_URL=http://<trusted-instance>
 ```
 
-Compatibility rules:
+Retrieved content is treated as untrusted evidence, never instructions. Microsoft ecosystem queries use ordinary SearXNG discovery narrowed to `site:learn.microsoft.com`; no Microsoft Learn MCP connection is used.
 
-- existing Local-only installs remain valid;
-- legacy `executionMode`, worker URL, and model settings remain readable;
-- legacy v0.14 `remoteWorkerToken` is read for compatibility only;
-- new writers emit config version 2 and never persist an inline worker bearer token;
-- secure worker installation stores the token in macOS Keychain and writes only `remoteWorkerCredentialRef`;
-- creating Projects does not require migrating the legacy local execution topology first;
-- cloud providers remain disabled for new Projects until explicitly allowed.
-
-Do not manually copy an old inline worker token into new Project or provider metadata. Re-run the secure worker installer when you want to migrate that credential to Keychain.
-
-## 8. Claude / MCP remains supported
-
-The standalone app does not replace MCP. Both interfaces invoke the same Agent Runtime.
-
-On Mac, the existing Claude setup remains available:
-
-```bash
-npm run install:claude:worker -- --host <WINDOWS_MESHNET_IP>
-npm run install:routing
-npm run install:claude-token-saver
-```
-
-Preferred engineering entrypoint remains `local_engineer`.
-
-## 9. Operational verification
+## 10. Operational verification
 
 Before trusting a new setup with repository mutation:
 
-1. open **Projects** and confirm workspace, Organization ID, provider allowlist, cloud policy, routing policy, model, credential binding, and budgets;
+1. open **Projects** and confirm workspace, Organization ID, provider allowlist, cloud policy, routing policy, model, credentials and budgets;
 2. run a small objectively verifiable task;
-3. inspect **Runs** for routing trace, provider/model attempts, fallback evidence, validation, usage, and budget snapshot;
+3. inspect **Runs** for routing trace, provider/model attempts, fallback evidence, validation, usage and budget snapshot;
 4. confirm that an explicit cloud model fails closed if its credential/provider is unavailable;
-5. confirm that a Local-only Project does not perform cloud calls.
+5. confirm that a local-only Project performs no cloud calls;
+6. run `npm run check` on the repository before packaging a development build.
 
-For live provider transport validation, use the opt-in smoke workflow documented in `docs/CLOUD_SMOKE.md`.
+For live paid-provider transport validation, use the opt-in smoke workflow documented in [CLOUD_SMOKE.md](CLOUD_SMOKE.md).

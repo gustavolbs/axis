@@ -2,8 +2,8 @@
 
 Quer apenas colocar o Local Coder para funcionar?
 
-➡️ **[Quick Start ultrassimples — Mac + Windows/Qwen + Claude + app + cloud opcional](docs/QUICK_START.md)**
+➡️ **[Quick Start — app standalone no Mac + Qwen local/remoto + cloud opcional](docs/QUICK_START.md)**
 
-O guia é sequencial e copiável. Você não precisa ler a documentação de arquitetura antes.
+O guia é sequencial e copiável. O Local Coder roda como aplicativo próprio; Claude Desktop não faz parte da instalação nem da execução.
 
-Use os outros documentos somente se quiser entender detalhes ou resolver algum problema.
+Use os outros documentos somente se quiser entender detalhes de arquitetura, providers, Windows worker ou release.

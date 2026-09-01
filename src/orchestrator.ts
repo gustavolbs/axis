@@ -289,7 +289,7 @@ async function preflightPlan(
       continue;
     }
 
-    blockers.push(`Task "${task.id}" must stay in Claude: ${task.classification.reasons.join(' ')}`);
+    blockers.push(`Task "${task.id}" requires guidance before bounded execution: ${task.classification.reasons.join(' ')}`);
   }
 
   await snapshotFiles(workspace, editableFiles, config);
@@ -400,7 +400,7 @@ export async function executeLocalCodePlan(
           ...(task.constraints ?? []),
           ...(classification.route === 'local-supervised'
             ? [
-                'The sensitive behavior and security/product decisions were already resolved by Claude. Implement only the explicit bounded behavior; do not redesign auth, credential, permission, secret, or security contracts.'
+                'The sensitive behavior and security/product decisions were already resolved before bounded implementation. Implement only the explicit bounded behavior; do not redesign auth, credential, permission, secret, or security contracts.'
               ]
             : [])
         ]),

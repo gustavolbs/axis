@@ -107,9 +107,9 @@ Prefer exact symbols, routes, flags, scopes, environment variables and file path
 Return only the required JSON.`;
 
 const RESEARCH_REPORTER_SYSTEM_PROMPT = `You are a read-only repository research reporter.
-Answer the user's operational/technical question from verified repository evidence plus explicit external guidance supplied by Claude, if any.
+Answer the user's operational/technical question from verified repository evidence plus explicit external guidance supplied through the Local Coder app, if any.
 Do not invent current external provider behavior. researchRequests is ONLY for genuinely external/current facts that cannot be answered by reading more local source code, tests or docs.
-If more local evidence is required, put the exact missing local reads/searches in researchRequests anyway; the host will intercept those requests, read them locally, and rerun you before any external escalation.
+If more local evidence is required, put the exact missing local reads/searches in researchRequests anyway; the host will intercept those requests, read them locally, and rerun you before any external guidance request.
 Produce an actionable report: exact commands/flags/routes/scopes where evidenced, evidence references, user actions, constraints, and unresolved questions.
 Do not propose code changes unless the user asked for implementation; this path is read-only.
 Return only the required JSON.`;
@@ -261,7 +261,7 @@ async function collectFullEvidence(
   return { text: sections.join('\n\n'), files: included };
 }
 
-const LOCAL_PATH_PATTERN = /(?:^|[\s`'"(])((?:apps|packages|src|lib|docs|test|tests|dashboard|scripts|config)\/[A-Za-z0-9_./@-]+\.[A-Za-z0-9_-]+)/gi;
+const LOCAL_PATH_PATTERN = /(?:^|[\s`'"(])((?:apps|packages|src|lib|docs|test|tests|scripts|config)\/[A-Za-z0-9_./@-]+\.[A-Za-z0-9_-]+)/gi;
 const LOCAL_READ_PATTERN = /\b(?:read|inspect|open|continue|rest of|remaining|ler|leia|restante|arquivo|linhas?|line|symbol|fun[cç][aã]o|teste|test)\b/i;
 
 function localEvidenceRequest(request: string): boolean {
@@ -314,7 +314,7 @@ function escalation(reason: string, requests: string[], evidence: string[]): Loc
     researchRequests: requests,
     evidence: evidence.slice(0, 12),
     resumeWith:
-      'Call local_engineer again with the same workspace/goal plus claudeGuidance containing the resolved decision or research evidence.'
+      'Resume the job with userGuidance containing the resolved decision or research evidence.'
   };
 }
 
@@ -357,7 +357,7 @@ async function executeReadOnlyResearch(
     phase: 'investigation',
     action: 'Read-only request detected; implementation pipeline is disabled',
     detail: input.goal,
-    reasoningSummary: 'This job will complete local repository evidence before considering any external escalation.',
+    reasoningSummary: 'This job will complete local repository evidence before considering any external guidance request.',
     completedSteps: ['workspace']
   });
 
@@ -375,7 +375,7 @@ async function executeReadOnlyResearch(
     [
       `# GOAL\n${input.goal}`,
       input.context ? `# CONTEXT\n${input.context}` : '',
-      input.claudeGuidance ? `# CLAUDE GUIDANCE\n${input.claudeGuidance}` : '',
+      input.userGuidance ? `# RESOLVED GUIDANCE\n${input.userGuidance}` : '',
       `# REPOSITORY MAP\n${discoveryText(discovery)}`,
       `# INITIAL EVIDENCE\n${capsuleText(initialCapsule)}`
     ].filter(Boolean).join('\n\n'),
@@ -415,14 +415,14 @@ async function executeReadOnlyResearch(
       phase: 'investigation',
       action: 'Completing repository evidence locally',
       detail: initialPartition.local.join(' | '),
-      reasoningSummary: 'Requests that only require reading source/tests/docs are being resolved by the worker, not escalated as external research.'
+      reasoningSummary: 'Requests that only require reading source/tests/docs are being resolved locally, not escalated as external research.'
     });
   }
 
-  if (initialPartition.external.length > 0 && !input.claudeGuidance?.trim()) {
+  if (initialPartition.external.length > 0 && !input.userGuidance?.trim()) {
     return {
       result: {
-        status: 'needs-claude',
+        status: 'needs-guidance',
         phase: 'investigation',
         workspace,
         goal: input.goal,
@@ -451,7 +451,7 @@ async function executeReadOnlyResearch(
         `# GOAL\n${input.goal}`,
         input.context ? `# USER / PROJECT CONTEXT\n${input.context}` : '',
         input.constraints?.length ? `# CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}` : '',
-        input.claudeGuidance ? `# AUTHORITATIVE EXTERNAL GUIDANCE\n${input.claudeGuidance}` : '',
+        input.userGuidance ? `# AUTHORITATIVE EXTERNAL GUIDANCE\n${input.userGuidance}` : '',
         `# INVESTIGATION SUMMARY\n${investigation.summary}`,
         `# SEARCH EVIDENCE\n${searchEvidence.text || '[none]'}`,
         `# RANKED EVIDENCE\n${capsuleText(focusedCapsule)}`,
@@ -475,7 +475,7 @@ async function executeReadOnlyResearch(
         phase: 'investigation',
         action: 'Reporter requested more local evidence; resolving it automatically',
         detail: partition.local.join(' | '),
-        reasoningSummary: 'The host is expanding targeted source windows instead of returning needs-claude for unread local files.'
+        reasoningSummary: 'The host is expanding targeted source windows instead of returning needs-guidance for unread local files.'
       });
       const moreSearch = await collectSearchEvidence(workspace, more.queries, config);
       searchEvidence = {
@@ -489,10 +489,10 @@ async function executeReadOnlyResearch(
       if (partition.external.length === 0) continue;
     }
 
-    if (partition.external.length > 0 && !input.claudeGuidance?.trim()) {
+    if (partition.external.length > 0 && !input.userGuidance?.trim()) {
       return {
         result: {
-          status: 'needs-claude',
+          status: 'needs-guidance',
           phase: 'investigation',
           workspace,
           goal: input.goal,
@@ -517,10 +517,10 @@ async function executeReadOnlyResearch(
 
   if (!report) throw new Error('Read-only reporter did not produce a result.');
   const remaining = partitionResearchRequests(report.researchRequests);
-  if (remaining.local.length > 0 && !input.claudeGuidance?.trim()) {
+  if (remaining.local.length > 0 && !input.userGuidance?.trim()) {
     return {
       result: {
-        status: 'needs-claude',
+        status: 'needs-guidance',
         phase: 'investigation',
         workspace,
         goal: input.goal,
@@ -536,11 +536,11 @@ async function executeReadOnlyResearch(
         validation: [],
         escalation: {
           kind: 'decision',
-          reason: 'The worker exhausted its bounded local-evidence expansion loop; this is not external research.',
+          reason: 'The local agent exhausted its bounded local-evidence expansion loop; this is not external research.',
           questions: remaining.local,
           researchRequests: [],
           evidence: refs.slice(0, 12),
-          resumeWith: 'Call local_engineer again with the same workspace/goal plus claudeGuidance containing the resolved decision or research evidence.'
+          resumeWith: 'Resume the job with userGuidance containing the resolved decision or research evidence.'
         },
         modelCalls
       },

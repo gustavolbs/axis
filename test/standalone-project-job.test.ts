@@ -43,7 +43,7 @@ test('standalone Project job reuses one budget job id across material-decision r
       calls.push(structuredClone(input));
       if (calls.length === 1) {
         return {
-          ...result(input, 'needs-claude'),
+          ...result(input, 'needs-guidance'),
           decisionRequest: {
             message: 'Choose the public behavior.',
             questions: [{
@@ -81,5 +81,5 @@ test('standalone Project job reuses one budget job id across material-decision r
   assert.equal(calls[1]?.budgetJobId, created.id);
   assert.equal(calls[0]?.workspace, '/repo/company-project');
   assert.equal(calls[1]?.workspace, '/repo/company-project');
-  assert.match(calls[1]?.claudeGuidance ?? '', /behavior: a/);
+  assert.match(calls[1]?.userGuidance ?? '', /behavior: a/);
 });

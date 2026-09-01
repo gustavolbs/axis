@@ -1,26 +1,24 @@
-# v0.10 Remote Execution Worker architecture
+# Remote inference worker architecture
 
 ## Goal
 
-Keep the Mac as **source of truth + Claude control plane** and the Windows workstation as the **execution/intelligence plane**, without mounting the live Mac repository over SMB/SSHFS.
+Keep the Mac application as the source of truth for Projects, repository state, routing, planning, validation and Repo Intelligence while optionally using a Windows workstation for heavier local inference.
 
 ```text
 Mac
-Claude Desktop / Claude Code
-  -> thin stdio local-coder bridge
-      -> authenticated LAN / NordVPN Meshnet
-          -> Windows worker
-              -> repository mirror/cache
-              -> disposable worktree
-              -> reconstructed Mac source state
-              -> persistent repo intelligence
-              -> Qwen3.8 reasoning/coding/review
-              -> lint/tests/typecheck/build
-              -> bounded changed-file payloads
-      <- execution result + changes
-  -> compare-and-swap source verification
-  -> apply changes locally
+Local Coder.app
+  -> DesktopAppRuntime
+      -> Agent Runtime
+          -> authenticated LAN / NordVPN Meshnet
+              -> Windows worker
+                  -> Qwen/Ollama inference
+                  -> bounded disposable execution workspace when requested
+          <- bounded result / inference output
+      -> verify local source state
+      -> apply validated changes on the Mac
 ```
+
+The Windows worker is infrastructure for the standalone app. It is not a control plane, UI host, MCP server or product entrypoint.
 
 ## Why not edit the Mac filesystem remotely
 
@@ -31,13 +29,13 @@ Direct SMB/SSHFS editing introduces avoidable failure modes:
 - build/watch tools behave poorly over network filesystems;
 - locking is less predictable;
 - a network interruption can happen during a live write;
-- tests/builds would still contend with the Mac workspace.
+- tests/builds would contend with the Mac workspace.
 
-Instead, Windows reconstructs invocation state locally and returns only task-produced changes.
+Instead, Windows reconstructs a bounded invocation state locally and returns only task-produced changes or inference output.
 
 ## Workspace snapshot
 
-Each remote run carries:
+A remote execution run may carry:
 
 ```text
 origin repository URL
@@ -54,26 +52,24 @@ Real `.env*` secrets, `.ssh`, `.git`, `node_modules` and other blocked workspace
 
 ### Two independent isolation keys
 
-`isolationKey` is derived from the **concrete Mac checkout/worktree**. It prevents mutable jobs targeting that checkout from overlapping.
+`isolationKey` is derived from the concrete Mac checkout/worktree. It prevents mutable jobs targeting that checkout from overlapping.
 
-`memoryScopeKey` is derived from Git's **common-dir** on the Mac. Linked worktrees from one clone share it, while a separate clone receives a different opaque key even if both clones use the same Git origin.
-
-This gives the intended behavior:
+`memoryScopeKey` is derived from Git's common directory on the Mac. Linked worktrees from one clone share it, while a separate clone receives a different opaque key even when both use the same origin.
 
 ```text
 clone A
   worktree A1 ─┐
-  worktree A2 ─┼─ shared repo intelligence
+  worktree A2 ─┼─ shared Repo Intelligence
                │
 clone B        │
   worktree B1 ─── independent memory scope
 ```
 
-The raw Mac filesystem paths are never required by the Windows worker.
+The raw Mac filesystem path is never required by the Windows worker.
 
-## Protocol v1
+## Protocol
 
-Every endpoint requires:
+Every worker endpoint requires:
 
 ```text
 Authorization: Bearer <worker-token>
@@ -87,7 +83,7 @@ The worker rejects incompatible protocol versions and validates bounded request 
 GET /v1/health
 ```
 
-Reports worker/protocol version, host/platform, configured model, queue/scheduler state, repo-intelligence state and Ollama health.
+Reports worker/protocol version, host/platform, configured model, queue/scheduler state, Repo Intelligence state and Ollama health.
 
 ### Read-only generation
 
@@ -95,7 +91,7 @@ Reports worker/protocol version, host/platform, configured model, queue/schedule
 POST /v1/chat
 ```
 
-Keeps model inference off the Mac even for read-only delegation.
+Uses the Windows model for a routed cognitive stage while the Agent Runtime remains on the Mac.
 
 ### Execute bounded task
 
@@ -105,7 +101,7 @@ POST /v1/execute-task
 
 Used when the solution and editable files are already known.
 
-### Execute Claude-planned graph
+### Execute implementation graph
 
 ```text
 POST /v1/execute-plan
@@ -113,18 +109,18 @@ POST /v1/execute-plan
 
 Runs the transactional dependency-ordered executor in one disposable Windows worktree.
 
-### Execute open-ended local engineering
+### Execute open-ended engineering
 
 ```text
 POST /v1/engineer
 ```
 
-Runs:
+Runs the bounded engineering pipeline on reconstructed source state when remote execution is selected:
 
 ```text
-repo intelligence retrieval
+Repo Intelligence retrieval
 -> current evidence
--> investigation/reasoning
+-> investigation
 -> planning
 -> bounded coding/retries
 -> deterministic validation
@@ -133,23 +129,23 @@ repo intelligence retrieval
 -> successful-run learning
 ```
 
-If unresolved premium reasoning/current external research is needed, the response contains a compact Claude escalation instead of silently guessing.
+If a material user decision or unresolved external fact remains, the result is a neutral `needs-guidance` checkpoint that the standalone app presents to the user.
 
 ## Worker run lifecycle
 
 For a remote job the worker:
 
-1. validates bearer authentication/protocol/body limits;
-2. validates repo host policy;
+1. validates bearer authentication, protocol and body limits;
+2. validates repository-host policy;
 3. queues the job according to worker concurrency/isolation rules;
 4. clones/fetches a local bare mirror;
 5. checks out the requested base SHA into a unique detached worktree;
 6. applies tracked dirty state and safe untracked files;
 7. verifies expected file hashes where supplied;
 8. bootstraps dependencies according to host policy;
-9. resolves repo-intelligence identity using the Mac clone scope;
-10. executes task/plan/local-engineer logic;
-11. runs Windows validation/builds;
+9. resolves Repo Intelligence identity using the Mac clone scope;
+10. executes the requested inference/task/plan/engineering operation;
+11. runs Windows-side validation when execution is remote;
 12. returns bounded changed files and execution metadata;
 13. cleans the disposable worktree in `finally`.
 
@@ -162,19 +158,19 @@ LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS=1
 OLLAMA_NUM_PARALLEL=1
 ```
 
-Multiple Claude sessions may submit jobs simultaneously, but one heavy job runs at a time initially.
+The Local Coder app may queue several jobs, but one heavy worker job runs at a time initially.
 
 If worker concurrency is later raised:
 
 - jobs for the same concrete checkout never overlap;
 - different worktrees may overlap in non-inference phases;
-- Ollama inference remains serialized machine-wide.
+- Ollama inference remains serialized machine-wide unless the operator deliberately changes that policy.
 
 ## Mac apply lifecycle
 
-The worker never writes directly to the Mac.
+The worker never writes directly to the Mac workspace.
 
-Before applying returned changes, the bridge verifies every target file against the before-state hash captured when the job started.
+Before applying returned changes, Local Coder verifies every target file against the before-state hash captured when the job started.
 
 ```text
 all hashes match
@@ -187,9 +183,9 @@ any hash changed
 
 If a local write fails after apply begins, target files are restored to their pre-apply snapshots.
 
-## Repo intelligence lifecycle
+## Repo Intelligence lifecycle
 
-Persistent memory lives under the worker state directory rather than inside company repositories.
+Persistent memory stays outside company repositories.
 
 Each durable fact is source-backed and carries source fingerprints, confidence and Git validation metadata.
 
@@ -212,134 +208,31 @@ bounded result/diff
 -> atomic memory update
 ```
 
-Repo-memory writes are protected by per-identity filesystem locks and atomic replacement.
-
 See [REPO_INTELLIGENCE.md](./REPO_INTELLIGENCE.md).
 
-## Model policy
+## Model and resource policy
 
-The protocol remains model-agnostic. The v0.10 Windows installer selects:
+Recommended baseline for the 27B worker path:
 
 ```text
-qwen3.8:27b
-num_ctx=16384
+LOCAL_CODER_MODEL=qwen3.8:27b
+LOCAL_CODER_NUM_CTX=16384
 OLLAMA_NUM_PARALLEL=1
 OLLAMA_MAX_LOADED_MODELS=1
+LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS=1
 ```
 
-16K is intentionally conservative for the RTX 3060 12 GB / 64 GB RAM workstation. Repo-memory/evidence quality should be improved before increasing context.
+The advertised model context may be larger, but 16K is the intentional initial operating point. Local Coder should improve retrieval/evidence quality before increasing context aggressively.
 
-### Reasoning normalization
+## Security boundary
 
-local-coder stages use a model-agnostic intent:
+- bearer-authenticated worker protocol;
+- source-address firewall restrictions where configured;
+- bounded request and changed-file payloads;
+- blocked secret/workspace paths;
+- disposable worktrees;
+- compare-and-swap file application on the Mac;
+- local inference lock and checkout mutation exclusion;
+- no product UI or provider credentials hosted by the worker.
 
-```text
-high | medium | low | false
-```
-
-Qwen3.8's current template uses `xhigh` as maximum/default and does not accept literal `high`. The Ollama client therefore translates:
-
-```text
-qwen3.8 + high -> think:true -> model default xhigh
-```
-
-Other reasoning levels and other model families remain unchanged.
-
-## Repository authentication on Windows
-
-The worker does not receive Git credentials from the Mac.
-
-Windows must already be able to clone/fetch target origin URLs through normal developer authentication, such as Git Credential Manager, SSH agent, or company-specific GitHub Enterprise credentials.
-
-Credentials are not included in worker requests or telemetry.
-
-## Network/authentication boundary
-
-Worker mode uses:
-
-```text
-private LAN or NordVPN Meshnet
-+ source-address restricted Windows Firewall
-+ high-entropy bearer token
-```
-
-Ollama stays on Windows loopback:
-
-```text
-127.0.0.1:11434
-```
-
-The worker listens on `7337` according to setup policy. Do not router-port-forward either `7337` or `11434`.
-
-For travel, use [NORDVPN_MESHNET.md](./NORDVPN_MESHNET.md).
-
-## Dependency/bootstrap policy
-
-Worker bootstrap modes:
-
-```text
-none
-  no dependency install
-
-auto
-  detect root package manager/lockfile and install on Windows
-```
-
-`auto` maps:
-
-```text
-pnpm-lock.yaml      -> pnpm install --frozen-lockfile
-yarn.lock           -> yarn install --frozen-lockfile
-bun.lock/bun.lockb  -> bun install --frozen-lockfile
-package-lock.json   -> npm ci
-package.json only   -> npm install
-```
-
-Bootstrap commands are host policy; the model cannot invent arbitrary bootstrap shell commands.
-
-## Execution modes
-
-```text
-LOCAL_CODER_EXECUTION_MODE=local
-  same-machine execution
-
-LOCAL_CODER_EXECUTION_MODE=remote
-  Windows worker required; no silent Mac fallback
-
-LOCAL_CODER_EXECUTION_MODE=auto
-  remote preferred; local fallback only when worker is unavailable
-```
-
-The recommended Mac/Windows topology uses strict `remote` mode so a network outage cannot unexpectedly load the heavyweight model/build workload on the Mac.
-
-## Worker state
-
-Default Windows root:
-
-```text
-%USERPROFILE%\.local-coder-mcp\worker\
-```
-
-Contains logically:
-
-```text
-repos\               Git mirrors
-worktrees\           disposable execution workspaces
-repo-intelligence\   persistent learned repository knowledge
-```
-
-Control-plane compact run artifacts may still live on the Mac; heavy model/repo/build work is on Windows.
-
-## Safety invariants
-
-- no direct remote writes to the Mac filesystem;
-- no silent local heavyweight fallback in strict remote mode;
-- bounded workspace transport;
-- blocked secret/sensitive paths;
-- compare-and-swap Mac apply;
-- per-checkout mutation isolation;
-- machine-wide inference serialization;
-- clone-scoped learned memory;
-- stale-memory detection against current source;
-- deterministic validation remains independent evidence;
-- Claude escalation is explicit and resumable.
+See [WINDOWS_REMOTE_SETUP.md](./WINDOWS_REMOTE_SETUP.md) and [NORDVPN_MESHNET.md](./NORDVPN_MESHNET.md).

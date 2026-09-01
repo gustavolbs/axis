@@ -198,12 +198,12 @@ test('investigates, plans, codes and adversarially reviews a bounded goal locall
   });
 });
 
-test('returns a compact Claude research handoff before any mutation when planning cannot converge', async () => {
+test('returns a compact external research guidance checkpoint before any mutation when planning cannot converge', async () => {
   await withWorkspace(async (workspace, stateRoot) => {
     const model = new FakeModel([
       investigation(),
       JSON.stringify({
-        outcome: 'needs-claude',
+        outcome: 'needs-guidance',
         summary: 'Current external framework behavior must be confirmed.',
         analysis: 'Repository evidence alone cannot establish the current upstream contract.',
         confidence: 0.45,
@@ -222,7 +222,7 @@ test('returns a compact Claude research handoff before any mutation when plannin
       goal: 'Adopt the current upstream API in this module.'
     });
 
-    assert.equal(output.result.status, 'needs-claude');
+    assert.equal(output.result.status, 'needs-guidance');
     assert.equal(output.result.phase, 'planning');
     assert.equal(output.result.escalation?.kind, 'external-research');
     assert.equal(output.changes.length, 0);
@@ -233,14 +233,14 @@ test('returns a compact Claude research handoff before any mutation when plannin
   });
 });
 
-test('rolls implementation back when adversarial local review requires Claude', async () => {
+test('rolls implementation back when adversarial local review requires guidance', async () => {
   await withWorkspace(async (workspace, stateRoot) => {
     const model = new FakeModel([
       investigation(),
       readyPlan(),
       editProposal(),
       JSON.stringify({
-        verdict: 'needs-claude',
+        verdict: 'needs-guidance',
         confidence: 0.4,
         summary: 'A product contract is ambiguous after implementation.',
         issues: [
@@ -263,7 +263,7 @@ test('rolls implementation back when adversarial local review requires Claude', 
       maxRepairRounds: 0
     });
 
-    assert.equal(output.result.status, 'needs-claude');
+    assert.equal(output.result.status, 'needs-guidance');
     assert.equal(output.result.phase, 'review');
     assert.equal(output.result.escalation?.kind, 'external-research');
     assert.equal(output.changes.length, 0);

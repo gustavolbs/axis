@@ -9,14 +9,14 @@ test('routes existing deterministic commands away from LLMs', () => {
   assert.ok(result.confidence >= 0.9);
 });
 
-test('keeps unresolved auth work in Claude', () => {
+test('routes unresolved auth work to a standalone guidance checkpoint', () => {
   const result = classifyTask({
     task: 'Implement authorization changes for the admin API.',
     solutionKnown: true,
     validationKnown: true,
     estimatedFiles: 2
   });
-  assert.equal(result.route, 'claude');
+  assert.equal(result.route, 'guidance');
   assert.ok(result.signals.supervisedRisk.length > 0);
   assert.match(result.reasons.join(' '), /sensitiveDecisionResolved=true/);
 });
@@ -33,11 +33,11 @@ test('routes already-decided bounded auth implementation as local-supervised', (
 
   assert.equal(result.route, 'local-supervised');
   assert.equal(result.reviewPolicy.mode, 'full-diff');
-  assert.equal(result.reviewPolicy.claudeReviewRequired, true);
+  assert.equal(result.reviewPolicy.independentReviewRequired, true);
   assert.ok(result.signals.supervisedRisk.length > 0);
 });
 
-test('keeps cryptography design in Claude even when a solution is claimed known', () => {
+test('routes unresolved cryptography design to guidance even when a solution is claimed known', () => {
   const result = classifyTask({
     task: 'Implement a new encryption and signing design for stored credentials.',
     solutionKnown: true,
@@ -46,7 +46,7 @@ test('keeps cryptography design in Claude even when a solution is claimed known'
     sensitiveDecisionResolved: true
   });
 
-  assert.equal(result.route, 'claude');
+  assert.equal(result.route, 'guidance');
   assert.ok(result.signals.blockingRisk.length > 0);
 });
 
@@ -61,12 +61,12 @@ test('routes bounded known implementation to the local executor', () => {
   assert.ok(result.confidence > 0.7);
 });
 
-test('keeps discovery work in Claude even when the task looks implementation-friendly', () => {
+test('routes unresolved discovery work to guidance even when the task looks implementation-friendly', () => {
   const result = classifyTask({
     task: 'Fix the React component regression.',
     solutionKnown: false,
     requiresDiscovery: true,
     estimatedFiles: 1
   });
-  assert.equal(result.route, 'claude');
+  assert.equal(result.route, 'guidance');
 });

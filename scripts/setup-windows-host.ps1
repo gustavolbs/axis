@@ -203,7 +203,7 @@ if (-not $DisableRepoIntelligence) {
   Write-Host "Repo intelligence is stored outside target repositories under the worker state directory." -ForegroundColor Cyan
 }
 if ($MaxConcurrentJobs -eq 1) {
-  Write-Host "Multiple Claude sessions may submit jobs, but heavy jobs execute sequentially to protect GPU/RAM." -ForegroundColor Cyan
+  Write-Host "Multiple app sessions may submit jobs, but heavy jobs execute sequentially to protect GPU/RAM." -ForegroundColor Cyan
 } else {
   Write-Host "Different checkout/worktree jobs may overlap; same-checkout jobs and Ollama inference remain serialized." -ForegroundColor Yellow
 }

@@ -6,7 +6,7 @@ import type {
   LocalEngineerResult
 } from './local-engineer.js';
 import {
-  createControlPlaneLocalProvider,
+  createLocalInferenceProvider,
   localInferenceLabel
 } from './local-inference-provider.js';
 import type {
@@ -80,7 +80,7 @@ export interface ProjectRoutingTraceEntry {
 export interface ProjectExecutionMetadata {
   projectId: string;
   organizationId: string;
-  agentHost: 'control-plane';
+  agentHost: 'desktop-app';
   localInference: 'mac-ollama' | 'windows-worker' | 'windows-worker-with-mac-fallback';
   repoMemoryScopeKey: string;
   routingTrace: ProjectRoutingTraceEntry[];
@@ -214,9 +214,10 @@ function trace(event: ProjectRouteEvent): ProjectRoutingTraceEntry {
 
 /**
  * Project-aware engineer wrapper. Unregistered workspaces delegate byte-for-byte to the
- * legacy backend. Registered Project workspaces keep orchestration/workspace mutation on
- * the Mac control plane, then route cognitive calls to cloud directly or to Qwen through
- * the Windows worker. An explicit projectId is also supported for standalone/API callers.
+ * legacy backend. Registered Project workspaces keep orchestration and workspace mutation
+ * inside the standalone Mac app, then route cognitive calls to cloud directly or to local
+ * Qwen inference on the Mac/Windows worker. An explicit projectId is supported by the
+ * desktop runtime for Project-scoped jobs.
  */
 export class ProjectAwareEngineerBackend {
   private readonly projects: ProjectStore;
@@ -260,7 +261,7 @@ export class ProjectAwareEngineerBackend {
 
     const budget = this.options.budgetSessionFactory?.(project, input.budgetJobId) ??
       new ProjectBudgetSession(project, undefined, undefined, input.budgetJobId ? { jobId: input.budgetJobId } : {});
-    const localProvider = createControlPlaneLocalProvider(
+    const localProvider = createLocalInferenceProvider(
       this.config,
       this.ollama,
       this.remoteClient
@@ -320,7 +321,7 @@ export class ProjectAwareEngineerBackend {
     result.projectExecution = {
       projectId: project.id,
       organizationId: project.organizationId,
-      agentHost: 'control-plane',
+      agentHost: 'desktop-app',
       localInference: localInferenceLabel(this.config.executionMode),
       repoMemoryScopeKey: memoryScopeKey,
       routingTrace,

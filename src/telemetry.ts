@@ -14,7 +14,7 @@ export interface TelemetryEvent {
   kind: TelemetryKind;
   model?: string;
   route?: 'deterministic' | 'local' | 'local-supervised' | 'claude';
-  status?: 'success' | 'needs-claude' | 'escalated' | 'error';
+  status?: 'success' | 'needs-guidance' | 'escalated' | 'error';
   attempts?: number;
   repairRounds?: number;
   promptTokens?: number;
@@ -177,7 +177,7 @@ export class TelemetryStore {
 
     const engineeringSuccess = engineering.filter((event) => event.status === 'success').length;
     const engineeringNeedsClaude = engineering.filter(
-      (event) => event.status === 'needs-claude'
+      (event) => event.status === 'needs-guidance'
     ).length;
     const engineeringEscalated = engineering.filter(
       (event) => event.status === 'escalated'

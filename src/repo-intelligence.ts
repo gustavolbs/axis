@@ -48,7 +48,7 @@ export interface RepoEpisode {
   id: string;
   createdAt: string;
   sha: string;
-  outcome: 'success' | 'needs-claude' | 'escalated' | 'git-change';
+  outcome: LocalEngineerResult['status'] | 'git-change';
   goal?: string;
   summary: string;
   changedFiles: string[];
@@ -626,7 +626,7 @@ Extract only reusable knowledge supported by this successful run: architecture b
 Use kind=regression when the run demonstrates that two or more behaviors must be preserved together, especially after repair rounds or a fix that initially regressed another behavior. Regression memories are future compatibility constraints, not anecdotes.
 Do not store secrets, credentials, tokens, user data, transient generated values, or broad facts unsupported by repository evidence.
 For architecture/convention/invariant/regression/procedure facts, cite one or more supplied repository paths. Prefer a few high-value durable facts over many weak facts.
-Do not treat Claude-only guidance or model speculation as durable truth unless the successful repository result provides source evidence.
+Do not treat user-supplied guidance or model speculation as durable truth unless the successful repository result provides source evidence.
 Return JSON only.`;
 
   const generation = await model.chat(system, prompt, learningFormat, {

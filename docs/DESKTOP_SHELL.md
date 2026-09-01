@@ -1,29 +1,33 @@
-# macOS desktop shell
+# macOS desktop application
 
 ## Decision
 
-Local Coder packages the existing React standalone UI and Node control plane with **Electron**.
+Local Coder is shipped as a standalone Electron application.
 
-This is an architectural choice, not a visual preference. The Agent Runtime, Project stores, Keychain integration, provider adapters, worker client and standalone HTTP API are already Node.js modules. Electron can host the existing UI while starting the same compiled control-plane entrypoint with its embedded Node runtime. A Tauri shell would require introducing a Rust host plus a separately packaged Node sidecar for the same runtime, increasing lifecycle, signing and IPC complexity without removing the Node dependency.
+Electron is the product host because the engineering runtime, Project stores, Keychain integration, provider adapters and optional Windows-worker client are already Node.js modules. The React renderer remains sandboxed and accesses those capabilities only through a narrow preload bridge.
 
-The decision can be revisited if the control plane stops depending on Node. The React UI and Agent Runtime boundaries remain independent of the shell.
+There is no browser console or localhost control-plane server in the desktop architecture.
 
 ## Runtime topology
 
 ```text
 Local Coder.app
   ├─ Electron main process
-  │    ├─ single-instance lifecycle
-  │    ├─ starts Local Coder control plane with ELECTRON_RUN_AS_NODE
-  │    ├─ attaches to an already-running healthy loopback Console when appropriate
-  │    └─ stops the owned control plane on app quit
+  │    ├─ application/window lifecycle
+  │    ├─ DesktopAppRuntime in-process
+  │    ├─ native folder picker / theme / login-item APIs
+  │    └─ provider + worker infrastructure
   │
-  └─ sandboxed renderer
-       └─ http://127.0.0.1:<console-port>
-            └─ existing Agent | Projects | Runs React UI
+  ├─ preload.cjs
+  │    └─ narrow IPC bridge
+  │
+  └─ sandboxed React renderer
+       └─ Agent | Chats | Projects | Runs | Settings
 ```
 
-`npm run console` remains supported. The desktop app does not create a second Agent Runtime or duplicate Project state.
+The main process imports `dist/app-runtime.js` and creates `DesktopAppRuntime` directly. Renderer requests cross `ipcRenderer.invoke('local-coder:runtime-request', ...)`; runtime events flow back through `local-coder:runtime-event`.
+
+The renderer keeps URL-shaped request paths such as `/api/jobs` only as an internal compatibility vocabulary. `runtime-shim.ts` converts them to IPC calls; no HTTP request is sent and no server is bound.
 
 ## Security boundary
 
@@ -32,33 +36,48 @@ The renderer follows Electron's security recommendations:
 - `nodeIntegration: false`;
 - `contextIsolation: true`;
 - renderer sandbox enabled;
-- `webSecurity` remains enabled;
+- `webSecurity` enabled;
 - permissions denied by default;
 - new windows denied;
-- navigation outside the Local Coder loopback origin denied;
-- restrictive CSP on the standalone document;
-- Project/provider/credential administration remains server-side and loopback-only;
-- secrets remain in Keychain/environment references and are never sent to the renderer by the admin API.
+- navigation away from the packaged application denied;
+- safe HTTPS links delegated to the system browser;
+- restrictive CSP in `app/index.html`;
+- secrets remain in Keychain/environment references and are never exposed as raw values by the runtime API;
+- filesystem selection uses the native directory dialog exposed through preload rather than Node access in the renderer.
 
-References checked 2026-08-31:
+## Native desktop behavior
 
-- Electron security checklist: https://www.electronjs.org/docs/latest/tutorial/security
-- Electron process sandboxing: https://www.electronjs.org/docs/latest/tutorial/sandbox
-- Electron `ELECTRON_RUN_AS_NODE`: https://www.electronjs.org/docs/latest/api/environment-variables
-- electron-builder application contents: https://www.electron.build/docs/contents/
-- electron-builder macOS packaging: https://www.electron.build/docs/mac/
+The Electron host owns desktop-only capabilities:
 
-## Packaging
+- macOS traffic-light positioning;
+- hidden inset title bar;
+- persisted window size/position and minimum dimensions;
+- dark boot background to avoid a white flash;
+- native application menu and keyboard shortcuts;
+- System/Light/Dark integration through `nativeTheme`;
+- Finder directory selection;
+- Start at Login integration;
+- external HTTPS link delegation.
+
+The packaged renderer is loaded from `app-dist/index.html` with `BrowserWindow.loadFile()`.
+
+## Development
 
 Current pinned desktop toolchain:
 
 - Electron `44.1.0`;
 - electron-builder `26.15.7`.
 
-Development:
+Launch the application:
 
 ```bash
 npm run desktop
+```
+
+Build without launching:
+
+```bash
+npm run build
 ```
 
 Unsigned local directory package:
@@ -73,11 +92,24 @@ Unsigned DMG + ZIP:
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run desktop:pack:mac
 ```
 
-Normal CI intentionally uses this unsigned configuration. Those artifacts prove packaging portability but are not distribution releases.
+Normal CI intentionally uses unsigned packaging. Those artifacts validate packaging portability but are not distribution releases.
+
+## Packaged contents
+
+`electron-builder.yml` includes only the product runtime and assets required by the standalone app:
+
+```text
+desktop/**/*
+dist/**/*
+app-dist/**/*
+package.json
+```
+
+There is no separate console bundle or standalone server entrypoint.
 
 ## Signed and notarized distribution
 
-Distribution uses a separate `electron-builder.release.yml` and the manual **macOS Signed Release** GitHub Actions workflow.
+Distribution uses `electron-builder.release.yml` and the manual **macOS Signed Release** GitHub Actions workflow.
 
 The release command is:
 
@@ -85,7 +117,7 @@ The release command is:
 npm run desktop:release:mac
 ```
 
-It fails before build/package unless all signing and notarization environment variables are present:
+It fails before packaging unless all signing/notarization environment variables are present:
 
 ```text
 CSC_LINK
@@ -95,9 +127,9 @@ APPLE_APP_SPECIFIC_PASSWORD
 APPLE_TEAM_ID
 ```
 
-The wrapper never passes those secret values in process arguments; electron-builder receives them through inherited environment variables.
+The wrapper does not pass secret values in process arguments; electron-builder receives them through inherited environment variables.
 
-The GitHub workflow maps repository secrets to those variables, builds with Developer ID signing plus Hardened Runtime, asks electron-builder to notarize, then independently verifies:
+The release workflow builds with Developer ID signing plus Hardened Runtime, requests notarization, then independently verifies:
 
 ```text
 codesign --verify --deep --strict
@@ -106,34 +138,19 @@ xcrun stapler validate
 spctl --assess --type execute
 ```
 
-The generated DMG is mounted and the packaged `Local Coder.app` is verified again before artifacts are uploaded. SHA-256 checksums are generated for the DMG and ZIP.
-
-This separation is intentional: electron-builder may skip signing when no valid identity is available. A distribution workflow must therefore prove the resulting signature/ticket instead of treating successful packaging as successful release.
-
-Apple requirements verified 2026-08-31:
-
-- Developer ID: https://developer.apple.com/support/developer-id/
-- Notarization: https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution
-- Custom notarization workflow: https://developer.apple.com/documentation/security/customizing-the-notarization-workflow
-
-Electron-builder release references verified 2026-08-31:
-
-- code signing: https://www.electron.build/docs/features/code-signing/
-- macOS code signing: https://www.electron.build/docs/features/code-signing/code-signing-mac/
-- notarization: https://www.electron.build/docs/notarization/
-
-See `docs/INSTALLATION.md` and `docs/RELEASE_CHECKLIST.md` for operator instructions.
+The generated DMG is mounted and the packaged `Local Coder.app` is verified again before artifacts are uploaded. SHA-256 checksums are generated for DMG and ZIP artifacts.
 
 ## Startup and recovery
 
-The desktop shell always forces its own standalone server bind to `127.0.0.1` even if a broader `LOCAL_CODER_CONSOLE_HOST` exists in the environment.
+Startup is intentionally simple:
 
-At startup it:
+1. Electron becomes ready.
+2. `DesktopAppRuntime.create()` is imported and initialized in-process.
+3. IPC handlers are installed.
+4. The application menu is installed.
+5. The renderer loads from `app-dist/index.html`.
+6. The window becomes visible on `ready-to-show`, with a bounded fallback so startup failures are never silently invisible.
 
-1. probes the configured loopback port;
-2. attaches if a Local Coder standalone API is already healthy there;
-3. otherwise starts the compiled `dist/standalone-console.js` using Electron's Node mode;
-4. waits for `/api/jobs` to become ready;
-5. presents Retry/Quit if startup fails or the port is occupied by a non-Local-Coder process.
+If runtime initialization fails, the app exits with a startup error rather than attaching to or spawning a separate control service.
 
-If an owned backend exits while the app is open, the user can restart it without restarting the Electron renderer process.
+See [INSTALLATION.md](INSTALLATION.md) and [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).

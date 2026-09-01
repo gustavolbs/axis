@@ -1,4 +1,4 @@
-export type TaskRoute = 'deterministic' | 'local' | 'local-supervised' | 'claude';
+export type TaskRoute = 'deterministic' | 'local' | 'local-supervised' | 'guidance';
 
 export interface TaskClassificationInput {
   task: string;
@@ -17,7 +17,7 @@ export interface TaskClassification {
   reasons: string[];
   reviewPolicy: {
     mode: 'none' | 'compact' | 'full-diff';
-    claudeReviewRequired: boolean;
+    independentReviewRequired: boolean;
   };
   signals: {
     highRisk: string[];
@@ -99,7 +99,7 @@ function classification(
     reasons,
     reviewPolicy: {
       mode: route === 'local-supervised' ? 'full-diff' : route === 'local' ? 'compact' : 'none',
-      claudeReviewRequired: route === 'local' || route === 'local-supervised'
+      independentReviewRequired: route === 'local' || route === 'local-supervised'
     },
     signals
   };
@@ -142,8 +142,9 @@ export function classifyTask(input: TaskClassificationInput): TaskClassification
   if (blockingRisk.length > 0) reasons.push(`Blocking risk detected: ${blockingRisk.join(', ')}.`);
 
   if (reasons.length > 0) {
+    reasons.push('Resolve the missing decision/evidence through the standalone guidance checkpoint before bounded implementation.');
     return classification(
-      'claude',
+      'guidance',
       0.82 + Math.min(0.15, reasons.length * 0.03),
       reasons,
       signals
@@ -153,7 +154,7 @@ export function classifyTask(input: TaskClassificationInput): TaskClassification
   if (supervisedRisk.length > 0) {
     const unresolved: string[] = [];
     if (input.sensitiveDecisionResolved !== true) {
-      unresolved.push('Claude has not explicitly marked the sensitive decision as resolved.');
+      unresolved.push('The sensitive behavior has not been explicitly marked as resolved.');
     }
     if (input.solutionKnown !== true) {
       unresolved.push('The implementation approach is not explicitly known.');
@@ -169,14 +170,14 @@ export function classifyTask(input: TaskClassificationInput): TaskClassification
       reasons.push(`Sensitive domain detected: ${supervisedRisk.join(', ')}.`);
       reasons.push(...unresolved);
       reasons.push(
-        'Claude must resolve the sensitive behavior first, then reroute the remaining bounded implementation with sensitiveDecisionResolved=true.'
+        'The standalone agent must obtain the bounded sensitive decision before implementation resumes with sensitiveDecisionResolved=true.'
       );
-      return classification('claude', 0.9, reasons, signals);
+      return classification('guidance', 0.9, reasons, signals);
     }
 
     reasons.push(`Sensitive domain detected but its decisions are already resolved: ${supervisedRisk.join(', ')}.`);
     reasons.push('Only bounded implementation remains for the local executor.');
-    reasons.push('Full diff review by Claude is mandatory after local execution.');
+    reasons.push('Full independent diff review is mandatory after local execution.');
     return classification('local-supervised', 0.9, reasons, signals);
   }
 
@@ -202,6 +203,6 @@ export function classifyTask(input: TaskClassificationInput): TaskClassification
   }
 
   reasons.push('The task is not clearly deterministic or safely bounded for the local executor.');
-  reasons.push('Keep it in Claude until the implementation boundary is clearer.');
-  return classification('claude', 0.64, reasons, signals);
+  reasons.push('Request bounded guidance until the implementation boundary is clear.');
+  return classification('guidance', 0.64, reasons, signals);
 }

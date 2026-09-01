@@ -81,20 +81,24 @@ test('ordinary CI remains unsigned and separate from distribution', () => {
   assert.doesNotMatch(ci, /APPLE_APP_SPECIFIC_PASSWORD/);
 });
 
-test('installation and release docs preserve migration and isolation invariants', () => {
+test('installation and release docs preserve standalone state and isolation invariants', () => {
   const install = read('docs/INSTALLATION.md');
   const release = read('docs/RELEASE_CHECKLIST.md');
 
   assert.match(install, /cloudAllowed: false/);
   assert.match(install, /allowed providers: ollama/);
   assert.match(install, /Organization ID is a security boundary/);
-  assert.match(install, /legacy v0\.14 `remoteWorkerToken` is read for compatibility only/);
-  assert.match(install, /remoteWorkerCredentialRef/);
+  assert.match(install, /~\/\.local-coder\/settings\.json/);
+  assert.match(install, /LOCAL_CODER_REMOTE_WORKER_CREDENTIAL_REF/);
+  assert.match(install, /does not persist the raw worker bearer token/);
   assert.match(install, /macOS Keychain/);
+  assert.doesNotMatch(install, /legacy v0\.14|control-plane\.json.*remain|npm run console/);
 
   assert.match(release, /Developer ID Application/);
-  assert.match(release, /legacy v0\.14 Local-only settings remain readable/);
+  assert.match(release, /settings persist worker credential references, never raw worker bearer tokens/);
   assert.match(release, /Projects do not silently enable cloud access/);
   assert.match(release, /credentials cannot be rebound across Organization IDs/);
   assert.match(release, /never their values/);
+  assert.match(release, /DesktopAppRuntime/);
+  assert.doesNotMatch(release, /legacy v0\.14|npm run console|attach.*control plane/i);
 });

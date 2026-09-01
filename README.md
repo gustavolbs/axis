@@ -1,46 +1,44 @@
-# local-coder-mcp
+# Local Coder
 
-Local-first software-engineering agent with one shared Agent Runtime and multiple interfaces:
+Local Coder is a standalone, provider-agnostic software-engineering agent for macOS. The desktop app owns the complete engineering loop itself: repository investigation, planning, implementation, deterministic validation, review, repair, routing, cost controls and persistent repository intelligence.
 
-- **Claude / MCP** — Claude delegates repository work to Local Coder;
-- **Local Coder standalone** — browser/desktop control-plane UI using the same runtime;
-- **headless/runtime APIs** — kept interface-independent so CLI/automation remain possible.
+Claude Desktop is not a Local Coder host and Local Coder does not expose an MCP integration. Anthropic models may still be configured as ordinary inference providers alongside OpenAI and local Ollama models.
 
-Local Coder is provider-agnostic. Qwen/Ollama remains the default local compute path, while Projects may route cognitive stages directly to Anthropic or OpenAI without a mandatory local-model pre-pass.
-
-## Current architecture
+## Architecture
 
 ```text
-                    Developer
-                       │
-          ┌────────────┼─────────────┐
-          ▼            ▼             ▼
-      Claude/MCP   Local Coder UI   Headless host
-          └────────────┼─────────────┘
-                       ▼
-                Mac control plane
-                       │
-              shared Agent Runtime
-                       │
-       ┌───────────────┼────────────────┐
-       ▼               ▼                ▼
- Project policy   Cognitive Router   Repo Intelligence
-       │               │                │
-       │        ┌──────┼────────┐       │
-       │        ▼      ▼        ▼       │
-       │     Ollama Anthropic OpenAI    │
-       │        │                       │
-       │   Mac or Windows Worker        │
-       └───────────────┬────────────────┘
-                       ▼
-            Plan / mutate / validate
-                       ▼
-              Review / repair / learn
+Developer
+   │
+   ▼
+Local Coder.app
+   │
+   ▼
+Electron renderer
+   │
+   ▼
+isolated preload IPC
+   │
+   ▼
+in-process DesktopAppRuntime
+   │
+   ├── Projects / credentials / budgets
+   ├── Cognitive router
+   ├── Repo Intelligence
+   ├── Research broker
+   └── Agent Runtime
+          │
+          ├── Ollama on this Mac
+          ├── authenticated Windows inference worker (optional)
+          ├── Anthropic API (optional)
+          └── OpenAI API (optional)
+   │
+   ▼
+plan → mutate → validate → review → repair → learn
 ```
 
-The Agent Runtime, not a provider adapter, owns workspace access, repository memory, evidence selection, planning, mutation, validation, review/repair, routing, privacy and budgets.
+There is no browser console, dashboard service, localhost control-plane server, or shared MCP control-plane configuration in the shipped product. The renderer calls the runtime through a narrow Electron IPC bridge.
 
-## Premium agent lifecycle
+## Agent lifecycle
 
 ```text
 Goal
@@ -49,7 +47,7 @@ Impact analysis
   ↓
 optional Architect → Critic → Judge deliberation
   ↓
-repository evidence / local research
+repository evidence / optional external research
   ↓
 material user decision only when genuinely required
   ↓
@@ -57,7 +55,7 @@ Investigation
   ↓
 Planning
   ↓
-dependency-ordered task DAG
+dependency-ordered implementation DAG
   ↓
 Implementation
   ↓
@@ -74,9 +72,49 @@ Repository learning
 Result
 ```
 
+The Agent Runtime—not a model adapter—owns workspace access, repository memory, evidence selection, planning, mutation, validation, review/repair, privacy and budgets.
+
 See [docs/PREMIUM_LOCAL_AGENT.md](docs/PREMIUM_LOCAL_AGENT.md).
 
-## Multi-provider Projects
+## Desktop development
+
+Requirements:
+
+- macOS for the packaged desktop experience and Keychain-backed secrets;
+- Node.js 22+;
+- npm;
+- Ollama for local inference, or at least one configured cloud provider;
+- optional Windows worker for local inference on a separate machine.
+
+Install and launch:
+
+```bash
+npm install
+npm run desktop
+```
+
+Build without launching Electron:
+
+```bash
+npm run build
+```
+
+Validate the repository:
+
+```bash
+npm run check
+npm test
+```
+
+Package unsigned macOS development artifacts:
+
+```bash
+npm run desktop:pack:mac
+```
+
+The production renderer is built into `app-dist/`; the Electron main process imports `DesktopAppRuntime` directly from `dist/` and does not start a web server.
+
+## Projects and model routing
 
 Projects isolate workspace, organization identity, credentials, routing policy, model selection, budgets and Repo Intelligence scope.
 
@@ -93,37 +131,30 @@ frontier-only
 
 Important invariants:
 
-- `speed-first` may select cloud directly with zero Qwen pre-inference;
-- `local-first` stays local when healthy local compute is appropriate;
+- `speed-first` may select an eligible cloud model directly, without a mandatory local-model pre-pass;
+- `local-first` stays local when healthy local compute satisfies policy;
 - explicit provider/model selection is exact or rejected, never silently replaced;
 - `cloudAllowed` and provider allowlists are hard constraints;
-- cloud credentials are referenced, not stored in Project JSON;
-- model availability comes from provider discovery rather than a stale hardcoded cloud-model enum;
 - provider fallback cannot silently cross a material privacy/cost boundary;
-- budget admission occurs before provider I/O.
+- budget admission happens before provider I/O;
+- model availability comes from provider discovery rather than a stale hardcoded cloud-model list.
 
-See [docs/MULTI_PROVIDER_FOUNDATION.md](docs/MULTI_PROVIDER_FOUNDATION.md), [docs/INSTALLATION.md](docs/INSTALLATION.md), and [docs/ROADMAP.md](docs/ROADMAP.md).
+See [docs/MULTI_PROVIDER_FOUNDATION.md](docs/MULTI_PROVIDER_FOUNDATION.md).
 
-## Credentials, pricing and budgets
+## Providers
 
-Cloud credentials use macOS Keychain for durable desktop storage or environment references for headless use. Raw API keys are not returned by the administration API and are not written to Project metadata, telemetry or prompts.
+Local Coder currently supports these inference paths:
 
-Pricing is versioned/configured per provider/model with source and verification timestamp. Usage is recorded in a persistent ledger with normalized input/output/cache/reasoning token counters.
+- **Ollama** — local inference on the Mac;
+- **Windows worker** — authenticated local-network inference compute, with repository execution still owned by the Mac app;
+- **Anthropic** — optional cloud inference provider;
+- **OpenAI** — optional cloud inference provider.
 
-Projects support:
+Cloud credentials use macOS Keychain for durable desktop storage or environment references where supported. Raw API keys are not written to Project metadata, telemetry or prompts.
 
-- daily USD budget;
-- monthly USD budget;
-- per-job USD budget;
-- warning fractions;
-- hard-stop admission;
-- concurrency-safe upper-bound reservations.
+The Windows worker is compute only. It does not host the desktop agent, project state, routing policy or repository intelligence.
 
-For `Auto`, a cloud attempt denied by budget may fall back to an eligible local candidate. Explicit cloud selection remains fail-closed rather than silently changing the requested model.
-
-## Windows local inference worker
-
-Recommended current worker configuration:
+Recommended Windows worker settings for the 27B local path:
 
 ```text
 LOCAL_CODER_MODEL=qwen3.8:27b
@@ -133,52 +164,57 @@ OLLAMA_MAX_LOADED_MODELS=1
 LOCAL_CODER_WORKER_MAX_CONCURRENT_JOBS=1
 ```
 
-The Windows Worker is local **inference compute**, not the owner of the Project agent. For Project-aware execution, the agent runs on the Mac control plane; cloud calls go directly from the Mac while Qwen calls may go to the authenticated Windows worker.
+Execution topology:
 
-Legacy strict local/remote execution remains available for compatibility.
-
-See:
-
-- [docs/REMOTE_WORKER_ARCHITECTURE.md](docs/REMOTE_WORKER_ARCHITECTURE.md)
-- [docs/WINDOWS_HOST_ENSURE.md](docs/WINDOWS_HOST_ENSURE.md)
-- [docs/WINDOWS_REMOTE_SETUP.md](docs/WINDOWS_REMOTE_SETUP.md)
-- [docs/NORDVPN_MESHNET.md](docs/NORDVPN_MESHNET.md)
-
-## Standalone macOS app and Console
-
-Development desktop launch:
-
-```bash
-npm run desktop
-```
-
-Browser-accessible fallback:
-
-```bash
-npm run console
-```
-
-Default loopback bind:
+| Mode | Behavior |
+| --- | --- |
+| `local` | Use Ollama on the Mac for local inference. |
+| `remote` | Require the authenticated Windows worker for local inference. |
+| `auto` | Prefer the Windows worker and fall back to Mac Ollama when allowed. |
 
 ```text
-http://127.0.0.1:7557
+LOCAL_CODER_EXECUTION_MODE=local|remote|auto
 ```
 
-The standalone UI exposes three operational surfaces:
+Project-aware multi-provider routing is a separate layer above this local-compute topology.
 
-- **Agent** — sessions, decisions, plan, diff, validation, research and quality evidence;
-- **Projects** — provider/model discovery, routing policy, credentials, pricing, privacy and budgets;
-- **Runs** — Project execution boundary, routing trace, provider attempts/fallbacks, spend and budget evidence.
+See [docs/REMOTE_WORKER_ARCHITECTURE.md](docs/REMOTE_WORKER_ARCHITECTURE.md) and [docs/WINDOWS_REMOTE_SETUP.md](docs/WINDOWS_REMOTE_SETUP.md).
 
-Project/provider/credential administration is restricted to loopback clients. The UI does not recompute routing or financial state; it renders backend-authoritative snapshots.
+## App state
 
-The desktop shell packages the same React UI and Node control plane as `Local Coder.app`; it does not create a second Agent Runtime. Normal CI produces unsigned development artifacts. Distribution uses the separate manual **macOS Signed Release** workflow, which fails closed unless Developer ID signing and Apple notarization credentials are configured and verifies `codesign`, stapler, and Gatekeeper before uploading artifacts.
+The standalone app uses one state root:
 
-See:
+```text
+~/.local-coder/
+```
 
-- [docs/DESKTOP_SHELL.md](docs/DESKTOP_SHELL.md)
-- [docs/INSTALLATION.md](docs/INSTALLATION.md)
-- [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+The primary settings file is:
+
+```text
+~/.local-coder/settings.json
+```
+
+Override paths when needed:
+
+```text
+LOCAL_CODER_HOME=/custom/path
+LOCAL_CODER_SETTINGS_PATH=/custom/path/settings.json
+```
+
+Worker bearer tokens may be supplied explicitly through `LOCAL_CODER_REMOTE_WORKER_TOKEN` or referenced from macOS Keychain through `LOCAL_CODER_REMOTE_WORKER_CREDENTIAL_REF`. New app settings never persist the raw worker token.
+
+## Research broker
+
+External research is optional and goes directly through configured infrastructure. Retrieved text is treated as untrusted evidence, never executable instructions.
+
+Enable a trusted SearXNG instance:
+
+```text
+LOCAL_CODER_RESEARCH_ENABLED=true
+LOCAL_CODER_SEARXNG_URL=http://<trusted-instance>
+```
+
+For Microsoft ecosystem questions, Local Coder narrows discovery to `site:learn.microsoft.com`; it does not connect to a Microsoft Learn MCP server.
 
 ## Persistent repository intelligence
 
@@ -195,76 +231,6 @@ current source + executable tests
 
 See [docs/REPO_INTELLIGENCE.md](docs/REPO_INTELLIGENCE.md).
 
-## Research Broker
-
-Research is local-first and retrieved text is treated as untrusted evidence, never executable instructions.
-
-Microsoft Learn defaults:
-
-```text
-LOCAL_CODER_RESEARCH_ENABLED=true
-LOCAL_CODER_MICROSOFT_LEARN_RESEARCH_ENABLED=true
-LOCAL_CODER_MICROSOFT_LEARN_MCP_URL=https://learn.microsoft.com/api/mcp?maxTokenBudget=2400
-```
-
-Optional generic search:
-
-```text
-LOCAL_CODER_SEARXNG_URL=http://<trusted-instance>
-```
-
-## Shared control-plane configuration
-
-Mac source of truth:
-
-```text
-~/.local-coder-mcp/control-plane.json
-```
-
-New writes never persist the Windows worker bearer token inline; secure installs use a credential reference. Legacy v0.14 inline-token configuration remains readable for migration compatibility.
-
-## Claude / MCP setup
-
-On Mac:
-
-```bash
-npm run install:claude:worker -- --host <WINDOWS_MESHNET_IP>
-npm run install:routing
-npm run install:claude-token-saver
-```
-
-Preferred engineering entrypoint: **`local_engineer`**.
-
-Claude routing principle:
-
-```text
-normal engineering
-  → Local Coder first
-
-local success
-  → present the Local Coder result; do not redo it
-
-material decision
-  → elicitation or a tiny question bridge
-
-unresolved external fact / genuinely premium judgment
-  → compact escalation only
-```
-
-## Execution modes
-
-| Mode | Behavior |
-| --- | --- |
-| `local` | Ollama + repository execution on the same machine. |
-| `remote` | Authenticated remote worker required; no silent Mac fallback. |
-| `auto` | Prefer remote local-compute worker and fall back to Mac Ollama when allowed. |
-
-```text
-LOCAL_CODER_EXECUTION_MODE=local|remote|auto
-```
-
-Project-aware multi-provider routing is a separate layer above this local-compute topology.
-
 ## Eval suite
 
 Local Agent Runtime eval:
@@ -279,9 +245,7 @@ Multi-provider comparative eval dry-run:
 npm run eval:providers
 ```
 
-The comparative harness can run the same repository tasks against local Qwen, configured Anthropic models, configured OpenAI models, and Auto Router from identical detached Git worktrees. It reports expectation pass rate, engineering quality, elapsed time, routing/provider/model attempts, fallbacks, token usage, known/unknown cost, changed files, and deterministic validation outcomes.
-
-Persistent quality-profile updates are explicit opt-in and require sufficient successful full-task evidence. Transport success is tracked separately as reliability and is not treated as engineering quality.
+The comparative harness can run the same repository tasks against local Qwen, configured Anthropic models, configured OpenAI models and Auto Router from identical detached Git worktrees. It reports expectation pass rate, engineering quality, elapsed time, routing/provider/model attempts, fallbacks, token usage, known/unknown cost, changed files and deterministic validation outcomes.
 
 See [docs/COMPARATIVE_EVALS.md](docs/COMPARATIVE_EVALS.md) and [docs/ROUTER_CALIBRATION.md](docs/ROUTER_CALIBRATION.md).
 
@@ -305,11 +269,9 @@ See [docs/COMPARATIVE_EVALS.md](docs/COMPARATIVE_EVALS.md) and [docs/ROUTER_CALI
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the authoritative current checklist.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the current product checklist.
 
-The current standalone multi-provider product sequence now includes desktop packaging, end-to-end cancellation, opt-in cloud smoke validation, persisted Auto Router calibration, comparative provider evals, and signed/notarized release hardening. A real signed distribution artifact still requires your Apple Developer signing/notarization secrets, and live Anthropic/OpenAI smoke/eval execution requires the corresponding provider credentials.
-
-Repo Impact Graph / GraphRAG, broader multi-worker scheduling, automatic updates, and signed release delivery automation beyond the current manual verified workflow remain post-MVP candidates.
+The product direction is the standalone macOS application. Automatic updates, broader multi-worker scheduling, Repo Impact Graph / GraphRAG and release-delivery automation remain post-MVP candidates.
 
 ## License
 

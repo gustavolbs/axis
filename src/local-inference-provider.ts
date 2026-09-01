@@ -29,11 +29,11 @@ export type LocalInferenceLabel =
   | 'windows-worker-with-mac-fallback';
 
 /**
- * One source of truth for what "local inference" means from the Mac control plane.
+ * One source of truth for what local inference means to the standalone app.
  * In remote mode the provider still has kind=local because source code never leaves the
  * user's machines; only the compute host moves to the authenticated Windows worker.
  */
-export function createControlPlaneLocalProvider(
+export function createLocalInferenceProvider(
   config: LocalCoderConfig,
   ollama: OllamaClient,
   remoteClient?: RemoteLocalProviderClient
