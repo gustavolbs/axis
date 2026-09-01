@@ -347,6 +347,8 @@ export class StandaloneJobManager {
     this.schedulePersist();
     await this.persistTail;
     return true;
+  }
+
   async followUp(id: string, message: string): Promise<StandaloneJobSnapshot> {
     const job = this.requireJob(id);
     if (job.input.interactionMode !== 'chat') {
