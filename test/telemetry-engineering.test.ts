@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { TelemetryStore } from '../src/telemetry.js';
 
-test('summarizes local-engineer success, Claude escalation and repair rounds', async () => {
+test('summarizes local-engineer success, guidance checkpoint and repair rounds', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'local-coder-engineering-telemetry-'));
   const filePath = path.join(directory, 'telemetry.jsonl');
 

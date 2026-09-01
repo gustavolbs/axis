@@ -48,7 +48,7 @@ async function withWorkspace(run: (workspace: string) => Promise<void>) {
   }
 }
 
-test('executes Claude-decomposed tasks in dependency order and returns one plan diff', async () => {
+test('executes planner-decomposed tasks in dependency order and returns one plan diff', async () => {
   await withWorkspace(async (workspace) => {
     await fs.writeFile(
       path.join(workspace, 'verify.cjs'),
@@ -143,7 +143,7 @@ test('preflight escalates tasks that still require architecture without calling 
     assert.equal(result.status, 'escalated');
     assert.equal(result.phase, 'preflight');
     assert.equal(result.taskResults.length, 0);
-    assert.ok(result.blockers.some((blocker) => blocker.includes('must stay in Claude')));
+    assert.ok(result.blockers.some((blocker) => blocker.includes('requires guidance before bounded execution')));
     assert.equal(calls, 0);
     assert.equal(await fs.readFile(path.join(workspace, 'src/a.ts'), 'utf8'), 'export const a = 1;\n');
   });

@@ -198,7 +198,7 @@ test('investigates, plans, codes and adversarially reviews a bounded goal locall
   });
 });
 
-test('returns a compact Claude research handoff before any mutation when planning cannot converge', async () => {
+test('returns a compact external research guidance checkpoint before any mutation when planning cannot converge', async () => {
   await withWorkspace(async (workspace, stateRoot) => {
     const model = new FakeModel([
       investigation(),
@@ -233,7 +233,7 @@ test('returns a compact Claude research handoff before any mutation when plannin
   });
 });
 
-test('rolls implementation back when adversarial local review requires Claude', async () => {
+test('rolls implementation back when adversarial local review requires guidance', async () => {
   await withWorkspace(async (workspace, stateRoot) => {
     const model = new FakeModel([
       investigation(),

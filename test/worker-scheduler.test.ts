@@ -19,7 +19,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
   }
 }
 
-test('queues independent Claude-session jobs sequentially by default', async () => {
+test('queues independent app-session jobs sequentially by default', async () => {
   const scheduler = new WorkerScheduler(1);
   const firstGate = deferred();
   const order: string[] = [];

@@ -388,7 +388,7 @@ async function handleEngineer(body: unknown, response: ServerResponse): Promise<
       });
       await history.appendEvent(job.id, {
         type: 'request',
-        title: 'local_engineer request',
+        title: 'engineering request',
         data: {
           goal: request.input.goal,
           context: request.input.context ?? null,

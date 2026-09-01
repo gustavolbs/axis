@@ -23,7 +23,7 @@ test('persists run metadata, prompts, outputs, progress and failures as a readab
     });
     await store.appendEvent(id, {
       type: 'request',
-      title: 'local_engineer request',
+      title: 'engineering request',
       data: { goal: 'Improve one small test safely.' }
     });
     await store.recordProgress(id, {
