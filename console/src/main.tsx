@@ -16,6 +16,7 @@ import './claude-reference-overrides.css';
 import './ui-select.css';
 import './settings-panels.css';
 import './audit-v2.css';
+import './audit-v2-components.css';
 
 const storedTheme = localStorage.getItem('local-coder.theme');
 const theme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : 'system';
