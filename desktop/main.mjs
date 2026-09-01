@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,10 +14,6 @@ import {
   shell
 } from 'electron';
 
-const HOST = '127.0.0.1';
-const DEFAULT_PORT = 7557;
-const STARTUP_TIMEOUT_MS = 15_000;
-const PROBE_TIMEOUT_MS = 1_200;
 const DEFAULT_WINDOW_WIDTH = 1280;
 const DEFAULT_WINDOW_HEIGHT = 840;
 const MIN_WINDOW_WIDTH = 760;
@@ -27,10 +22,9 @@ const WINDOW_STATE_FILE = 'window-state.json';
 const SAVE_BOUNDS_DEBOUNCE_MS = 180;
 
 let mainWindow;
-let backendChild;
-let ownsBackend = false;
+let appRuntime;
+let unsubscribeRuntime;
 let quitting = false;
-let backendUrl;
 let saveBoundsTimer;
 
 function log(message, detail) {
@@ -47,37 +41,12 @@ log('main module loaded', {
 app.once('will-finish-launching', () => log('will-finish-launching'));
 app.once('ready', () => log('ready event received'));
 
-function configuredPort() {
-  const raw = process.env.LOCAL_CODER_CONSOLE_PORT?.trim();
-  if (!raw) return DEFAULT_PORT;
-  const port = Number.parseInt(raw, 10);
-  return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : DEFAULT_PORT;
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function probeLocalCoder(url) {
-  try {
-    const response = await fetch(`${url}/api/jobs`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
-    });
-    if (!response.ok) return false;
-    const body = await response.json();
-    return Boolean(body && typeof body === 'object' && Array.isArray(body.jobs));
-  } catch {
-    return false;
-  }
-}
-
-function backendScript() {
-  return path.join(app.getAppPath(), 'dist', 'standalone-console.js');
-}
-
 function preloadScript() {
   return path.join(app.getAppPath(), 'desktop', 'preload.cjs');
+}
+
+function rendererEntry() {
+  return path.join(app.getAppPath(), 'app-dist', 'index.html');
 }
 
 function windowStatePath() {
@@ -158,11 +127,7 @@ function persistWindowState(window) {
     fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     fs.renameSync(temp, target);
   } catch {
-    try {
-      fs.rmSync(temp, { force: true });
-    } catch {
-      // Window state persistence is best-effort only.
-    }
+    try { fs.rmSync(temp, { force: true }); } catch { /* best effort */ }
   }
 }
 
@@ -172,77 +137,6 @@ function scheduleWindowStateSave(window) {
     saveBoundsTimer = undefined;
     persistWindowState(window);
   }, SAVE_BOUNDS_DEBOUNCE_MS);
-}
-
-async function stopOwnedBackend() {
-  const child = backendChild;
-  backendChild = undefined;
-  if (!child || !ownsBackend || child.killed) return;
-  ownsBackend = false;
-  child.kill('SIGTERM');
-  await Promise.race([
-    new Promise((resolve) => child.once('exit', resolve)),
-    delay(2_000)
-  ]);
-  if (!child.killed && child.exitCode === null) child.kill('SIGKILL');
-}
-
-async function startControlPlane() {
-  const port = configuredPort();
-  const url = `http://${HOST}:${port}`;
-
-  if (await probeLocalCoder(url)) {
-    ownsBackend = false;
-    backendUrl = url;
-    log('using existing control plane', url);
-    return url;
-  }
-
-  const child = spawn(process.execPath, [backendScript()], {
-    cwd: app.getPath('home'),
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
-      LOCAL_CODER_CONSOLE_HOST: HOST,
-      LOCAL_CODER_CONSOLE_PORT: String(port)
-    },
-    stdio: app.isPackaged ? 'ignore' : 'inherit',
-    windowsHide: true
-  });
-  backendChild = child;
-  ownsBackend = true;
-  log('starting control plane', { pid: child.pid, url });
-
-  let exit;
-  child.once('exit', (code, signal) => {
-    exit = { code, signal };
-    log('control plane exited', exit);
-  });
-
-  const deadline = Date.now() + STARTUP_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (await probeLocalCoder(url)) {
-      backendUrl = url;
-      log('control plane ready', url);
-      child.once('exit', () => {
-        if (!quitting && ownsBackend) void recoverBackendAfterExit();
-      });
-      return url;
-    }
-    if (exit) {
-      ownsBackend = false;
-      backendChild = undefined;
-      throw new Error(
-        `Local Coder control plane exited before startup (code ${exit.code ?? 'unknown'}, signal ${exit.signal ?? 'none'}).`
-      );
-    }
-    await delay(180);
-  }
-
-  await stopOwnedBackend();
-  throw new Error(
-    `Local Coder control plane did not become ready on ${url}. The port may be occupied by another process.`
-  );
 }
 
 function openExternalIfSafe(target) {
@@ -256,29 +150,24 @@ function openExternalIfSafe(target) {
   }
 }
 
-function restrictRenderer(window, baseUrl) {
-  const allowedOrigin = new URL(baseUrl).origin;
+function restrictRenderer(window) {
   window.webContents.setWindowOpenHandler(({ url }) => {
     openExternalIfSafe(url);
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event, target) => {
-    try {
-      if (new URL(target).origin === allowedOrigin) return;
-    } catch {
-      // Deny malformed/non-URL navigation below.
-    }
+    if (target.startsWith('file:')) return;
     event.preventDefault();
     openExternalIfSafe(target);
   });
 }
 
-function installRendererDiagnostics(window, url) {
-  window.webContents.on('did-start-loading', () => log('renderer loading', url));
+function installRendererDiagnostics(window) {
+  window.webContents.on('did-start-loading', () => log('renderer loading'));
   window.webContents.on('did-finish-load', () => log('renderer loaded', window.webContents.getURL()));
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame) return;
-    const detail = `${errorDescription} (${errorCode}) while loading ${validatedURL || url}`;
+    const detail = `${errorDescription} (${errorCode}) while loading ${validatedURL || rendererEntry()}`;
     console.error(`[Local Coder desktop] renderer load failed: ${detail}`);
     if (!window.isDestroyed()) {
       void dialog.showMessageBox(window, {
@@ -338,7 +227,7 @@ function installApplicationMenu() {
       }]
     : [];
 
-  const template = [
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...appMenu,
     {
       label: 'File',
@@ -362,12 +251,12 @@ function installApplicationMenu() {
       ]
     },
     { role: 'windowMenu' }
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  ]));
 }
 
-function installNativeBridge() {
+function installNativeBridge(runtime) {
   for (const channel of [
+    'local-coder:runtime-request',
     'local-coder:pick-directory',
     'local-coder:set-theme',
     'local-coder:get-profile',
@@ -375,6 +264,7 @@ function installNativeBridge() {
     'local-coder:set-open-at-login'
   ]) ipcMain.removeHandler(channel);
 
+  ipcMain.handle('local-coder:runtime-request', async (_event, request) => await runtime.request(request));
   ipcMain.handle('local-coder:pick-directory', async (event, defaultPath) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
     const result = await dialog.showOpenDialog(owner, {
@@ -384,7 +274,6 @@ function installNativeBridge() {
     });
     return result.canceled ? null : result.filePaths[0] ?? null;
   });
-
   ipcMain.handle('local-coder:set-theme', (_event, source) => {
     const next = source === 'light' || source === 'dark' ? source : 'system';
     nativeTheme.themeSource = next;
@@ -402,6 +291,13 @@ function installNativeBridge() {
     return { openAtLogin: app.getLoginItemSettings().openAtLogin };
   });
 
+  unsubscribeRuntime?.();
+  unsubscribeRuntime = runtime.subscribe((event) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('local-coder:runtime-event', event);
+    }
+  });
+
   nativeTheme.on('updated', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('local-coder:theme-changed', nativeTheme.shouldUseDarkColors);
@@ -409,7 +305,7 @@ function installNativeBridge() {
   });
 }
 
-function createMainWindow(url) {
+function createMainWindow() {
   const restored = normalizedWindowState(readWindowState());
   const window = new BrowserWindow({
     x: restored.x,
@@ -434,8 +330,8 @@ function createMainWindow(url) {
     }
   });
 
-  restrictRenderer(window, url);
-  installRendererDiagnostics(window, url);
+  restrictRenderer(window);
+  installRendererDiagnostics(window);
   window.on('resize', () => scheduleWindowStateSave(window));
   window.on('move', () => scheduleWindowStateSave(window));
   window.on('maximize', () => scheduleWindowStateSave(window));
@@ -458,10 +354,10 @@ function createMainWindow(url) {
   if (restored.maximized) window.maximize();
   log('window created', window.getBounds());
 
-  window.loadURL(url).catch((error) => {
+  window.loadFile(rendererEntry()).catch((error) => {
     showWindow();
     const message = error instanceof Error ? error.stack || error.message : String(error);
-    console.error('[Local Coder desktop] loadURL rejected', message);
+    console.error('[Local Coder desktop] loadFile rejected', message);
     if (!window.isDestroyed()) {
       void dialog.showMessageBox(window, {
         type: 'error',
@@ -473,7 +369,7 @@ function createMainWindow(url) {
         cancelId: 1,
         noLink: true
       }).then(({ response }) => {
-        if (response === 0 && !window.isDestroyed()) void window.loadURL(url);
+        if (response === 0 && !window.isDestroyed()) void window.loadFile(rendererEntry());
         else app.quit();
       });
     }
@@ -481,57 +377,9 @@ function createMainWindow(url) {
   return window;
 }
 
-async function startWithRecovery() {
-  while (!quitting) {
-    try {
-      return await startControlPlane();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error('[Local Coder desktop] control plane startup failed', message);
-      const { response } = await dialog.showMessageBox({
-        type: 'error',
-        title: 'Local Coder could not start',
-        message: 'The local control plane is unavailable.',
-        detail: `${message}\n\nResolve the port/control-plane issue and choose Retry.`,
-        buttons: ['Retry', 'Quit'],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true
-      });
-      if (response !== 0) return undefined;
-    }
-  }
-  return undefined;
-}
-
-async function recoverBackendAfterExit() {
-  if (quitting) return;
-  ownsBackend = false;
-  backendChild = undefined;
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: 'error',
-    title: 'Local Coder control plane stopped',
-    message: 'The Local Coder backend exited unexpectedly.',
-    detail: 'Restart the local control plane and reload this session?',
-    buttons: ['Restart', 'Quit'],
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true
-  });
-  if (response !== 0) {
-    app.quit();
-    return;
-  }
-  const url = await startWithRecovery();
-  if (!url) {
-    app.quit();
-    return;
-  }
-  backendUrl = url;
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    restrictRenderer(mainWindow, url);
-    await mainWindow.loadURL(url);
-  }
+async function createRuntime() {
+  const runtimeModule = await import('../dist/app-runtime.js');
+  return await runtimeModule.DesktopAppRuntime.create();
 }
 
 app.on('before-quit', () => {
@@ -541,7 +389,9 @@ app.on('before-quit', () => {
     saveBoundsTimer = undefined;
   }
   persistWindowState(mainWindow);
-  void stopOwnedBackend();
+  unsubscribeRuntime?.();
+  unsubscribeRuntime = undefined;
+  void appRuntime?.close();
 });
 
 app.on('window-all-closed', () => {
@@ -549,7 +399,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  if (!mainWindow && backendUrl) mainWindow = createMainWindow(backendUrl);
+  if (!mainWindow && appRuntime && !quitting) mainWindow = createMainWindow();
 });
 
 async function initializeDesktop() {
@@ -557,36 +407,28 @@ async function initializeDesktop() {
   log('Electron ready', { packaged: app.isPackaged, version: process.versions.electron });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
-  installNativeBridge();
-  installApplicationMenu();
 
   if (process.platform !== 'darwin') {
-    log('requesting explicit single-instance lock');
     const hasSingleInstanceLock = app.requestSingleInstanceLock();
-    log('single-instance lock result', { acquired: hasSingleInstanceLock });
     if (!hasSingleInstanceLock) {
-      log('another Local Coder desktop instance already owns the single-instance lock');
       app.quit();
       return;
     }
     app.on('second-instance', () => {
-      log('second instance requested; focusing existing window');
       if (!mainWindow) return;
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.focus();
     });
-  } else {
-    log('macOS startup: relying on Launch Services for normal app single-instance behavior');
   }
 
-  const url = await startWithRecovery();
-  if (!url) {
-    app.quit();
-    return;
-  }
-  backendUrl = url;
-  mainWindow = createMainWindow(url);
+  log('starting app runtime');
+  appRuntime = await createRuntime();
+  installNativeBridge(appRuntime);
+  installApplicationMenu();
+  log('app runtime ready');
+
+  mainWindow = createMainWindow();
   mainWindow.on('closed', () => {
     mainWindow = undefined;
   });
