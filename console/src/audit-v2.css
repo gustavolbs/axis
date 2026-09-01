@@ -1,0 +1,207 @@
+:root {
+  --lc-titlebar-h: 52px;
+  --lc-bg: #1f1e1b;
+  --lc-sidebar: #191815;
+  --lc-surface-1: #24231f;
+  --lc-surface-2: #2c2a26;
+  --lc-surface-3: #37342f;
+  --lc-border: #45413a;
+  --lc-border-strong: #5d574e;
+  --lc-text: #eeeae2;
+  --lc-text-soft: #c9c3b8;
+  --lc-muted: #aaa398;
+  --lc-faint: #817a70;
+  --lc-accent: #d97757;
+  --lc-accent-hover: #e18464;
+  --lc-negative: #d66b62;
+}
+
+html, body, #root { min-height: 100%; background: var(--lc-bg); }
+body { overflow: hidden; }
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--lc-border-strong) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--lc-border-strong); border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.reference-app-shell { background: var(--lc-bg); }
+.reference-sidebar {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100dvh !important;
+  overflow-x: clip !important;
+  background: var(--lc-sidebar) !important;
+}
+.reference-sidebar-scroll { flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; }
+.reference-sidebar-footer { margin-top: auto !important; flex: 0 0 auto !important; }
+.reference-sidebar-resizer {
+  right: 0 !important;
+  width: 4px !important;
+  transform: none !important;
+  cursor: col-resize !important;
+}
+.reference-sidebar-titlebar { padding: 0 10px !important; -webkit-app-region: drag; }
+.reference-sidebar-titlebar button,
+.reference-sidebar-titlebar a,
+.reference-sidebar-titlebar input { -webkit-app-region: no-drag; }
+[data-shell='electron'][data-platform='darwin'] .reference-sidebar-titlebar { padding-left: 76px !important; }
+[data-shell='electron'][data-platform='darwin'] .sidebar-collapsed .reference-sidebar { width: 78px !important; }
+[data-shell='electron'][data-platform='darwin'] .sidebar-collapsed .reference-sidebar-titlebar {
+  min-height: var(--lc-titlebar-h);
+  padding: 0 !important;
+}
+[data-shell='electron'][data-platform='darwin'] .sidebar-collapsed .reference-sidebar-collapse { display: none !important; }
+.sidebar-collapsed .reference-sidebar-footer { margin-top: auto !important; }
+.sidebar-collapsed .reference-account-row { display: grid !important; place-items: center; min-height: 44px; }
+.sidebar-collapsed .reference-account-avatar { display: grid !important; margin-inline: auto !important; }
+.sidebar-collapsed .reference-account-row > span:last-child { display: none !important; }
+.sidebar-collapsed .reference-sidebar-footer > button > span { display: none !important; }
+
+.reference-primary-nav > button,
+.reference-sidebar-footer > button,
+.settings-rail > button {
+  background: transparent !important;
+  color: var(--lc-text-soft) !important;
+}
+.reference-primary-nav > button:hover,
+.reference-sidebar-footer > button:hover,
+.settings-rail > button:hover { background: var(--lc-surface-2) !important; color: var(--lc-text) !important; }
+.reference-primary-nav > button.active,
+.settings-rail > button.active { background: var(--lc-surface-3) !important; color: var(--lc-text) !important; font-weight: 500 !important; }
+.reference-primary-nav > button.active:hover,
+.settings-rail > button.active:hover { background: var(--lc-surface-3) !important; }
+.reference-primary-nav > button[data-tooltip] { position: relative; }
+.sidebar-collapsed .reference-primary-nav > button[data-tooltip]::after,
+.sidebar-collapsed .reference-sidebar-footer > button[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 80;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  padding: 6px 8px;
+  border: 1px solid var(--lc-border);
+  border-radius: 6px;
+  background: var(--lc-surface-3);
+  color: var(--lc-text);
+  font-size: 12px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.28);
+  transition: opacity 120ms ease 400ms;
+}
+.sidebar-collapsed .reference-primary-nav > button[data-tooltip]:hover::after,
+.sidebar-collapsed .reference-sidebar-footer > button[data-tooltip]:hover::after { opacity: 1; }
+.reference-sidebar-section-title,
+.reference-recent-label { font-size: 12px !important; font-weight: 500 !important; }
+
+:where(button, a, input, textarea):focus-visible {
+  outline: 2px solid var(--lc-accent) !important;
+  outline-offset: 2px;
+}
+.reference-sidebar :where(button, a):focus-visible { outline-offset: 1px; }
+.reference-content-shell .claude-prompt-input:focus,
+.reference-content-shell .claude-prompt-input:focus-visible { outline: none !important; box-shadow: none !important; }
+.reference-content-shell .claude-composer:focus-within {
+  border-color: var(--lc-border-strong) !important;
+  box-shadow: 0 0 0 3px rgba(217,119,87,.18), 0 2px 8px rgba(0,0,0,.16) !important;
+}
+
+.reference-content-shell .claude-agent-shell { height: 100dvh !important; min-height: 0 !important; }
+.reference-content-shell .claude-thread-pane {
+  min-height: 0 !important;
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  padding-top: var(--lc-titlebar-h) !important;
+  padding-bottom: 22px !important;
+}
+.reference-content-shell .claude-empty-start { flex: 0 0 auto !important; align-self: center !important; padding: 0 24px 26px !important; }
+.reference-content-shell .claude-composer-wrap { flex: 0 0 auto !important; align-self: stretch !important; }
+.reference-content-shell .claude-thread { flex: 1 1 auto !important; min-height: 0 !important; }
+.reference-content-shell .claude-prompt-input { resize: none !important; overflow-y: auto !important; max-height: min(320px, 40vh) !important; }
+
+.claude-popover {
+  max-height: min(360px, calc(100vh - var(--lc-titlebar-h) - 180px)) !important;
+  overflow-y: auto !important;
+}
+.composer-menu-anchor { position: relative !important; }
+.reference-content-shell .project-popover,
+.reference-content-shell .composer-add-popover { left: 0 !important; bottom: calc(100% + 6px) !important; }
+.reference-content-shell .model-popover { right: 0 !important; bottom: calc(100% + 6px) !important; }
+
+.reference-projects-page,
+.runs-shell { max-width: 1080px !important; margin-inline: auto !important; padding-inline: 40px !important; }
+.settings-content { padding: 32px 40px !important; }
+.settings-simple-page,
+.settings-panel-page { padding: 0 !important; }
+.global-search-backdrop { padding-left: var(--ref-sidebar-width, 250px) !important; }
+.sidebar-collapsed ~ .global-search-backdrop,
+.sidebar-collapsed .global-search-backdrop { padding-left: 56px !important; }
+
+.reference-projects-header { display: flex !important; flex-wrap: wrap !important; gap: 12px !important; align-items: center !important; }
+.reference-project-actions { display: flex !important; flex-wrap: wrap !important; gap: 10px !important; margin-left: auto !important; }
+.reference-project-search { flex: 1 1 240px !important; min-width: 0 !important; }
+
+.reference-primary-button,
+.btn-primary {
+  background: var(--lc-accent) !important;
+  color: #fff !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  padding: 8px 14px !important;
+  font-weight: 500 !important;
+}
+.reference-primary-button:hover,
+.btn-primary:hover { background: var(--lc-accent-hover) !important; }
+.reference-primary-button:disabled,
+.btn-primary:disabled { background: var(--lc-surface-3) !important; color: var(--lc-faint) !important; }
+.reference-modal-actions > button:not(.reference-primary-button),
+.btn-secondary {
+  background: transparent !important;
+  color: var(--lc-text-soft) !important;
+  border: 1px solid var(--lc-border) !important;
+  border-radius: 8px !important;
+  padding: 8px 14px !important;
+}
+.reference-modal-actions > button:not(.reference-primary-button):hover,
+.btn-secondary:hover { background: var(--lc-surface-2) !important; }
+
+.reference-modal-optional small { margin-left: 6px; color: var(--lc-faint) !important; font-size: 11px !important; font-weight: 400 !important; }
+.reference-modal-optional small::before { content: '('; }
+.reference-modal-optional small::after { content: ')'; }
+
+.theme-preview.theme-system { position: relative; overflow: hidden; background: #f7f6f2 !important; }
+.theme-preview.theme-system::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: #1f1e1b;
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
+.reference-projects-page h1,
+.runs-header h1,
+.settings-content h1 { font-family: Charter, 'Iowan Old Style', 'Palatino Linotype', Georgia, serif !important; font-size: 30px !important; font-weight: 400 !important; letter-spacing: -.01em !important; }
+.reference-project-modal h2 { font-family: Inter, ui-sans-serif, system-ui, sans-serif !important; font-size: 18px !important; font-weight: 500 !important; }
+.eyebrow { text-transform: none !important; letter-spacing: 0 !important; font-size: 13px !important; font-weight: 500 !important; color: var(--lc-muted) !important; }
+.status-pill { text-transform: none !important; letter-spacing: 0 !important; }
+
+@media (max-width: 900px) {
+  .reference-app-shell.auto-sidebar-collapsed { --ref-sidebar-width: 56px !important; }
+  [data-shell='electron'][data-platform='darwin'].reference-app-shell.auto-sidebar-collapsed { --ref-sidebar-width: 78px !important; }
+  .reference-app-shell.auto-sidebar-collapsed .reference-sidebar-scroll,
+  .reference-app-shell.auto-sidebar-collapsed .reference-product-mark strong,
+  .reference-app-shell.auto-sidebar-collapsed .reference-primary-nav span,
+  .reference-app-shell.auto-sidebar-collapsed .reference-primary-nav kbd,
+  .reference-app-shell.auto-sidebar-collapsed .reference-sidebar-footer > button > span { display: none !important; }
+  .reference-app-shell.auto-sidebar-collapsed .reference-sidebar-footer { margin-top: auto !important; }
+  .reference-projects-page,
+  .runs-shell { padding-inline: 20px !important; }
+  .settings-content { padding: 24px !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
