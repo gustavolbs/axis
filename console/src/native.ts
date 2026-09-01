@@ -20,9 +20,11 @@ export interface LocalCoderBridge {
 declare global {
   interface Window {
     localCoder?: LocalCoderBridge;
+    /** Temporary renderer migration alias; not a separate runtime surface. */
+    lc?: LocalCoderBridge;
   }
 }
 
 export function desktopBridge(): LocalCoderBridge | undefined {
-  return window.localCoder;
+  return window.localCoder ?? window.lc;
 }
