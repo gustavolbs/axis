@@ -11,7 +11,8 @@ const consoleDist = path.join(root, 'console-dist');
 const sizes = [[760, 560], [900, 640], [1120, 720], [1440, 900]];
 const zoomFactors = [0.8, 1, 1.25, 1.5];
 const surfaces = [
-  { label: 'Agent', nav: 'Chats', selector: '.claude-agent-shell' },
+  { label: 'Agent', nav: 'New chat', selector: '.claude-agent-shell' },
+  { label: 'Chats', nav: 'Chats', selector: '.chat-history-page' },
   { label: 'Projects', nav: 'Projects', selector: '.reference-projects-page' },
   { label: 'Runs', nav: 'Runs', selector: '.runs-shell' }
 ];
@@ -73,6 +74,7 @@ function staticServer() {
     if (pathname === `/api/projects/${smokeProject.id}/usage`) return sendJson(response, { usage: emptyUsage });
     if (pathname === '/api/providers') return sendJson(response, { providers: smokeCatalog.providers.map((provider) => ({ id: provider.id, kind: provider.kind, builtIn: true, settings: { enabled: true, defaultModelId: provider.models[0].id, models: {} }, credentials: [], pricing: {} })) });
     if (pathname === '/api/credentials') return sendJson(response, { credentials: [] });
+    if (pathname === '/api/fs/exists') return sendJson(response, { exists: true, resolvedPath: '/tmp/local-coder-smoke' });
     if (pathname === '/api/events') {
       response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
       response.write('event: jobs\ndata: []\n\n');
