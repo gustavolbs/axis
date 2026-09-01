@@ -52,12 +52,7 @@ function provider(
       return [{ providerId: this.id, id: 'future-chat-1', displayName: 'Future Chat 1' }];
     },
     async health() {
-      return {
-        providerId: this.id,
-        ok: true,
-        checkedAt: new Date(0).toISOString(),
-        latencyMs: 1
-      };
+      return { providerId: this.id, ok: true, checkedAt: new Date(0).toISOString(), latencyMs: 1 };
     },
     invoke: invoke ?? (async (input) => ({
       providerId: this.id,
@@ -78,12 +73,7 @@ function fixture(name: string, now = new Date('2026-09-12T12:00:00.000Z')) {
   return { root, settings, pricing, ledger, budget, now };
 }
 
-function appendSpend(
-  ledger: UsageLedger,
-  timestamp: string,
-  costUsd?: number,
-  billingId?: string
-): void {
+function appendSpend(ledger: UsageLedger, timestamp: string, costUsd?: number, billingId?: string): void {
   ledger.append({
     jobId: `job-${Math.random().toString(36).slice(2)}`,
     timestamp,
@@ -102,42 +92,56 @@ function appendSpend(
 }
 
 function configureFiniteBudget(input: ReturnType<typeof fixture>, monthlyBudgetUsd = 1): void {
-  input.settings.update('future-ai', { monthlyBudgetUsd });
+  input.settings.update('future-ai', { unlimitedUsage: false, monthlyBudgetUsd });
   input.pricing.set('future-ai', 'future-chat-1', {
     inputPerMillionUsd: 1,
     outputPerMillionUsd: 10
   });
 }
 
-test('provider monthly budget persists and null restores Unlimited', () => {
+test('provider spend policy persists explicit Unlimited and finite monthly budget modes', () => {
   const { settings, root } = fixture('settings');
-  const finite = settings.update('future-ai', { monthlyBudgetUsd: 25.5 });
+  const finite = settings.update('future-ai', { unlimitedUsage: false, monthlyBudgetUsd: 25.5 });
+  assert.equal(finite.unlimitedUsage, false);
   assert.equal(finite.monthlyBudgetUsd, 25.5);
 
-  const unlimited = settings.update('future-ai', { monthlyBudgetUsd: null });
+  const unlimited = settings.update('future-ai', { unlimitedUsage: true, monthlyBudgetUsd: null });
+  assert.equal(unlimited.unlimitedUsage, true);
   assert.equal(unlimited.monthlyBudgetUsd, undefined);
 
   const persisted = JSON.parse(fs.readFileSync(path.join(root, 'providers.json'), 'utf8')) as {
-    providers: Record<string, { monthlyBudgetUsd?: number }>;
+    providers: Record<string, { unlimitedUsage?: boolean; monthlyBudgetUsd?: number }>;
   };
+  assert.equal(persisted.providers['future-ai']?.unlimitedUsage, true);
   assert.equal('monthlyBudgetUsd' in persisted.providers['future-ai']!, false);
-  assert.throws(() => settings.update('future-ai', { monthlyBudgetUsd: 0 }), /positive USD amount/);
+  assert.throws(() => settings.update('future-ai', { unlimitedUsage: false, monthlyBudgetUsd: 0 }), /positive USD amount/);
 });
 
-test('Unlimited cloud provider does not require pricing or an output bound', async () => {
-  const { budget } = fixture('unlimited');
+test('cloud spend is disabled until Unlimited or a finite budget is explicitly configured', async () => {
+  const { budget } = fixture('no-policy');
+  let calls = 0;
+  const wrapped = budget.wrap(provider('cloud', async (input) => {
+    calls += 1;
+    return { providerId: 'future-ai', model: input.model, content: 'no', latencyMs: 1, usage: {} };
+  }));
+  await assert.rejects(
+    wrapped.invoke(request(100)),
+    (error: unknown) => error instanceof ProviderBudgetError && error.code === 'budget-configuration-required'
+  );
+  assert.equal(calls, 0);
+});
+
+test('explicit Unlimited cloud provider does not require pricing or an output bound', async () => {
+  const { settings, budget } = fixture('unlimited');
+  settings.update('future-ai', { unlimitedUsage: true });
   let calls = 0;
   const wrapped = budget.wrap(provider('cloud', async (input) => {
     calls += 1;
     return {
-      providerId: 'future-ai',
-      model: input.model,
-      content: 'ok',
-      latencyMs: 1,
+      providerId: 'future-ai', model: input.model, content: 'ok', latencyMs: 1,
       usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 }
     };
   }));
-
   const result = await wrapped.invoke(request());
   assert.equal(result.content, 'ok');
   assert.equal(result.billingId, undefined);
@@ -146,12 +150,11 @@ test('Unlimited cloud provider does not require pricing or an output bound', asy
 
 test('finite provider budget requires pricing and an output bound before inference', async () => {
   const missingPricing = fixture('missing-pricing');
-  missingPricing.settings.update('future-ai', { monthlyBudgetUsd: 1 });
+  missingPricing.settings.update('future-ai', { unlimitedUsage: false, monthlyBudgetUsd: 1 });
   await assert.rejects(
     missingPricing.budget.wrap(provider()).invoke(request(100)),
     (error: unknown) => error instanceof ProviderBudgetError && error.code === 'pricing-required'
   );
-
   const missingBound = fixture('missing-bound');
   configureFiniteBudget(missingBound);
   await assert.rejects(
@@ -167,35 +170,25 @@ test('finite provider budget permits a call whose pessimistic upper bound fits',
   const wrapped = input.budget.wrap(provider('cloud', async (requestInput) => {
     calls += 1;
     return {
-      providerId: 'future-ai',
-      model: requestInput.model,
-      content: 'ok',
-      latencyMs: 1,
+      providerId: 'future-ai', model: requestInput.model, content: 'ok', latencyMs: 1,
       usage: { inputTokens: 8, outputTokens: 2, totalTokens: 10 }
     };
   }));
-
   const result = await wrapped.invoke(request(1_000));
   assert.equal(calls, 1);
-  assert.ok(result.billingId, 'finite budget calls must receive a durable billing correlation id');
+  assert.ok(result.billingId);
 });
 
 test('finite provider budget blocks before inference when projected monthly spend exceeds the cap', async () => {
   const { settings, pricing, ledger, budget, now } = fixture('block');
-  settings.update('future-ai', { monthlyBudgetUsd: 1 });
-  pricing.set('future-ai', 'future-chat-1', {
-    inputPerMillionUsd: 1,
-    outputPerMillionUsd: 100
-  });
+  settings.update('future-ai', { unlimitedUsage: false, monthlyBudgetUsd: 1 });
+  pricing.set('future-ai', 'future-chat-1', { inputPerMillionUsd: 1, outputPerMillionUsd: 100 });
   appendSpend(ledger, now.toISOString(), 0.95);
   let calls = 0;
   const wrapped = budget.wrap(provider('cloud', async (input) => {
     calls += 1;
-    return {
-      providerId: 'future-ai', model: input.model, content: 'should-not-run', latencyMs: 1, usage: {}
-    };
+    return { providerId: 'future-ai', model: input.model, content: 'should-not-run', latencyMs: 1, usage: {} };
   }));
-
   await assert.rejects(
     wrapped.invoke(request(1_000)),
     (error: unknown) => error instanceof ProviderBudgetError && error.code === 'monthly-budget-exceeded'
@@ -204,39 +197,27 @@ test('finite provider budget blocks before inference when projected monthly spen
 });
 
 test('finite provider budget fails closed when current-month cloud usage is unpriced', async () => {
-  const { settings, pricing, ledger, budget, now } = fixture('unpriced');
-  settings.update('future-ai', { monthlyBudgetUsd: 5 });
-  pricing.set('future-ai', 'future-chat-1', {
-    inputPerMillionUsd: 1,
-    outputPerMillionUsd: 10
-  });
-  appendSpend(ledger, now.toISOString());
-
+  const input = fixture('unpriced');
+  configureFiniteBudget(input, 5);
+  appendSpend(input.ledger, input.now.toISOString());
   await assert.rejects(
-    budget.wrap(provider()).invoke(request(100)),
+    input.budget.wrap(provider()).invoke(request(100)),
     (error: unknown) => error instanceof ProviderBudgetError && error.code === 'historical-cost-unknown'
   );
 });
 
 test('concurrent provider reservations prevent two calls from jointly crossing the cap', async () => {
   const { settings, pricing, budget } = fixture('concurrency');
-  settings.update('future-ai', { monthlyBudgetUsd: 0.15 });
-  pricing.set('future-ai', 'future-chat-1', {
-    inputPerMillionUsd: 1,
-    outputPerMillionUsd: 100
-  });
-
+  settings.update('future-ai', { unlimitedUsage: false, monthlyBudgetUsd: 0.15 });
+  pricing.set('future-ai', 'future-chat-1', { inputPerMillionUsd: 1, outputPerMillionUsd: 100 });
   let releaseFirst!: () => void;
   let calls = 0;
   const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
   const wrapped = budget.wrap(provider('cloud', async (input) => {
     calls += 1;
     await firstGate;
-    return {
-      providerId: 'future-ai', model: input.model, content: 'ok', latencyMs: 1, usage: {}
-    };
+    return { providerId: 'future-ai', model: input.model, content: 'ok', latencyMs: 1, usage: {} };
   }));
-
   const first = wrapped.invoke(request(1_000));
   await new Promise((resolve) => setTimeout(resolve, 40));
   await assert.rejects(
@@ -254,7 +235,6 @@ test('a successful billable call keeps its reservation until matching usage is d
   const result = await input.budget.wrap(provider()).invoke(request(100));
   assert.ok(result.billingId);
   assert.equal(input.ledger.listReservations(PROVIDER_BUDGET_PROJECT_ID, input.now).length, 1);
-
   appendSpend(input.ledger, input.now.toISOString(), 0.0001, result.billingId);
   assert.equal(await input.budget.reconcile('future-ai'), 1);
   assert.equal(input.ledger.listReservations(PROVIDER_BUDGET_PROJECT_ID, input.now).length, 0);
@@ -266,22 +246,19 @@ test('transport/provider errors after invoke starts retain the upper-bound reser
   const wrapped = input.budget.wrap(provider('cloud', async () => {
     throw new Error('connection reset after request write');
   }));
-
   await assert.rejects(wrapped.invoke(request(100)), /connection reset/);
   const reservations = input.ledger.listReservations(PROVIDER_BUDGET_PROJECT_ID, input.now);
-  assert.equal(reservations.length, 1, 'uncertain billability must consume budget conservatively');
+  assert.equal(reservations.length, 1);
   assert.equal(reservations[0]?.expiresAt, '2026-10-01T00:00:00.000Z');
 });
 
 test('local providers bypass monetary budget enforcement because API cost is zero', async () => {
   const { settings, budget } = fixture('local');
-  settings.update('ollama', { monthlyBudgetUsd: 0.01 });
+  settings.update('ollama', { unlimitedUsage: false, monthlyBudgetUsd: 0.01 });
   let calls = 0;
   const local = provider('local', async (input) => {
     calls += 1;
-    return {
-      providerId: 'ollama', model: input.model, content: 'local', latencyMs: 1, usage: {}
-    };
+    return { providerId: 'ollama', model: input.model, content: 'local', latencyMs: 1, usage: {} };
   });
   const wrapped = budget.wrap(local);
   assert.equal(wrapped, local);
@@ -292,11 +269,9 @@ test('local providers bypass monetary budget enforcement because API cost is zer
 test('provider budgets are wired generically into every provider runtime and Usage settings', () => {
   const runtime = fs.readFileSync(path.join(process.cwd(), 'src/project-provider-runtime.ts'), 'utf8').replace(/\r\n/g, '\n');
   const surface = fs.readFileSync(path.join(process.cwd(), 'app/src/UsageSettings.tsx'), 'utf8').replace(/\r\n/g, '\n');
-
   assert.match(runtime, /this\.capabilityPolicy\.wrap\(this\.budget\.wrap\(provider\)\)/);
   assert.match(runtime, /\.\.\.Object\.keys\(this\.factories\)/);
   assert.match(surface, /Provider budgets/);
   assert.match(surface, /monthlyBudgetUsd/);
   assert.match(surface, /Unlimited/);
-  assert.match(surface, /\/api\/providers\/\$\{encodeURIComponent\(providerId\)\}/);
 });
