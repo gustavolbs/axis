@@ -7,7 +7,7 @@ import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
 
 const root = path.resolve(import.meta.dirname, '..');
-const consoleDist = path.join(root, 'console-dist');
+const appDist = path.join(root, 'app-dist');
 const sizes = [[760, 560], [900, 640], [1120, 720], [1440, 900]];
 const zoomFactors = [0.8, 1, 1.25, 1.5];
 const surfaces = [
@@ -83,8 +83,8 @@ function staticServer() {
     }
 
     const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
-    const resolved = path.resolve(consoleDist, relative);
-    if (!resolved.startsWith(`${consoleDist}${path.sep}`) && resolved !== path.join(consoleDist, 'index.html')) return response.writeHead(403).end();
+    const resolved = path.resolve(appDist, relative);
+    if (!resolved.startsWith(`${appDist}${path.sep}`) && resolved !== path.join(appDist, 'index.html')) return response.writeHead(403).end();
     try {
       const body = fs.readFileSync(resolved);
       response.writeHead(200, { 'content-type': mime(resolved) });
@@ -284,7 +284,7 @@ const server = staticServer();
 let window;
 
 try {
-  if (!fs.existsSync(path.join(consoleDist, 'index.html'))) throw new Error('console-dist/index.html is missing. Run npm run build before the layout smoke.');
+  if (!fs.existsSync(path.join(appDist, 'index.html'))) throw new Error('app-dist/index.html is missing. Run npm run build before the layout smoke.');
   const url = await listen(server);
   await app.whenReady();
   window = new BrowserWindow({ width: 760, height: 560, minWidth: 320, minHeight: 320, show: false, titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default', webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true } });
