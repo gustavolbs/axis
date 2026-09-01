@@ -14,6 +14,7 @@ import './claude-fidelity.css';
 import './reference-fidelity.css';
 import './claude-reference-overrides.css';
 import './ui-select.css';
+import './settings-panels.css';
 
 const storedTheme = localStorage.getItem('local-coder.theme');
 document.documentElement.dataset.lcTheme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : 'system';
