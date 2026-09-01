@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 
 import { ConsoleRoot } from './ConsoleRoot.js';
+import { installRuntimeTransport } from './runtime-shim.js';
 import './styles.css';
 import './admin.css';
 import './admin-fixes.css';
@@ -19,10 +20,12 @@ import './chat-history.css';
 import './audit-v2.css';
 import './audit-v2-components.css';
 
+installRuntimeTransport();
+
 const storedTheme = localStorage.getItem('local-coder.theme');
 const theme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : 'system';
 document.documentElement.dataset.lcTheme = theme;
-void window.lc?.setTheme(theme);
+void window.localCoder?.setTheme(theme);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
