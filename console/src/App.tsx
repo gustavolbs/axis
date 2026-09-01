@@ -1,1 +1,1 @@
-export { AgentSurface as App } from './AgentSurface.js';
+export { AgentSurfaceV2 as App } from './AgentSurfaceV2.js';
