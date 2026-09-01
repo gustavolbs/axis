@@ -27,9 +27,9 @@ function log(message, detail) {
   console.log(`[Local Coder desktop] ${message}${suffix}`);
 }
 
-// Register lifecycle diagnostics immediately, before any desktop setup. The Electron
-// main module must finish evaluating before we wait for app readiness; using a
-// top-level `await app.whenReady()` here can deadlock ESM main-process startup.
+// Register lifecycle diagnostics immediately. The ESM main module must finish
+// evaluating before Electron readiness is awaited asynchronously; blocking module
+// evaluation on app readiness can deadlock the main-process lifecycle.
 log('main module loaded', {
   pid: process.pid,
   platform: process.platform,
@@ -399,53 +399,6 @@ async function recoverBackendAfterExit() {
   }
 }
 
-function configureSingleInstanceBehavior() {
-  if (process.platform === 'darwin') {
-    log('macOS startup: relying on Launch Services for normal app single-instance behavior');
-    return true;
-  }
-
-  log('requesting explicit single-instance lock');
-  const acquired = app.requestSingleInstanceLock();
-  log('single-instance lock result', { acquired });
-  if (!acquired) {
-    log('another Local Coder desktop instance already owns the single-instance lock');
-    app.quit();
-    return false;
-  }
-
-  app.on('second-instance', () => {
-    log('second instance requested; focusing existing window');
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  });
-  return true;
-}
-
-async function initializeDesktop() {
-  app.setName('Local Coder');
-  log('Electron ready', { packaged: app.isPackaged, version: process.versions.electron });
-
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  session.defaultSession.setPermissionCheckHandler(() => false);
-
-  if (!configureSingleInstanceBehavior()) return;
-
-  const url = await startWithRecovery();
-  if (!url) {
-    app.quit();
-    return;
-  }
-
-  backendUrl = url;
-  mainWindow = createMainWindow(url);
-  mainWindow.on('closed', () => {
-    mainWindow = undefined;
-  });
-}
-
 app.on('before-quit', () => {
   quitting = true;
   if (saveBoundsTimer) {
@@ -464,13 +417,49 @@ app.on('activate', () => {
   if (!mainWindow && backendUrl) mainWindow = createMainWindow(backendUrl);
 });
 
-// Important: do not top-level await this promise. Electron can only progress to
-// `will-finish-launching` / `ready` after the ESM main module has finished
-// evaluating. This callback form mirrors the minimal Electron startup test.
-void app.whenReady()
+async function initializeDesktop() {
+  app.setName('Local Coder');
+  log('Electron ready', { packaged: app.isPackaged, version: process.versions.electron });
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
+
+  if (process.platform !== 'darwin') {
+    log('requesting explicit single-instance lock');
+    const hasSingleInstanceLock = app.requestSingleInstanceLock();
+    log('single-instance lock result', { acquired: hasSingleInstanceLock });
+    if (!hasSingleInstanceLock) {
+      log('another Local Coder desktop instance already owns the single-instance lock');
+      app.quit();
+      return;
+    }
+    app.on('second-instance', () => {
+      log('second instance requested; focusing existing window');
+      if (!mainWindow) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    });
+  } else {
+    log('macOS startup: relying on Launch Services for normal app single-instance behavior');
+  }
+
+  const url = await startWithRecovery();
+  if (!url) {
+    app.quit();
+    return;
+  }
+  backendUrl = url;
+  mainWindow = createMainWindow(url);
+  mainWindow.on('closed', () => {
+    mainWindow = undefined;
+  });
+}
+
+// Do not block ESM module evaluation on Electron readiness. The callback starts
+// only after the app has emitted readiness and the module has returned control.
+app.whenReady()
   .then(initializeDesktop)
   .catch((error) => {
-    const message = error instanceof Error ? error.stack || error.message : String(error);
-    console.error('[Local Coder desktop] fatal startup error', message);
+    console.error('[Local Coder desktop] fatal startup failure', error);
     app.exit(1);
   });
