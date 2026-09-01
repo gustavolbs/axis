@@ -7,7 +7,7 @@ import {
 import type { LocalCoderConfig } from './config.js';
 import type { AgenticCodeTask, AgenticExecutionResult } from './executor.js';
 import type { LocalEngineerInput, LocalEngineerResult } from './local-engineer.js';
-import type { OllamaGeneration } from './ollama.js';
+import type { OllamaChatOptions, OllamaGeneration } from './ollama.js';
 import type { LocalExecutionPlan, LocalExecutionPlanResult } from './orchestrator.js';
 import {
   REMOTE_WORKER_PROTOCOL_VERSION,
@@ -50,13 +50,22 @@ export class RemoteWorkerClient {
   async chat(
     systemPrompt: string,
     userPrompt: string,
-    format?: 'json' | Record<string, unknown>
+    format?: 'json' | Record<string, unknown>,
+    runtime: OllamaChatOptions = {}
   ): Promise<OllamaGeneration> {
     const response = await this.request<RemoteChatResponse>('/v1/chat', {
       protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
       systemPrompt,
       userPrompt,
-      ...(format ? { format } : {})
+      ...(format ? { format } : {}),
+      runtime: {
+        model: runtime.model,
+        numCtx: runtime.numCtx,
+        keepAlive: runtime.keepAlive,
+        think: runtime.think,
+        maxTokens: runtime.maxTokens,
+        maxDurationMs: runtime.maxDurationMs
+      }
     });
     assertProtocolVersion(response.protocolVersion);
     return response.generation;
@@ -118,9 +127,6 @@ export class RemoteWorkerClient {
 
   async executeEngineer(input: LocalEngineerInput): Promise<LocalEngineerResult> {
     throwIfCancelled();
-    // The editable set is intentionally unknown at submission time. The remote local
-    // engineer discovers it after evidence-backed investigation/planning and returns
-    // dynamic before-hash guarded changes of its own.
     const snapshot = await prepareRemoteWorkspace(input.workspace, [], this.config);
     throwIfCancelled();
     const { workspace: _workspace, ...remoteInput } = input;

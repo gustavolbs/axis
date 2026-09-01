@@ -137,7 +137,6 @@ export function normalizeHealthPath(value: string): string {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
     throw new Error('workerHealthPath must be a path like /v1/health, not a full URL.');
   }
-  // Collapse repeated slashes so `${base}${path}` never doubles them.
   return `/${raw.replace(/^\/+/, '').replace(/\/{2,}/g, '/')}`;
 }
 
@@ -148,15 +147,10 @@ function toResponse(patch: RuntimeSettings): Record<string, unknown> {
   };
 }
 
-/** Exported for tests: the URL the user typed must be rejected here, not three
- *  layers down inside a fetch error. */
 export function normalizeBaseUrl(value: string): string {
   const raw = value.trim();
   if (!raw) throw new Error('A URL is required.');
   const invalid = new Error(`"${value}" is not a valid URL. Expected something like http://192.168.0.10:7337`);
-  // `localhost:11434` is what people type; accept it rather than making them
-  // remember the scheme. Infer before trimming slashes, or a bare "http://"
-  // becomes the hostname.
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
   let parsed: URL;
   try {
@@ -168,18 +162,11 @@ export function normalizeBaseUrl(value: string): string {
     throw new Error('The URL must use http or https.');
   }
   if (!parsed.hostname) throw invalid;
-  // Serialize from the parsed URL so the stored value is canonical, then drop
-  // the path: callers append their own (/v1/health, /v1/chat, ...).
   return `${parsed.protocol}//${parsed.host}`;
 }
 
 export class DesktopAppRuntime {
   private readonly listeners = new Set<AppRuntimeListener>();
-  /**
-   * The desktop app is worker-only: the agent runs on the Windows machine, and
-   * the only thing to configure is that machine's URL. There is no execution
-   * mode to choose, so it is not read from settings here.
-   */
   private readonly config = { ...loadConfig(), executionMode: 'remote' as const };
   private readonly ollama = new OllamaClient(this.config);
   private readonly execution = createExecutionRuntime(this.config, this.ollama);
@@ -192,16 +179,10 @@ export class DesktopAppRuntime {
   );
   private workerTimer?: NodeJS.Timeout;
 
-  /**
-   * Merges into ~/.local-coder/settings.json instead of replacing it. loadConfig
-   * reads executionMode, remoteWorkerCredentialRef and model from that same
-   * file, so writing a fresh object would silently drop them.
-   */
   private patchSettings(patch: RuntimeSettings): void {
     writeAppSettings({ ...readAppSettings(), ...patch });
   }
 
-  /** Prunes ids whose project no longer exists, so a delete cannot leave one behind. */
   private archivedProjectIds(): string[] {
     const stored = readAppSettings()?.archivedProjectIds ?? [];
     if (stored.length === 0) return [];
@@ -256,8 +237,6 @@ export class DesktopAppRuntime {
       const body = objectBody(request.body);
       const projectId = optionalString(body, 'projectId');
       const interactionMode = parseInteractionMode(body.interactionMode);
-      // Chat runs one inference and touches no files, so a folder is optional.
-      // Cowork is bound to one and still requires it.
       const workspace = projectId
         ? this.projects.getProject(projectId).workspace
         : interactionMode === 'chat'
@@ -296,6 +275,17 @@ export class DesktopAppRuntime {
     if (method === 'POST' && followUpMatch) {
       const body = objectBody(request.body);
       return { job: await this.jobs.followUp(followUpMatch[1], requiredString(body, 'message')) };
+    }
+    const turnRetryMatch = /^\/jobs\/([A-Za-z0-9-]+)\/turns\/([A-Za-z0-9-]+)\/retry$/.exec(pathname);
+    if (method === 'POST' && turnRetryMatch) {
+      const body = objectBody(request.body ?? {});
+      return {
+        job: await this.jobs.retryTurn(
+          turnRetryMatch[1],
+          turnRetryMatch[2],
+          optionalString(body, 'message')
+        )
+      };
     }
     if (method === 'PATCH' && jobMatch) {
       const body = objectBody(request.body);
@@ -370,15 +360,12 @@ export class DesktopAppRuntime {
       const id = decodeURIComponent(projectArchiveMatch[1]);
       const body = objectBody(request.body);
       if (typeof body.archived !== 'boolean') throw new Error('archived must be a boolean.');
-      this.projects.getProject(id);   // 404s on an unknown id rather than storing it
+      this.projects.getProject(id);
       this.setProjectArchived(id, body.archived);
       return { project: { ...this.projects.getProject(id), archived: body.archived } };
     }
     if (projectMatch && method === 'DELETE') {
       const id = decodeURIComponent(projectMatch[1]);
-      // Deleting a project used to leave its conversations pointing at an id
-      // that no longer existed, so they vanished from the sidebar without
-      // going anywhere. Only an empty project can be deleted.
       const held = this.jobs.list().filter((job) => job.input.projectId === id);
       if (held.length > 0) {
         throw new Error(
@@ -386,7 +373,6 @@ export class DesktopAppRuntime {
         );
       }
       const removed = this.projects.removeProject(id);
-      // Do not let a deleted id linger in the archived list.
       this.setProjectArchived(id, false);
       return { removed };
     }
@@ -438,13 +424,10 @@ export class DesktopAppRuntime {
       }
 
       if (Object.keys(patch).length === 0) throw new Error('No supported settings in request.');
-      // The execution runtime is built once at startup from these values, so a
-      // change lands on the next launch.
       this.patchSettings(patch);
       return { settings: { ...this.connectionSettings(), ...toResponse(patch), restartRequired: true } };
     }
 
-    /** Probes without saving, so a URL can be checked before it is committed. */
     if (method === 'POST' && pathname === '/settings/probe-worker') {
       const body = objectBody(request.body);
       const target = normalizeBaseUrl(requiredString(body, 'workerUrl'));
@@ -456,7 +439,6 @@ export class DesktopAppRuntime {
       try {
         const response = await fetch(`${target}${healthPath}`, { signal: controller.signal });
         if (!response.ok) return { reachable: false, status: response.status, error: `HTTP ${response.status} from ${healthPath}` };
-        // The body is whatever that deployment returns; report it, do not parse it.
         const text = (await response.text().catch(() => '')).trim();
         return { reachable: true, status: response.status, detail: text.slice(0, 120) || undefined };
       } catch (error) {

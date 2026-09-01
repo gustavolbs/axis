@@ -79,6 +79,8 @@ export interface ProjectCatalogModel {
   id: string;
   displayName: string;
   available: boolean;
+  contextWindow?: number;
+  maxOutputTokens?: number;
   capabilities?: Partial<ProviderCapabilities>;
   routing: ModelRoutingProfile;
   pricing?: ModelPricing;
@@ -406,6 +408,8 @@ export class ProjectAdminService {
             id: modelId,
             displayName: model?.displayName ?? modelId,
             available: Boolean(model),
+            contextWindow: model?.contextWindow,
+            maxOutputTokens: model?.maxOutputTokens,
             capabilities: model?.capabilities,
             routing: settings.models[modelId] ?? {},
             pricing: pricing[providerId]?.[modelId],

@@ -66,6 +66,19 @@ const providerCapabilities: ProviderCapabilities = {
   toolUse: true
 };
 
+/**
+ * OpenAI's /models response does not expose context/output limits. Keep only
+ * values that are published as stable model metadata instead of pretending
+ * every GPT family has the same window. Unknown models simply omit the fields
+ * and the chat runtime falls back conservatively.
+ */
+function knownModelLimits(modelId: string): Pick<ModelDefinition, 'contextWindow' | 'maxOutputTokens'> {
+  if (/^gpt-5\.6(?:-|$)/i.test(modelId)) {
+    return { contextWindow: 1_050_000, maxOutputTokens: 131_072 };
+  }
+  return {};
+}
+
 function normalizeUsage(usage: OpenAIUsagePayload | null | undefined): InferenceUsage {
   if (!usage) return {};
   return {
@@ -142,6 +155,7 @@ export class OpenAIInferenceProvider implements InferenceProvider {
       id: model.id,
       displayName: model.id,
       createdAt: model.created ? new Date(model.created * 1000).toISOString() : undefined,
+      ...knownModelLimits(model.id),
       metadata: {
         ownedBy: model.owned_by,
         shutdownDate: model.shutdown_date ?? undefined

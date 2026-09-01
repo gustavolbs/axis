@@ -351,12 +351,7 @@ export class StandaloneJobManager {
 
   async followUp(id: string, message: string): Promise<StandaloneJobSnapshot> {
     const job = this.requireJob(id);
-    if (job.input.interactionMode !== 'chat') {
-      throw new Error('Follow-up messages are available only for Chat conversations.');
-    }
-    if (['queued', 'running', 'waiting-decision', 'waiting-guidance'].includes(job.status)) {
-      throw new Error(`Cannot send a follow-up while the chat status is ${job.status}.`);
-    }
+    this.assertChatCanRun(job);
     const content = message.trim();
     if (!content) throw new Error('message is required.');
 
@@ -369,21 +364,38 @@ export class StandaloneJobManager {
         createdAt: new Date().toISOString()
       }
     ]);
-    job.status = 'running';
-    job.error = undefined;
-    job.result = undefined;
-    job.decisionRequest = undefined;
-    job.escalationPlan = undefined;
-    // Writing to an archived conversation brings it back. An archived chat can
-    // be opened from the Archived surface, so without this it would resume and
-    // keep running while staying hidden from the sidebar.
-    job.archivedAt = undefined;
-    // Chat is one inference per message. Its turns must never consume Cowork's
-    // six-round decision/guidance resume budget.
-    job.rounds = 0;
-    job.controller = new AbortController();
-    this.emit(job, 'status', 'Chat follow-up queued');
-    void this.run(job);
+    this.restartChat(job, 'Chat follow-up queued');
+    return snapshot(job);
+  }
+
+  /**
+   * Replays a prior user turn inside the same conversation. Editing replaces
+   * that turn; resend keeps its text. In both cases later turns are discarded,
+   * matching a linear Claude-style retry rather than inventing hidden branches.
+   */
+  async retryTurn(
+    id: string,
+    turnId: string,
+    message?: string
+  ): Promise<StandaloneJobSnapshot> {
+    const job = this.requireJob(id);
+    this.assertChatCanRun(job);
+    const index = job.turns.findIndex((turn) => turn.id === turnId);
+    const turn = index >= 0 ? job.turns[index] : undefined;
+    if (!turn || turn.role !== 'user') throw new Error('User turn not found.');
+
+    const content = message === undefined ? turn.content : message.trim();
+    if (!content) throw new Error('message is required.');
+    const edited = content !== turn.content;
+    job.turns = boundTurns([
+      ...job.turns.slice(0, index),
+      {
+        ...turn,
+        content,
+        createdAt: new Date().toISOString()
+      }
+    ]);
+    this.restartChat(job, edited ? 'Edited chat message queued' : 'Chat message queued again');
     return snapshot(job);
   }
 
@@ -505,6 +517,28 @@ export class StandaloneJobManager {
       });
       throw error;
     }
+  }
+
+  private assertChatCanRun(job: JobInternal): void {
+    if (job.input.interactionMode !== 'chat') {
+      throw new Error('Chat turn actions are available only for Chat conversations.');
+    }
+    if (['queued', 'running', 'waiting-decision', 'waiting-guidance'].includes(job.status)) {
+      throw new Error(`Cannot run a chat turn while the chat status is ${job.status}.`);
+    }
+  }
+
+  private restartChat(job: JobInternal, title: string): void {
+    job.status = 'running';
+    job.error = undefined;
+    job.result = undefined;
+    job.decisionRequest = undefined;
+    job.escalationPlan = undefined;
+    job.archivedAt = undefined;
+    job.rounds = 0;
+    job.controller = new AbortController();
+    this.emit(job, 'status', title);
+    void this.run(job);
   }
 
   private requireJob(id: string): JobInternal {

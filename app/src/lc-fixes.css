@@ -1188,3 +1188,243 @@
   clip-path: polygon(0 0, 100% 0, 0 100%);
   content: '';
 }
+
+/* --------------------------------------------------------------------------
+   20. Chat presentation: Markdown, per-message actions and context-window UI.
+   ----------------------------------------------------------------------- */
+
+.message-turn-shell {
+  min-width: 0;
+}
+
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 26px;
+  margin-top: 4px;
+  opacity: .38;
+  transition: opacity 120ms ease;
+}
+
+.message-turn-shell:hover .message-actions,
+.message-actions:focus-within {
+  opacity: 1;
+}
+
+.message-actions button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--lc-faint);
+}
+
+.message-actions button:hover,
+.message-actions button:focus-visible {
+  background: var(--lc-hover);
+  color: var(--lc-text-soft);
+  outline: none;
+}
+
+.user-turn-shell .message-actions {
+  justify-content: flex-end;
+}
+
+.composer-editing-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -2px -2px 4px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: var(--lc-surface-2);
+  color: var(--lc-text-soft);
+  font-size: 12px;
+}
+
+.composer-editing-banner span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-editing-banner button {
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lc-muted);
+  font-size: 12px;
+}
+
+.composer-editing-banner button:hover {
+  background: var(--lc-hover);
+  color: var(--lc-text);
+}
+
+.markdown-message {
+  min-width: 0;
+  color: var(--lc-text);
+  line-height: 1.62;
+  overflow-wrap: anywhere;
+}
+
+.markdown-message > :first-child {
+  margin-top: 0;
+}
+
+.markdown-message > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-message h1,
+.markdown-message h2,
+.markdown-message h3,
+.markdown-message h4,
+.markdown-message h5,
+.markdown-message h6 {
+  margin: 1.15em 0 .45em;
+  color: var(--lc-text);
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.markdown-message h1 { font-size: 1.55em; }
+.markdown-message h2 { font-size: 1.35em; }
+.markdown-message h3 { font-size: 1.18em; }
+.markdown-message h4,
+.markdown-message h5,
+.markdown-message h6 { font-size: 1em; }
+
+.markdown-message p,
+.markdown-message ul,
+.markdown-message ol,
+.markdown-message blockquote,
+.markdown-message pre,
+.markdown-message table {
+  margin: .55em 0 .85em;
+}
+
+.markdown-message ul,
+.markdown-message ol {
+  padding-left: 1.45em;
+}
+
+.markdown-message li + li {
+  margin-top: .2em;
+}
+
+.markdown-message a {
+  color: var(--lc-accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--lc-accent) 45%, transparent);
+  text-underline-offset: 2px;
+}
+
+.markdown-message blockquote {
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--lc-border-strong);
+  color: var(--lc-muted);
+}
+
+.markdown-message code {
+  padding: .1em .3em;
+  border-radius: 5px;
+  background: var(--lc-surface-2);
+  color: var(--lc-text-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .9em;
+}
+
+.markdown-message pre {
+  max-width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--lc-border);
+  border-radius: 10px;
+  background: var(--lc-surface-1);
+  overflow: auto;
+}
+
+.markdown-message pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.markdown-message table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .94em;
+}
+
+.markdown-message th,
+.markdown-message td {
+  padding: 7px 9px;
+  border: 1px solid var(--lc-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-message th {
+  background: var(--lc-surface-2);
+  color: var(--lc-text);
+  font-weight: 550;
+}
+
+.markdown-message hr {
+  margin: 1em 0;
+  border: 0;
+  border-top: 1px solid var(--lc-border);
+}
+
+.conversation-context-badge {
+  display: inline-flex;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid var(--lc-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lc-muted);
+  cursor: help;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.conversation-context-badge:hover,
+.conversation-context-badge:focus-visible {
+  border-color: var(--lc-border-strong);
+  background: var(--lc-surface-2);
+  color: var(--lc-text-soft);
+  outline: none;
+}
+
+.conversation-context-badge[data-level='warning'] {
+  border-color: color-mix(in srgb, var(--lc-accent) 45%, var(--lc-border));
+  color: var(--lc-text-soft);
+}
+
+.conversation-context-badge[data-level='critical'] {
+  border-color: color-mix(in srgb, var(--lc-negative) 55%, var(--lc-border));
+  color: var(--lc-negative);
+}
+
+@media (max-width: 760px) {
+  .conversation-context-badge {
+    max-width: 94px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .message-actions {
+    opacity: .72;
+  }
+}

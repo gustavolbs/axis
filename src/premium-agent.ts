@@ -26,11 +26,20 @@ type DirectChatHistoryTurn = {
   content: string;
 };
 
+type DirectChatModelLimits = {
+  providerId: string;
+  providerKind: 'local' | 'cloud';
+  contextWindow?: number;
+  maxOutputTokens?: number;
+};
+
 type PremiumAgentInput = LocalEngineerInput & {
   repoMemoryScopeKey?: string;
   interactionMode?: 'chat' | 'cowork';
   /** Earlier Chat turns. The current user message remains input.goal. */
   chatHistory?: DirectChatHistoryTurn[];
+  /** Exact provider/model capacity resolved by the project runtime when available. */
+  chatModelLimits?: DirectChatModelLimits;
 };
 type AgentModel = Pick<OllamaClient, 'chat'>;
 
@@ -196,28 +205,85 @@ Use only information the user explicitly supplied in the current message, prior 
 For casual conversation, answer casually and concisely.
 Reply in the user's language unless they ask for another language.`;
 
-const DIRECT_CHAT_HISTORY_MAX_CHARS = 24_000;
-const DIRECT_CHAT_TURN_MAX_CHARS = 12_000;
+const LOCAL_CHAT_HISTORY_MAX_CHARS = 24_000;
+const LOCAL_CHAT_TURN_MAX_CHARS = 12_000;
+const CLOUD_FALLBACK_CONTEXT_TOKENS = 128_000;
+const CLOUD_FALLBACK_OUTPUT_RESERVE = 8_192;
+const APPROX_CHARS_PER_TOKEN = 3.5;
 
-function renderDirectChatHistory(turns: DirectChatHistoryTurn[] | undefined): string {
-  if (!turns?.length) return '';
+interface DirectChatHistoryBudget {
+  maxChars: number;
+  perTurnMaxChars?: number;
+}
+
+function estimatedTokens(chars: number): number {
+  return Math.ceil(chars / APPROX_CHARS_PER_TOKEN);
+}
+
+function directChatHistoryBudget(input: PremiumAgentInput): DirectChatHistoryBudget {
+  const limits = input.chatModelLimits;
+  if (!limits || limits.providerKind === 'local') {
+    return {
+      maxChars: LOCAL_CHAT_HISTORY_MAX_CHARS,
+      perTurnMaxChars: LOCAL_CHAT_TURN_MAX_CHARS
+    };
+  }
+
+  const contextWindow = Math.max(16_384, limits.contextWindow ?? CLOUD_FALLBACK_CONTEXT_TOKENS);
+  const outputReserve = Math.min(
+    Math.max(1, limits.maxOutputTokens ?? CLOUD_FALLBACK_OUTPUT_RESERVE),
+    Math.floor(contextWindow * 0.4)
+  );
+  const safetyReserve = Math.max(4_096, Math.floor(contextWindow * 0.08));
+  const fixedChars = [
+    DIRECT_CHAT_SYSTEM_PROMPT,
+    input.goal,
+    input.context ?? '',
+    ...(input.constraints ?? [])
+  ].join('\n').length;
+  const availableTokens = Math.max(
+    0,
+    contextWindow - outputReserve - safetyReserve - estimatedTokens(fixedChars)
+  );
+  return {
+    maxChars: Math.floor(availableTokens * APPROX_CHARS_PER_TOKEN)
+  };
+}
+
+function renderDirectChatHistory(
+  turns: DirectChatHistoryTurn[] | undefined,
+  budget: DirectChatHistoryBudget
+): string {
+  if (!turns?.length || budget.maxChars <= 0) return '';
   const selected: string[] = [];
   let used = 0;
   let omitted = false;
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index];
-    const content = turn.content.trim().slice(0, DIRECT_CHAT_TURN_MAX_CHARS);
+    const clean = turn.content.trim();
+    const content = budget.perTurnMaxChars === undefined
+      ? clean
+      : clean.slice(0, budget.perTurnMaxChars);
     if (!content) continue;
     const rendered = `${turn.role === 'user' ? 'USER' : 'ASSISTANT'}:\n${content}`;
-    if (used + rendered.length > DIRECT_CHAT_HISTORY_MAX_CHARS) {
+    if (used + rendered.length > budget.maxChars) {
       omitted = true;
       break;
     }
     selected.unshift(rendered);
     used += rendered.length;
   }
-  if (omitted) selected.unshift('[Older conversation turns omitted to stay inside the chat context budget.]');
+  if (omitted) selected.unshift('[Older conversation turns omitted to stay inside the selected model context window.]');
   return selected.join('\n\n');
+}
+
+function directChatOutputLimit(input: PremiumAgentInput, config: LocalCoderConfig): number | undefined {
+  if (input.chatModelLimits?.providerKind === 'cloud') {
+    // Cloud providers enforce their own model maximum. When metadata publishes
+    // that limit, pass the real limit rather than the old 2k local ceiling.
+    return input.chatModelLimits.maxOutputTokens;
+  }
+  return Math.min(config.reportMaxTokens ?? 3_072, 2_048);
 }
 
 function generationMeta(generation: OllamaGeneration): LocalEngineerResult['modelCalls'][number] {
@@ -235,7 +301,7 @@ async function executeDirectChat(
   config: LocalCoderConfig,
   input: PremiumAgentInput
 ): Promise<LocalEngineerExecution> {
-  const history = renderDirectChatHistory(input.chatHistory);
+  const history = renderDirectChatHistory(input.chatHistory, directChatHistoryBudget(input));
   const userPrompt = [
     history ? `# CONVERSATION HISTORY\n${history}` : input.goal.trim(),
     history ? `# CURRENT USER MESSAGE\n${input.goal.trim()}` : '',
@@ -245,16 +311,31 @@ async function executeDirectChat(
       : ''
   ].filter(Boolean).join('\n\n');
 
+  const localChat = input.chatModelLimits?.providerKind !== 'cloud';
   const generation = await model.chat(
     DIRECT_CHAT_SYSTEM_PROMPT,
     userPrompt,
     undefined,
     {
       model: config.model,
-      numCtx: config.ollamaNumCtx ?? 16_384,
-      keepAlive: config.fastModelKeepAlive ?? '90s',
-      think: false,
-      maxTokens: Math.min(config.reportMaxTokens ?? 3_072, 2_048)
+      numCtx: localChat ? (input.chatModelLimits?.contextWindow ?? config.ollamaNumCtx ?? 16_384) : undefined,
+      keepAlive: localChat ? (config.fastModelKeepAlive ?? '90s') : undefined,
+      // Local Chat gets lightweight hidden reasoning by default so the worker can
+      // report meaningful thinking/generating states. The text itself is never surfaced.
+      think: localChat ? 'low' : undefined,
+      maxTokens: directChatOutputLimit(input, config),
+      onStreamProgress: (progress) => {
+        reportProgress({
+          phase: 'other',
+          action: progress.state === 'thinking'
+            ? 'Model is reasoning about the conversation'
+            : 'Model is drafting the response',
+          detail: `model=${input.chatModelLimits?.providerId ?? 'ollama'} · elapsed=${Math.round(progress.elapsedMs / 1000)}s`,
+          reasoningSummary: progress.state === 'thinking'
+            ? 'The model is processing the request. Hidden reasoning remains private; only safe progress metadata is shown.'
+            : 'Reasoning is complete or not required; the model is composing the user-visible answer.'
+        });
+      }
     }
   );
 
@@ -684,14 +765,6 @@ async function autoResolveResearch(
  * Chat mode is a hard fast path: exactly one conversational model call and no
  * repository discovery, planning, mutation, validation, review or checkpoint.
  * Cowork mode preserves the full engineering workflow below.
- *
- * - read-only engineering work skips mutation and auto-resolves external research where possible;
- * - mutating work performs adaptive impact analysis and optional Architect/Critic/Judge
- *   deliberation before the evidence-backed implementation pipeline;
- * - material user preferences become structured decision checkpoints;
- * - external-research gaps are retried through the configured research broker first;
- * - unresolved gaps become bounded guidance requests in the standalone app;
- * - final results carry an evidence-based quality score for UI/eval gating.
  */
 export async function executePremiumLocalAgent(
   model: AgentModel,

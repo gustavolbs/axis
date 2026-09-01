@@ -35,7 +35,10 @@ test('chat mode performs exactly one conversational inference without touching a
       assert.match(systemPrompt, /Chat mode, not Cowork mode/);
       assert.equal(userPrompt, 'Como vc está?');
       assert.equal(format, undefined);
-      assert.equal(runtime?.think, false);
+      assert.equal(runtime?.think, 'low');
+      assert.equal(runtime?.numCtx, 16_384);
+      assert.equal(runtime?.maxTokens, 2_048);
+      assert.equal(typeof runtime?.onStreamProgress, 'function');
       return {
         model: 'qwen3.8:27b',
         content: 'Estou bem! E você?'
@@ -65,7 +68,7 @@ test('chat mode performs exactly one conversational inference without touching a
   assert.deepEqual(execution.changes, []);
 });
 
-test('remote project-less chat uses /v1/chat and never enters remote engineer workspace transport', async () => {
+test('remote project-less chat uses /v1/chat and forwards local Chat runtime hints', async () => {
   const originalFetch = globalThis.fetch;
   const urls: string[] = [];
   globalThis.fetch = async (input, init) => {
@@ -80,9 +83,17 @@ test('remote project-less chat uses /v1/chat and never enters remote engineer wo
     const body = JSON.parse(String(init?.body)) as {
       protocolVersion?: number;
       userPrompt?: string;
+      runtime?: {
+        numCtx?: number;
+        think?: string | boolean;
+        maxTokens?: number;
+      };
     };
     assert.equal(body.protocolVersion, REMOTE_WORKER_PROTOCOL_VERSION);
     assert.equal(body.userPrompt, 'Oi, tudo bem?');
+    assert.equal(body.runtime?.numCtx, 16_384);
+    assert.equal(body.runtime?.think, 'low');
+    assert.equal(body.runtime?.maxTokens, 2_048);
     return new Response(JSON.stringify({
       protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
       generation: {
@@ -151,8 +162,17 @@ test('standalone chat jobs preserve interaction mode and cannot enter guidance c
   assert.ok(job.events.some((event) => event.title === 'Chat response completed'));
 });
 
-test('desktop Chat/Cowork toggle is included in the job payload', async () => {
+test('desktop Chat/Cowork toggle and Chat UX contracts are included in the job surface', async () => {
   const source = await fs.readFile(path.join(process.cwd(), 'app/src/AgentSurfaceV2.tsx'), 'utf8');
   assert.match(source, /interactionMode:\s*mode/);
   assert.match(source, /active\.input\.interactionMode\s*!==\s*'chat'/);
+  assert.match(source, /event\.shiftKey/);
+  assert.match(source, /event\.nativeEvent\.isComposing/);
+  assert.match(source, /MarkdownMessage/);
+  assert.match(source, /aria-label="Edit message"/);
+  assert.match(source, /aria-label="Send again"/);
+  assert.match(source, /Read aloud/);
+  assert.match(source, /conversation-context-badge/);
+  assert.match(source, /contextWindow/);
+  assert.match(source, /maxOutputTokens/);
 });

@@ -94,6 +94,47 @@ test('a follow-up appends turns to the same chat job and creates no second job',
   assert.equal(calls[1].goal, 'Qual é meu nome?');
 });
 
+test('edit and resend replay a prior user turn in the same linear chat job', async () => {
+  const calls: ProjectEngineerInput[] = [];
+  const manager = new StandaloneJobManager({
+    executeEngineer: async (input) => {
+      calls.push(input);
+      return success(input.goal, `answer:${input.goal}`);
+    }
+  });
+
+  const created = manager.create({ workspace: '', goal: 'first', interactionMode: 'chat' });
+  let job = await waitForTerminal(manager, created.id);
+  await manager.followUp(created.id, 'second');
+  job = await waitForTerminal(manager, created.id);
+  assert.equal(job.turns.length, 4);
+
+  const firstTurn = job.turns[0]!;
+  const edited = await manager.retryTurn(created.id, firstTurn.id, 'first edited');
+  assert.equal(edited.id, created.id);
+  assert.deepEqual(edited.turns.map((turn) => [turn.role, turn.content]), [
+    ['user', 'first edited']
+  ], 'editing discards all later turns before replay');
+  job = await waitForTerminal(manager, created.id);
+  assert.deepEqual(job.turns.map((turn) => [turn.role, turn.content]), [
+    ['user', 'first edited'],
+    ['assistant', 'answer:first edited']
+  ]);
+  assert.equal(calls.at(-1)?.goal, 'first edited');
+  assert.deepEqual(calls.at(-1)?.chatHistory, []);
+
+  const replayTurn = job.turns[0]!;
+  const resent = await manager.retryTurn(created.id, replayTurn.id);
+  assert.equal(resent.id, created.id);
+  assert.deepEqual(resent.turns.map((turn) => [turn.role, turn.content]), [['user', 'first edited']]);
+  job = await waitForTerminal(manager, created.id);
+  assert.equal(manager.list().length, 1);
+  assert.deepEqual(job.turns.map((turn) => [turn.role, turn.content]), [
+    ['user', 'first edited'],
+    ['assistant', 'answer:first edited']
+  ]);
+});
+
 test('follow-up rejects Cowork and rejects Chat while it is running or waiting', async () => {
   const manager = new StandaloneJobManager({
     executeEngineer: async (input) => {
@@ -140,7 +181,7 @@ test('direct chat receives the earlier conversation turns in its bounded prompt'
   const model: Pick<OllamaClient, 'chat'> = {
     async chat(_systemPrompt, userPrompt, _format, runtime): Promise<OllamaGeneration> {
       prompt = userPrompt;
-      assert.equal(runtime?.think, false);
+      assert.equal(runtime?.think, 'low');
       return { model: 'qwen3.8:27b', content: 'Seu nome é Gustavo.' } as OllamaGeneration;
     }
   };
@@ -215,7 +256,7 @@ test('jobs persisted before turns existed migrate Chat without changing Cowork r
   }
 });
 
-test('button and command-enter share the same send branch and the thread renders turns', async () => {
+test('button and Enter share the same send branch while Shift+Enter preserves a newline', async () => {
   const surface = lf(await fs.readFile(path.join(process.cwd(), 'app/src/AgentSurfaceV2.tsx'), 'utf8'));
   const runtime = lf(await fs.readFile(path.join(process.cwd(), 'src/app-runtime.ts'), 'utf8'));
 
@@ -226,15 +267,21 @@ test('button and command-enter share the same send branch and the thread renders
   assert.match(send, /active\?\.input\.interactionMode === 'chat'/);
   assert.match(send, /followUpChat\(\)/);
   assert.match(send, /createJob\(\)/);
+  assert.match(send, /retryChatTurn\(editingTurnId/);
 
   const keyboard = surface.slice(
     surface.indexOf('function onComposerKeyDown'),
     surface.indexOf('\n\n  return <div')
   );
+  assert.match(keyboard, /event\.key !== 'Enter'/);
+  assert.match(keyboard, /event\.shiftKey/);
+  assert.match(keyboard, /event\.nativeEvent\.isComposing/);
   assert.match(keyboard, /sendCurrentMessage\(\)/);
   assert.match(surface, /onClick=\{\(\) => void props\.sendMessage\(\)\}/);
   assert.match(surface, /job\.turns\.map/);
   assert.match(surface, /scrollIntoView/);
   assert.match(runtime, /\/jobs\\\/\(\[A-Za-z0-9-\]\+\)\\\/follow-up/);
+  assert.match(runtime, /\/turns\\\/\(\[A-Za-z0-9-\]\+\)\\\/retry/);
   assert.match(runtime, /this\.jobs\.followUp/);
+  assert.match(runtime, /this\.jobs\.retryTurn/);
 });
