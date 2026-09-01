@@ -11,6 +11,8 @@ import type { ExecutionBackend } from './execution-runtime.js';
 import type { LocalEngineerResult } from './local-engineer.js';
 import type { PremiumDecisionRequest, PremiumEngineerResult } from './premium-agent.js';
 import type { ProjectEngineerInput } from './project-engineer-backend.js';
+import type { ModelSelection } from './project-store.js';
+import type { ReasoningEffort } from './providers/types.js';
 
 export type StandaloneJobStatus =
   | 'queued'
@@ -21,6 +23,8 @@ export type StandaloneJobStatus =
   | 'cancelled'
   | 'error';
 
+export type StandaloneReasoningEffort = 'auto' | ReasoningEffort;
+
 export interface StandaloneJobInput {
   projectId?: string;
   workspace: string;
@@ -29,6 +33,10 @@ export interface StandaloneJobInput {
   constraints?: string[];
   language?: string;
   maxRepairRounds?: number;
+  /** Optional standalone override. Auto preserves the Project/agent stage policy. */
+  modelSelection?: ModelSelection;
+  /** Optional standalone override applied to every routed cognitive stage. */
+  reasoningEffort?: StandaloneReasoningEffort;
 }
 
 export interface StandaloneJobEvent {
@@ -139,8 +147,6 @@ export class StandaloneJobManager {
       });
     }
 
-    // Cancelled/success/error jobs are terminal. Only work that was actually running when
-    // the process stopped is resumed; user-decision/guidance checkpoints remain paused.
     for (const job of this.jobs.values()) {
       if (job.status === 'queued' || job.status === 'running') {
         job.status = 'queued';
@@ -179,7 +185,8 @@ export class StandaloneJobManager {
         ...input,
         projectId: input.projectId?.trim() || undefined,
         workspace: input.workspace.trim(),
-        goal: input.goal.trim()
+        goal: input.goal.trim(),
+        reasoningEffort: input.reasoningEffort ?? 'auto'
       },
       rounds: 0,
       events: [],
@@ -208,11 +215,7 @@ export class StandaloneJobManager {
     const waiting = job.waiting;
     job.waiting = undefined;
     this.emit(job, 'cancelled', 'Job cancelled by user');
-    // The HTTP cancellation acknowledgement is a durability boundary: once cancel()
-    // resolves, a process restart must never restore this job as running.
     await this.persistTail;
-    // Wake a suspended decision/guidance round after the terminal state is on disk so its
-    // cancellation context can unwind without racing a restorer against stale state.
     waiting?.resolve('');
     return snapshot(job);
   }
@@ -336,8 +339,6 @@ export class StandaloneJobManager {
           const input: ProjectEngineerInput = {
             ...job.input,
             claudeGuidance: job.guidance,
-            // A Console job is one billing/budget unit even when material-decision or
-            // external-guidance checkpoints cause multiple backend rounds or a restart.
             budgetJobId: job.id
           };
           this.emit(job, 'status', `Agent round ${round} running`);
