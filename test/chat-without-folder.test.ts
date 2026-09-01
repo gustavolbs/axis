@@ -18,7 +18,7 @@ const fixesCss = read('app/src/lc-fixes.css');
  * Chat is one inference. executeDirectChat only echoes the workspace back in
  * its result — it never reads a file — so requiring a folder to say "hello"
  * was a gate with nothing behind it. Cowork acts on a folder and still needs
- * one. Each layer of the path had its own check.
+ * one. Each layer of the path has an explicit contract.
  */
 
 test('the chat fast path does not read the workspace', () => {
@@ -53,15 +53,12 @@ test('the job manager only requires a folder for the engineering pipeline', () =
   assert.match(guard, /!input\.workspace\.trim\(\)/);
 });
 
-test('a project-less chat skips workspace resolution', () => {
-  // resolveWorkspace throws on an empty path, and it runs whenever any project
-  // exists — so a chat with no folder crashed there even though nothing
-  // downstream of a chat reads the value.
+test('a project-less chat always skips workspace resolution', () => {
   assert.match(engineerBackend, /interactionMode\?: 'chat' \| 'cowork'/, 'the type must carry the mode');
   const resolve = engineerBackend.slice(engineerBackend.indexOf('private async resolveProject'));
   const body = resolve.slice(0, resolve.indexOf('await resolveWorkspace'));
-  assert.match(body, /input\.interactionMode === 'chat'/);
-  assert.match(body, /!input\.workspace\.trim\(\)/);
+  assert.match(body, /if \(!input\.projectId\)/);
+  assert.match(body, /input\.interactionMode === 'chat'\) return \{ workspace: '' \}/);
 });
 
 test('the composer only blocks the send in Cowork', () => {
