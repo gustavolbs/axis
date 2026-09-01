@@ -89,7 +89,7 @@ test('installation and release docs preserve standalone state and isolation inva
   assert.match(install, /allowed providers: ollama/);
   assert.match(install, /Organization ID is a security boundary/);
   assert.match(install, /~\/\.local-coder\/settings\.json/);
-  assert.match(install, /remoteWorkerCredentialRef/);
+  assert.match(install, /LOCAL_CODER_REMOTE_WORKER_CREDENTIAL_REF/);
   assert.match(install, /does not persist the raw worker bearer token/);
   assert.match(install, /macOS Keychain/);
   assert.doesNotMatch(install, /legacy v0\.14|control-plane\.json.*remain|npm run console/);
