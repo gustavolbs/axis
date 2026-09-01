@@ -33,7 +33,9 @@ import {
 import {
   ProjectStore,
   projectIsolationKey,
-  type ProjectDefinition
+  type ModelSelection,
+  type ProjectDefinition,
+  type RoutingPolicy
 } from './project-store.js';
 import type {
   InferenceOutputFormat,
@@ -51,6 +53,12 @@ export type ProjectEngineerInput = LocalEngineerInput & {
   projectId?: string;
   /** Internal host correlation id so resumed decision rounds share one per-job budget. */
   budgetJobId?: string;
+  /** Optional standalone override. Undefined preserves the Project default. */
+  routingPolicy?: RoutingPolicy;
+  /** Optional standalone override. Auto remains provider/router driven. */
+  modelSelection?: ModelSelection;
+  /** Optional standalone override. Auto preserves the Agent Runtime stage policy. */
+  reasoningEffort?: 'auto' | ReasoningEffort;
 };
 
 export interface LegacyEngineerExecutor {
@@ -231,9 +239,19 @@ export class ProjectAwareEngineerBackend {
   async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
     const resolved = await this.resolveProject(input);
     if (!resolved.project) {
+      if (
+        input.routingPolicy !== undefined ||
+        input.modelSelection !== undefined ||
+        (input.reasoningEffort !== undefined && input.reasoningEffort !== 'auto')
+      ) {
+        throw new Error('Per-task routing, model, and effort overrides require a configured Project.');
+      }
       const {
         projectId: _projectId,
         budgetJobId: _budgetJobId,
+        routingPolicy: _routingPolicy,
+        modelSelection: _modelSelection,
+        reasoningEffort: _reasoningEffort,
         ...legacyInput
       } = input;
       return await this.legacy.executeEngineer(legacyInput);
@@ -266,6 +284,9 @@ export class ProjectAwareEngineerBackend {
       providerRuntime,
       localChat,
       {
+        policy: input.routingPolicy,
+        modelSelection: input.modelSelection,
+        reasoningEffort: input.reasoningEffort === 'auto' ? undefined : input.reasoningEffort,
         budget,
         onRoute: (event) => routingTrace.push(trace(event)),
         onAttemptComplete: (observation) => {
@@ -284,6 +305,9 @@ export class ProjectAwareEngineerBackend {
     const {
       projectId: _projectId,
       budgetJobId: _budgetJobId,
+      routingPolicy: _routingPolicy,
+      modelSelection: _modelSelection,
+      reasoningEffort: _reasoningEffort,
       ...agentInput
     } = input;
     const memoryScopeKey = projectIsolationKey(project);
