@@ -164,6 +164,7 @@ export function ConsoleRoot() {
     localStorage.setItem('local-coder.project', project.id);
     selectSurface('agent');
     setAgentEpoch((value) => value + 1);
+    window.setTimeout(() => document.querySelector<HTMLButtonElement>('.new-task-button')?.click(), 80);
   }
 
   function openAdvanced(project?: AdminProject) {
@@ -176,14 +177,15 @@ export function ConsoleRoot() {
     event.currentTarget.setPointerCapture(event.pointerId);
     const startX = event.clientX;
     const startWidth = sidebarWidth;
+    let latestWidth = startWidth;
     const onMove = (moveEvent: PointerEvent) => {
-      const next = Math.min(320, Math.max(220, startWidth + moveEvent.clientX - startX));
-      setSidebarWidth(next);
+      latestWidth = Math.min(320, Math.max(220, startWidth + moveEvent.clientX - startX));
+      setSidebarWidth(latestWidth);
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      localStorage.setItem('local-coder.sidebar-width', String(sidebarWidth));
+      localStorage.setItem('local-coder.sidebar-width', String(latestWidth));
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp, { once: true });
