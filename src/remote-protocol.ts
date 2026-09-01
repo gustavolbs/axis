@@ -4,7 +4,7 @@ import type {
   LocalEngineerResult,
   LocalEngineerFileChange
 } from './local-engineer.js';
-import type { OllamaGeneration } from './ollama.js';
+import type { OllamaGeneration, OllamaThinkingLevel } from './ollama.js';
 import type { LocalExecutionPlan, LocalExecutionPlanResult } from './orchestrator.js';
 
 export const REMOTE_WORKER_PROTOCOL_VERSION = 1 as const;
@@ -54,11 +54,22 @@ export interface RemoteWorkerHealth {
   ollama: unknown;
 }
 
+export interface RemoteChatRuntime {
+  model?: string;
+  numCtx?: number;
+  keepAlive?: string | number;
+  think?: OllamaThinkingLevel;
+  maxTokens?: number;
+  maxDurationMs?: number;
+}
+
 export interface RemoteChatRequest {
   protocolVersion: typeof REMOTE_WORKER_PROTOCOL_VERSION;
   systemPrompt: string;
   userPrompt: string;
   format?: 'json' | Record<string, unknown>;
+  /** Serializable Ollama hints only; progress callbacks stay on the worker. */
+  runtime?: RemoteChatRuntime;
 }
 
 export interface RemoteChatResponse {
