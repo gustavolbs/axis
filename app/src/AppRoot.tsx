@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import {
+  Archive,
+  ArchiveRestore,
   ChevronDown,
   Folder,
   FolderOpen,
@@ -8,7 +10,8 @@ import {
   MoreHorizontal,
   PanelLeft,
   Plus,
-  Search
+  Search,
+  Trash2
 } from 'lucide-react';
 
 import type { AdminProject } from './app-types.js';
@@ -18,20 +21,28 @@ import { RunInspector } from './RunInspector.js';
 import { SettingsModal } from './SettingsModal.js';
 import { displayProfileName, type DesktopCommand } from './native.js';
 
-/** No Chats surface: conversations live in the sidebar, under their project or
- *  in the project-less Chats section. */
-type Surface = 'agent' | 'projects' | 'runs';
+/** Conversations live in the sidebar, under their project or in the
+ *  project-less Chats section. Archived holds what has been hidden from it. */
+type Surface = 'agent' | 'projects' | 'runs' | 'archived';
 
 interface SidebarJob {
   id: string;
   status: string;
   updatedAt: string;
+  /** User-chosen name; the goal is the fallback. */
+  title?: string;
+  archivedAt?: string;
   input: { goal: string; projectId?: string };
+}
+
+/** A conversation's name, falling back to the prompt that started it. */
+function jobTitle(job: SidebarJob): string {
+  return job.title?.trim() || job.input.goal;
 }
 
 function storedSurface(): Surface {
   const value = localStorage.getItem('local-coder.surface');
-  return value === 'projects' || value === 'runs' ? value : 'agent';
+  return value === 'projects' || value === 'runs' || value === 'archived' ? value : 'agent';
 }
 
 const READ_KEY = 'local-coder.read-jobs';
@@ -50,8 +61,12 @@ function isRunning(status: string): boolean {
   return status === 'running' || status === 'queued' || status.startsWith('waiting');
 }
 
-async function api<T>(url: string): Promise<T> {
-  const response = await fetch(url, { headers: { accept: 'application/json' } });
+async function api<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const response = await fetch(url, {
+    method: init?.method ?? 'GET',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: init?.body === undefined ? undefined : JSON.stringify(init.body)
+  });
   const body = (await response.json()) as T & { error?: string };
   if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
   return body;
@@ -90,6 +105,8 @@ export function AppRoot() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [jobMenuId, setJobMenuId] = useState<string>();
+  const [projectMenuId, setProjectMenuId] = useState<string>();
+  const [actionError, setActionError] = useState<string>();
   const [profileName, setProfileName] = useState('Local profile');
   const [runtimeOnline, setRuntimeOnline] = useState<boolean>();
   const [readJobs, setReadJobs] = useState<Set<string>>(() => storedIds(READ_KEY));
@@ -135,8 +152,19 @@ export function AppRoot() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  const recentJobs = useMemo(() => [...jobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 24), [jobs]);
-  const visibleProjects = useMemo(() => [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10), [projects]);
+  // Archiving hides an item from the sidebar; the Archived surface lists it.
+  const recentJobs = useMemo(() => jobs
+    .filter((job) => !job.archivedAt)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 24), [jobs]);
+  const visibleProjects = useMemo(() => projects
+    .filter((project) => !project.archived)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 10), [projects]);
+  const archivedJobs = useMemo(() => jobs
+    .filter((job) => job.archivedAt)
+    .sort((a, b) => (b.archivedAt ?? '').localeCompare(a.archivedAt ?? '')), [jobs]);
+  const archivedProjects = useMemo(() => projects.filter((project) => project.archived), [projects]);
 
   /** A conversation belongs to its project, or to the loose Chats section. */
   const jobsByProject = useMemo(() => {
@@ -163,10 +191,60 @@ export function AppRoot() {
   const searchResults = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
     return {
-      jobs: recentJobs.filter((job) => !needle || job.input.goal.toLowerCase().includes(needle)).slice(0, 8),
+      jobs: recentJobs.filter((job) => !needle || jobTitle(job).toLowerCase().includes(needle)).slice(0, 8),
       projects: projects.filter((project) => !needle || project.name.toLowerCase().includes(needle) || project.workspace.toLowerCase().includes(needle)).slice(0, 8)
     };
   }, [projects, recentJobs, searchQuery]);
+
+  /** Every mutation refreshes from the runtime rather than guessing locally. */
+  async function mutate(run: () => Promise<unknown>) {
+    setJobMenuId(undefined);
+    setProjectMenuId(undefined);
+    try {
+      await run();
+      await refreshSidebar();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function renameJob(job: SidebarJob) {
+    const next = window.prompt('Rename chat', jobTitle(job));
+    if (next === null || !next.trim()) return;
+    void mutate(() => api(`/api/jobs/${job.id}`, { method: 'PATCH', body: { title: next.trim() } }));
+  }
+
+  function archiveJob(job: SidebarJob, archived: boolean) {
+    void mutate(() => api(`/api/jobs/${job.id}`, { method: 'PATCH', body: { archived } }));
+  }
+
+  function deleteJob(job: SidebarJob) {
+    if (!window.confirm(`Delete "${jobTitle(job)}"? This cannot be undone.`)) return;
+    void mutate(async () => {
+      await api(`/api/jobs/${job.id}`, { method: 'DELETE' });
+      if (localStorage.getItem('local-coder.open-job') === job.id) {
+        localStorage.removeItem('local-coder.open-job');
+        setAgentEpoch((value) => value + 1);
+      }
+    });
+  }
+
+  function renameProject(project: AdminProject) {
+    const next = window.prompt('Rename project', project.name);
+    if (next === null || !next.trim()) return;
+    void mutate(() => api(`/api/projects/${encodeURIComponent(project.id)}`, { method: 'PATCH', body: { name: next.trim() } }));
+  }
+
+  function archiveProject(project: AdminProject, archived: boolean) {
+    void mutate(() => api(`/api/projects/${encodeURIComponent(project.id)}/archive`, { method: 'POST', body: { archived } }));
+  }
+
+  function deleteProject(project: AdminProject) {
+    // The runtime refuses while the project still holds conversations, and says
+    // how many; surface that instead of pre-empting it with our own count.
+    if (!window.confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
+    void mutate(() => api(`/api/projects/${encodeURIComponent(project.id)}`, { method: 'DELETE' }));
+  }
 
   function selectSurface(next: Surface) {
     localStorage.setItem('local-coder.surface', next);
@@ -323,14 +401,17 @@ export function AppRoot() {
         aria-pressed={running ? undefined : !read}
         title={dotLabel}
       />
-      <button className={`lc-shell-sidebar-row ${read || running ? '' : 'unread'}`} onClick={() => openJob(job)} title={job.input.goal}>
-        <span className="lc-shell-sidebar-row-copy"><strong>{job.input.goal}</strong><small>{relative(job.updatedAt)}</small></span>
+      <button className={`lc-shell-sidebar-row ${read || running ? '' : 'unread'}`} onClick={() => openJob(job)} title={jobTitle(job)}>
+        <span className="lc-shell-sidebar-row-copy"><strong>{jobTitle(job)}</strong><small>{relative(job.updatedAt)}</small></span>
       </button>
-      <button className="lc-shell-row-menu-button" aria-label={`More options for ${job.input.goal}`} onClick={(event) => { event.stopPropagation(); setJobMenuId((current) => current === job.id ? undefined : job.id); }}><MoreHorizontal size={14} /></button>
+      <button className="lc-shell-row-menu-button" aria-label={`More options for ${jobTitle(job)}`} onClick={(event) => { event.stopPropagation(); setProjectMenuId(undefined); setJobMenuId((current) => current === job.id ? undefined : job.id); }}><MoreHorizontal size={14} /></button>
       {jobMenuId === job.id ? <div className="lc-shell-row-menu">
         <button onClick={() => openJob(job)}>Open chat</button>
         <button onClick={() => { setJobMenuId(undefined); markRead(job.id, !read); }}>{read ? 'Mark as unread' : 'Mark as read'}</button>
+        <button onClick={() => renameJob(job)}>Rename…</button>
+        <button onClick={() => archiveJob(job, true)}>Archive</button>
         <button onClick={() => { setJobMenuId(undefined); selectSurface('runs'); }}>View run details</button>
+        <button className="danger" onClick={() => deleteJob(job)}>Delete…</button>
       </div> : null}
     </div>;
   }
@@ -368,6 +449,7 @@ export function AppRoot() {
         <button className="lc-shell-new-chat" onClick={startNewTask} aria-label="New chat" data-tooltip={tooltip('New chat')}><i aria-hidden="true"><Plus size={15} /></i><span>New chat</span></button>
         <button className={surface === 'projects' ? 'active' : ''} onClick={() => selectSurface('projects')} aria-label="Projects" data-tooltip={tooltip('Projects')}><Folder size={16} aria-hidden="true" /><span>Projects</span></button>
         <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')} aria-label="Runs" data-tooltip={tooltip('Runs')}><History size={16} aria-hidden="true" /><span>Runs</span></button>
+        <button className={surface === 'archived' ? 'active' : ''} onClick={() => selectSurface('archived')} aria-label="Archived" data-tooltip={tooltip('Archived')}><Archive size={16} aria-hidden="true" /><span>Archived</span></button>
       </nav>
 
       <div className="lc-shell-sidebar-scroll">
@@ -392,6 +474,13 @@ export function AppRoot() {
                 <button className="lc-shell-sidebar-row project-row" onClick={() => runProject(project)} title={project.workspace}>
                   <span className="lc-shell-sidebar-row-copy"><strong>{project.name}</strong></span>
                 </button>
+                <button className="lc-shell-row-menu-button" aria-label={`More options for ${project.name}`} onClick={(event) => { event.stopPropagation(); setJobMenuId(undefined); setProjectMenuId((current) => current === project.id ? undefined : project.id); }}><MoreHorizontal size={14} /></button>
+                {projectMenuId === project.id ? <div className="lc-shell-row-menu">
+                  <button onClick={() => { setProjectMenuId(undefined); runProject(project); }}>Open project</button>
+                  <button onClick={() => renameProject(project)}>Rename…</button>
+                  <button onClick={() => archiveProject(project, true)}>Archive</button>
+                  <button className="danger" onClick={() => deleteProject(project)}>Delete…</button>
+                </div> : null}
               </div>
               {expanded ? <div className="lc-shell-project-children">
                 {children.map((job) => renderJobRow(job))}
@@ -425,9 +514,22 @@ export function AppRoot() {
     </aside>
 
     <main className="lc-shell-content-shell">
+      {actionError ? <div className="lc-agent-error-banner" role="status" aria-live="polite">
+        <span>{actionError}</span>
+        <button onClick={() => setActionError(undefined)} aria-label="Dismiss">Dismiss</button>
+      </div> : null}
       {surface === 'agent' ? <App key={agentEpoch} /> : null}
       {surface === 'projects' ? <ProjectGallery onOpenProject={runProject} onAdvanced={openSettings} /> : null}
       {surface === 'runs' ? <RunInspector /> : null}
+      {surface === 'archived' ? <ArchivedView
+        jobs={archivedJobs}
+        projects={archivedProjects}
+        onOpenJob={openJob}
+        onRestoreJob={(job) => archiveJob(job, false)}
+        onDeleteJob={deleteJob}
+        onRestoreProject={(project) => archiveProject(project, false)}
+        onDeleteProject={deleteProject}
+      /> : null}
     </main>
 
     {searchOpen ? <div className="global-search-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSearchOpen(false); }}>
@@ -442,5 +544,47 @@ export function AppRoot() {
     </div> : null}
 
     <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} onRunProject={(project) => { setSettingsOpen(false); runProject(project); }} />
+  </div>;
+}
+
+/**
+ * Where archived conversations and projects live. Archiving never discards
+ * anything, so everything here can be restored; delete is the only one-way
+ * door and it asks first.
+ */
+function ArchivedView(props: {
+  jobs: SidebarJob[];
+  projects: AdminProject[];
+  onOpenJob: (job: SidebarJob) => void;
+  onRestoreJob: (job: SidebarJob) => void;
+  onDeleteJob: (job: SidebarJob) => void;
+  onRestoreProject: (project: AdminProject) => void;
+  onDeleteProject: (project: AdminProject) => void;
+}) {
+  const empty = props.jobs.length === 0 && props.projects.length === 0;
+  return <div className="archived-page">
+    <h1 className="page-title">Archived</h1>
+
+    {empty ? <p className="archived-empty">Nothing archived. Archiving a chat or a project hides it from the sidebar without deleting it.</p> : null}
+
+    {props.projects.length ? <section className="archived-section">
+      <h2>Projects</h2>
+      {props.projects.map((project) => <div className="archived-row" key={project.id}>
+        <span className="archived-row-copy"><strong>{project.name}</strong><small>{project.workspace}</small></span>
+        <button className="btn-secondary" onClick={() => props.onRestoreProject(project)}><ArchiveRestore size={14} />Restore</button>
+        <button className="btn-secondary danger" onClick={() => props.onDeleteProject(project)}><Trash2 size={14} />Delete</button>
+      </div>)}
+    </section> : null}
+
+    {props.jobs.length ? <section className="archived-section">
+      <h2>Chats</h2>
+      {props.jobs.map((job) => <div className="archived-row" key={job.id}>
+        <button className="archived-row-open" onClick={() => props.onOpenJob(job)} title={jobTitle(job)}>
+          <span className="archived-row-copy"><strong>{jobTitle(job)}</strong><small>Archived {relative(job.archivedAt ?? job.updatedAt)} ago</small></span>
+        </button>
+        <button className="btn-secondary" onClick={() => props.onRestoreJob(job)}><ArchiveRestore size={14} />Restore</button>
+        <button className="btn-secondary danger" onClick={() => props.onDeleteJob(job)}><Trash2 size={14} />Delete</button>
+      </div>)}
+    </section> : null}
   </div>;
 }

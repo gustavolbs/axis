@@ -61,6 +61,10 @@ export interface StandaloneJobSnapshot {
   status: StandaloneJobStatus;
   createdAt: string;
   updatedAt: string;
+  /** User-chosen name. The goal is the fallback title, not the name. */
+  title?: string;
+  /** Set while the conversation is archived; hidden from the sidebar. */
+  archivedAt?: string;
   input: StandaloneJobInput;
   decisionRequest?: PremiumDecisionRequest;
   escalationPlan?: ProjectEscalationPlan;
@@ -95,6 +99,8 @@ function snapshot(job: JobInternal): StandaloneJobSnapshot {
     status: job.status,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
+    title: job.title,
+    archivedAt: job.archivedAt,
     input: job.input,
     decisionRequest: job.decisionRequest,
     escalationPlan: job.escalationPlan,
@@ -225,6 +231,45 @@ export class StandaloneJobManager {
     this.emit(job, 'status', input.interactionMode === 'chat' ? 'Chat queued' : 'Job queued');
     void this.run(job);
     return snapshot(job);
+  }
+
+  /**
+   * A conversation's displayed name. Stored separately from the goal so the
+   * prompt that started it is never rewritten.
+   */
+  async rename(id: string, title: string): Promise<StandaloneJobSnapshot> {
+    const job = this.requireJob(id);
+    const clean = title.trim();
+    if (!clean) throw new Error('title is required.');
+    job.title = clean;
+    job.updatedAt = new Date().toISOString();
+    this.emit(job, 'status', 'Renamed');
+    await this.persistTail;
+    return snapshot(job);
+  }
+
+  /** Archiving only hides a conversation; nothing is discarded. */
+  async setArchived(id: string, archived: boolean): Promise<StandaloneJobSnapshot> {
+    const job = this.requireJob(id);
+    job.archivedAt = archived ? new Date().toISOString() : undefined;
+    job.updatedAt = new Date().toISOString();
+    this.emit(job, 'status', archived ? 'Archived' : 'Restored');
+    await this.persistTail;
+    return snapshot(job);
+  }
+
+  /** Stops a running job first: deleting one mid-flight would leak the run. */
+  async remove(id: string): Promise<boolean> {
+    const job = this.jobs.get(id);
+    if (!job) return false;
+    if (job.status === 'running' || job.status === 'queued') {
+      job.controller?.abort();
+      job.waiting?.resolve('');
+    }
+    this.jobs.delete(id);
+    this.schedulePersist();
+    await this.persistTail;
+    return true;
   }
 
   async cancel(id: string): Promise<StandaloneJobSnapshot> {

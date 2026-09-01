@@ -201,6 +201,21 @@ export class DesktopAppRuntime {
     writeAppSettings({ ...readAppSettings(), ...patch });
   }
 
+  /** Prunes ids whose project no longer exists, so a delete cannot leave one behind. */
+  private archivedProjectIds(): string[] {
+    const stored = readAppSettings()?.archivedProjectIds ?? [];
+    if (stored.length === 0) return [];
+    const live = new Set(this.projects.listProjects().map((project) => project.id));
+    return stored.filter((id) => live.has(id));
+  }
+
+  private setProjectArchived(id: string, archived: boolean): void {
+    const current = new Set(this.archivedProjectIds());
+    if (archived) current.add(id);
+    else current.delete(id);
+    writeAppSettings({ ...readAppSettings(), archivedProjectIds: [...current] });
+  }
+
   private get workerHealthPath(): string {
     return readAppSettings()?.workerHealthPath ?? DEFAULT_WORKER_HEALTH_PATH;
   }
@@ -277,6 +292,21 @@ export class DesktopAppRuntime {
       if (!job) throw new Error('Job not found.');
       return { job };
     }
+    if (method === 'PATCH' && jobMatch) {
+      const body = objectBody(request.body);
+      const id = jobMatch[1];
+      if (body.title !== undefined) {
+        return { job: await this.jobs.rename(id, requiredString(body, 'title')) };
+      }
+      if (body.archived !== undefined) {
+        if (typeof body.archived !== 'boolean') throw new Error('archived must be a boolean.');
+        return { job: await this.jobs.setArchived(id, body.archived) };
+      }
+      throw new Error('Supply title or archived.');
+    }
+    if (method === 'DELETE' && jobMatch) {
+      return { removed: await this.jobs.remove(jobMatch[1]) };
+    }
     const cancelMatch = /^\/jobs\/([A-Za-z0-9-]+)\/cancel$/.exec(pathname);
     if (method === 'POST' && cancelMatch) return { job: await this.jobs.cancel(cancelMatch[1]) };
     const decisionMatch = /^\/jobs\/([A-Za-z0-9-]+)\/decision$/.exec(pathname);
@@ -308,7 +338,15 @@ export class DesktopAppRuntime {
       };
     }
 
-    if (method === 'GET' && pathname === '/projects') return { projects: this.projects.listProjects() };
+    if (method === 'GET' && pathname === '/projects') {
+      const archived = new Set(this.archivedProjectIds());
+      return {
+        projects: this.projects.listProjects().map((project) => ({
+          ...project,
+          archived: archived.has(project.id)
+        }))
+      };
+    }
     if (method === 'POST' && pathname === '/projects') {
       return { project: this.projects.createProject(objectBody(request.body) as unknown as CreateProjectInput) };
     }
@@ -322,8 +360,30 @@ export class DesktopAppRuntime {
         )
       };
     }
+    const projectArchiveMatch = /^\/projects\/([^/]+)\/archive$/.exec(pathname);
+    if (projectArchiveMatch && method === 'POST') {
+      const id = decodeURIComponent(projectArchiveMatch[1]);
+      const body = objectBody(request.body);
+      if (typeof body.archived !== 'boolean') throw new Error('archived must be a boolean.');
+      this.projects.getProject(id);   // 404s on an unknown id rather than storing it
+      this.setProjectArchived(id, body.archived);
+      return { project: { ...this.projects.getProject(id), archived: body.archived } };
+    }
     if (projectMatch && method === 'DELETE') {
-      return { removed: this.projects.removeProject(decodeURIComponent(projectMatch[1])) };
+      const id = decodeURIComponent(projectMatch[1]);
+      // Deleting a project used to leave its conversations pointing at an id
+      // that no longer existed, so they vanished from the sidebar without
+      // going anywhere. Only an empty project can be deleted.
+      const held = this.jobs.list().filter((job) => job.input.projectId === id);
+      if (held.length > 0) {
+        throw new Error(
+          `${id} still holds ${held.length} conversation${held.length === 1 ? '' : 's'}. Archive or delete them first.`
+        );
+      }
+      const removed = this.projects.removeProject(id);
+      // Do not let a deleted id linger in the archived list.
+      this.setProjectArchived(id, false);
+      return { removed };
     }
     const catalogMatch = /^\/projects\/([^/]+)\/catalog$/.exec(pathname);
     if (catalogMatch && method === 'GET') {

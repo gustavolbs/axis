@@ -14,6 +14,13 @@ export interface AppSettingsFile {
    * different deployment can serve it anywhere, and a hardcoded path 404s.
    */
   workerHealthPath?: string;
+  /**
+   * Archived projects, by id. Archiving is presentation — it hides a project
+   * from the sidebar and changes nothing about isolation, budgets or routing —
+   * so it lives here rather than in the project store, whose schema carries
+   * credential-isolation invariants. Unknown ids are pruned on read.
+   */
+  archivedProjectIds?: string[];
   model?: string;
   updatedAt?: string;
 }
@@ -48,6 +55,9 @@ function parseSettings(raw: string, source: string): AppSettingsFile | undefined
     remoteWorkerCredentialRef: typeof value.remoteWorkerCredentialRef === 'string' ? value.remoteWorkerCredentialRef.trim() : undefined,
     ollamaBaseUrl: typeof value.ollamaBaseUrl === 'string' ? value.ollamaBaseUrl.trim() : undefined,
     workerHealthPath: typeof value.workerHealthPath === 'string' ? value.workerHealthPath.trim() : undefined,
+    archivedProjectIds: Array.isArray(value.archivedProjectIds)
+      ? value.archivedProjectIds.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+      : undefined,
     model: typeof value.model === 'string' ? value.model.trim() : undefined,
     updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : undefined
   };
@@ -68,6 +78,7 @@ export function writeAppSettings(settings: AppSettingsFile): void {
     remoteWorkerCredentialRef: settings.remoteWorkerCredentialRef?.trim() || undefined,
     ollamaBaseUrl: settings.ollamaBaseUrl?.trim() || undefined,
     workerHealthPath: settings.workerHealthPath?.trim() || undefined,
+    archivedProjectIds: settings.archivedProjectIds?.length ? [...new Set(settings.archivedProjectIds)] : undefined,
     model: settings.model?.trim() || undefined,
     updatedAt: new Date().toISOString()
   };

@@ -7,6 +7,8 @@ export type ModelSelection =
 export interface AdminProject {
   id: string;
   name: string;
+  /** Presentation only: archived projects are hidden from the sidebar. */
+  archived?: boolean;
   workspace: string;
   organizationId: string;
   organizationName?: string;
