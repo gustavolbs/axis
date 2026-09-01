@@ -56,10 +56,17 @@ import {
 } from './routing-history.js';
 import { resolveWorkspace } from './workspace.js';
 
+export interface ProjectChatHistoryTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export type ProjectEngineerInput = LocalEngineerInput & {
   projectId?: string;
   /** Chat is a single inference; only Cowork runs the engineering pipeline. */
   interactionMode?: 'chat' | 'cowork';
+  /** Earlier Chat turns. The current user message remains goal. */
+  chatHistory?: ProjectChatHistoryTurn[];
   /** Internal host correlation id so resumed decision rounds share one per-job budget. */
   budgetJobId?: string;
   /** Optional standalone override. Undefined preserves the Project default. */
@@ -140,7 +147,11 @@ type RemoteChatClient = {
 type AgentExecutor = (
   model: LegacyAgentChatClient,
   config: LocalCoderConfig,
-  input: LocalEngineerInput & { repoMemoryScopeKey?: string }
+  input: LocalEngineerInput & {
+    repoMemoryScopeKey?: string;
+    interactionMode?: 'chat' | 'cowork';
+    chatHistory?: ProjectChatHistoryTurn[];
+  }
 ) => Promise<LocalEngineerExecution>;
 
 export interface ProjectEngineerBackendOptions {
