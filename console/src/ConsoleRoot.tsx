@@ -14,12 +14,13 @@ import {
 
 import type { AdminProject } from './AdminPanel.js';
 import { App } from './App.js';
+import { ChatHistory } from './ChatHistory.js';
 import { ProjectGallery } from './ProjectGallery.js';
 import { RunInspector } from './RunInspector.js';
 import { SettingsModal } from './SettingsModal.js';
 import type { DesktopCommand } from './native.js';
 
-type Surface = 'agent' | 'projects' | 'runs';
+type Surface = 'agent' | 'chats' | 'projects' | 'runs';
 
 interface SidebarJob {
   id: string;
@@ -30,7 +31,7 @@ interface SidebarJob {
 
 function storedSurface(): Surface {
   const value = localStorage.getItem('local-coder.surface');
-  return value === 'projects' || value === 'runs' ? value : 'agent';
+  return value === 'chats' || value === 'projects' || value === 'runs' ? value : 'agent';
 }
 
 async function api<T>(url: string): Promise<T> {
@@ -66,7 +67,7 @@ function displayProfileName(value: string): string {
   if (!clean) return 'Local profile';
   return clean.includes('.') || clean.includes('-') || clean.includes('_')
     ? clean.split(/[._-]+/).filter(Boolean).map((part) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`).join(' ')
-    : clean;
+    : `${clean[0]?.toUpperCase() ?? ''}${clean.slice(1)}`;
 }
 
 export function ConsoleRoot() {
@@ -188,7 +189,7 @@ export function ConsoleRoot() {
     if (command === 'new-chat') startNewTask();
     else if (command === 'toggle-sidebar') toggleSidebar();
     else if (command === 'settings') setSettingsOpen(true);
-    else if (command === 'chats') selectSurface('agent');
+    else if (command === 'chats') selectSurface('chats');
     else if (command === 'projects') selectSurface('projects');
     else if (command === 'runs') selectSurface('runs');
   }
@@ -207,7 +208,7 @@ export function ConsoleRoot() {
       else if (key === 'n') { event.preventDefault(); startNewTask(); }
       else if (key === '\\') { event.preventDefault(); toggleSidebar(); }
       else if (key === ',') { event.preventDefault(); setSettingsOpen(true); }
-      else if (key === '1') { event.preventDefault(); selectSurface('agent'); }
+      else if (key === '1') { event.preventDefault(); selectSurface('chats'); }
       else if (key === '2') { event.preventDefault(); selectSurface('projects'); }
       else if (key === '3') { event.preventDefault(); selectSurface('runs'); }
     };
@@ -247,6 +248,7 @@ export function ConsoleRoot() {
   } as CSSProperties;
   const tooltip = (label: string) => sidebarCollapsed ? label : undefined;
   const avatar = profileName.trim().charAt(0).toUpperCase() || 'L';
+  const hideMacCollapsedToggle = sidebarCollapsed && isElectron && platform === 'darwin';
 
   return <div
     className={`reference-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${autoCollapsed ? 'auto-sidebar-collapsed' : ''} surface-${surface}`}
@@ -257,15 +259,15 @@ export function ConsoleRoot() {
     <aside className="reference-sidebar" aria-label="Local Coder" data-collapsed={sidebarCollapsed ? 'true' : 'false'}>
       <div className="reference-sidebar-titlebar">
         <div className="reference-product-mark" aria-label="Local Coder"><span><Sparkles size={15} /></span><strong>Local Coder</strong></div>
-        <button className="reference-sidebar-collapse" onClick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} data-tooltip={tooltip(sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar')}>
+        {!hideMacCollapsedToggle ? <button className="reference-sidebar-collapse" onClick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} data-tooltip={tooltip(sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar')}>
           <PanelLeft size={16} aria-hidden="true" />
-        </button>
+        </button> : null}
       </div>
 
       <nav className="reference-primary-nav">
         <button className="reference-new-chat" onClick={startNewTask} aria-label="New chat" data-tooltip={tooltip('New chat')}><Plus size={16} aria-hidden="true" /><span>New chat</span></button>
         <button onClick={() => setSearchOpen(true)} aria-label="Search" data-tooltip={tooltip('Search')}><Search size={15} aria-hidden="true" /><span>Search</span><kbd>⌘K</kbd></button>
-        <button className={surface === 'agent' ? 'active' : ''} onClick={() => selectSurface('agent')} aria-label="Chats" data-tooltip={tooltip('Chats')}><MessageSquare size={15} aria-hidden="true" /><span>Chats</span></button>
+        <button className={surface === 'chats' ? 'active' : ''} onClick={() => selectSurface('chats')} aria-label="Chats" data-tooltip={tooltip('Chats')}><MessageSquare size={15} aria-hidden="true" /><span>Chats</span></button>
         <button className={surface === 'projects' ? 'active' : ''} onClick={() => selectSurface('projects')} aria-label="Projects" data-tooltip={tooltip('Projects')}><Folder size={15} aria-hidden="true" /><span>Projects</span></button>
         <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')} aria-label="Runs" data-tooltip={tooltip('Runs')}><History size={15} aria-hidden="true" /><span>Runs</span></button>
       </nav>
@@ -309,6 +311,7 @@ export function ConsoleRoot() {
 
     <main className="reference-content-shell">
       {surface === 'agent' ? <App key={agentEpoch} /> : null}
+      {surface === 'chats' ? <ChatHistory jobs={jobs} onOpen={openJob} onNew={startNewTask} /> : null}
       {surface === 'projects' ? <ProjectGallery onOpenProject={runProject} onAdvanced={openSettings} /> : null}
       {surface === 'runs' ? <RunInspector /> : null}
     </main>
