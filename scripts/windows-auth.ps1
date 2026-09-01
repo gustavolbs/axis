@@ -28,7 +28,16 @@ function Resolve-LocalCoderWorkerToken {
     }
   }
 
-  if (-not $Rotate -and -not [string]::IsNullOrWhiteSpace($ExistingToken)) {
+  if ($Rotate) {
+    $generated = New-LocalCoderWorkerToken
+    return [PSCustomObject]@{
+      Token = $generated
+      Source = "rotated"
+      Changed = $true
+    }
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($ExistingToken)) {
     return [PSCustomObject]@{
       Token = $ExistingToken
       Source = "existing"
@@ -36,10 +45,9 @@ function Resolve-LocalCoderWorkerToken {
     }
   }
 
-  $generated = New-LocalCoderWorkerToken
   return [PSCustomObject]@{
-    Token = $generated
-    Source = $(if ($Rotate) { "rotated" } else { "generated" })
-    Changed = $true
+    Token = $null
+    Source = "disabled"
+    Changed = $false
   }
 }
