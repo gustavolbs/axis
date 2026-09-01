@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -74,6 +75,33 @@ async function readJson(request: IncomingMessage, maxBytes = 200_000): Promise<R
   return parsed as Record<string, unknown>;
 }
 
+function isLoopbackIpv4(value: string): boolean {
+  const parts = value.split('.');
+  if (parts.length !== 4 || parts[0] !== '127') return false;
+  return parts.every((part) => {
+    if (!/^\d{1,3}$/.test(part)) return false;
+    const octet = Number(part);
+    return octet >= 0 && octet <= 255;
+  });
+}
+
+function isLoopbackAddress(value: string | undefined): boolean {
+  if (!value) return false;
+  const address = value.toLowerCase();
+  if (address === '::1') return true;
+  const ipv4 = address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address;
+  return isLoopbackIpv4(ipv4);
+}
+
+function expandWorkspace(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === '~') return os.homedir();
+  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+  return path.resolve(trimmed);
+}
+
 function parseModelSelection(value: unknown): ModelSelection | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -116,8 +144,8 @@ function parseJobInput(
     : undefined;
   const workspace = projectId
     ? admin.getProject(projectId).workspace
-    : typeof body.workspace === 'string'
-      ? body.workspace
+    : typeof body.workspace === 'string' && body.workspace.trim()
+      ? expandWorkspace(body.workspace)
       : undefined;
   if (!workspace) throw new Error('workspace is required when projectId is not provided.');
 
@@ -231,6 +259,25 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
       });
     } catch (error) {
       json(response, 503, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+  if (request.method === 'GET' && url.pathname === '/api/fs/exists') {
+    if (!isLoopbackAddress(request.socket.remoteAddress)) {
+      json(response, 403, { error: 'Filesystem validation is loopback-only.' });
+      return;
+    }
+    const raw = url.searchParams.get('path')?.trim();
+    if (!raw) {
+      json(response, 400, { error: 'path is required.' });
+      return;
+    }
+    const resolvedPath = expandWorkspace(raw);
+    try {
+      const stat = await fs.stat(resolvedPath);
+      json(response, 200, { exists: stat.isDirectory(), resolvedPath });
+    } catch {
+      json(response, 200, { exists: false, resolvedPath });
     }
     return;
   }
