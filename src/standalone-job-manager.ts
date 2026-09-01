@@ -89,6 +89,15 @@ type PersistedJob = Omit<JobInternal, 'waiting' | 'controller'>;
 
 export type JobListener = (event: StandaloneJobEvent, job: StandaloneJobSnapshot) => void;
 
+/**
+ * How many conversations survive on disk. This was 30, which silently destroyed
+ * history: the store is rewritten in full on every change, so archiving a 31st
+ * conversation removed the oldest one for good. Archived conversations persist
+ * without their event log — progress telemetry, not content — which buys back
+ * far more room than the higher limit costs.
+ */
+const PERSISTED_JOB_LIMIT = 200;
+
 function premium(result: LocalEngineerResult): PremiumEngineerResult {
   return result as PremiumEngineerResult;
 }
@@ -167,7 +176,7 @@ export class StandaloneJobManager {
     }
     if (!Array.isArray(parsed)) throw new Error(`Standalone job store ${file} must contain an array.`);
 
-    for (const raw of parsed.slice(0, 30)) {
+    for (const raw of parsed.slice(0, PERSISTED_JOB_LIMIT)) {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
       const job = raw as PersistedJob;
       if (typeof job.id !== 'string' || !job.input || typeof job.input.goal !== 'string') continue;
@@ -406,11 +415,12 @@ export class StandaloneJobManager {
     if (!this.stateDir) return Promise.resolve();
     this.persistTail = this.persistTail.then(async () => {
       const jobs: PersistedJob[] = this.list()
-        .slice(0, 30)
+        .slice(0, PERSISTED_JOB_LIMIT)
         .map((publicJob) => {
           const internal = this.jobs.get(publicJob.id)!;
           return {
             ...publicJob,
+            events: publicJob.archivedAt ? [] : publicJob.events,
             guidance: internal.guidance
           };
         });

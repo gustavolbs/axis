@@ -552,6 +552,8 @@ export function AppRoot() {
  * anything, so everything here can be restored; delete is the only one-way
  * door and it asks first.
  */
+const ARCHIVED_PAGE_SIZE = 20;
+
 function ArchivedView(props: {
   jobs: SidebarJob[];
   projects: AdminProject[];
@@ -561,7 +563,12 @@ function ArchivedView(props: {
   onRestoreProject: (project: AdminProject) => void;
   onDeleteProject: (project: AdminProject) => void;
 }) {
+  const [visible, setVisible] = useState(ARCHIVED_PAGE_SIZE);
   const empty = props.jobs.length === 0 && props.projects.length === 0;
+  // Restoring or deleting shortens the list; never leave a stale page size
+  // larger than what is left, or "Show more" lingers with nothing to show.
+  const shown = props.jobs.slice(0, Math.min(visible, props.jobs.length));
+  const remaining = props.jobs.length - shown.length;
   return <div className="archived-page">
     <h1 className="page-title">Archived</h1>
 
@@ -577,14 +584,18 @@ function ArchivedView(props: {
     </section> : null}
 
     {props.jobs.length ? <section className="archived-section">
-      <h2>Chats</h2>
-      {props.jobs.map((job) => <div className="archived-row" key={job.id}>
+      <h2>Chats<small>{props.jobs.length}</small></h2>
+      {shown.map((job) => <div className="archived-row" key={job.id}>
         <button className="archived-row-open" onClick={() => props.onOpenJob(job)} title={jobTitle(job)}>
           <span className="archived-row-copy"><strong>{jobTitle(job)}</strong><small>Archived {relative(job.archivedAt ?? job.updatedAt)} ago</small></span>
         </button>
         <button className="btn-secondary" onClick={() => props.onRestoreJob(job)}><ArchiveRestore size={14} />Restore</button>
         <button className="btn-secondary danger" onClick={() => props.onDeleteJob(job)}><Trash2 size={14} />Delete</button>
       </div>)}
+      {remaining > 0 ? <button
+        className="archived-more"
+        onClick={() => setVisible((current) => current + ARCHIVED_PAGE_SIZE)}
+      >Show {Math.min(remaining, ARCHIVED_PAGE_SIZE)} more<small>{remaining} left</small></button> : null}
     </section> : null}
   </div>;
 }

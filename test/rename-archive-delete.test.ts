@@ -104,6 +104,26 @@ test('deleting the open conversation clears it from the composer', () => {
   assert.match(body, /local-coder\.open-job/);
 });
 
+test('archiving no longer destroys history, and the list pages', () => {
+  // The store is rewritten in full on every change and only the first 30 jobs
+  // were written, so archiving a 31st conversation deleted the oldest for good.
+  assert.match(jobManager, /const PERSISTED_JOB_LIMIT = 200/);
+  assert.doesNotMatch(jobManager, /slice\(0, 30\)/);
+  const persist = jobManager.slice(jobManager.indexOf('private schedulePersist'));
+  assert.match(persist.slice(0, 900), /slice\(0, PERSISTED_JOB_LIMIT\)/);
+  // Archived conversations keep their content but drop progress telemetry,
+  // which is what made the old limit necessary.
+  assert.match(persist.slice(0, 900), /events: publicJob\.archivedAt \? \[\] : publicJob\.events/);
+
+  // The view pages rather than rendering every archived conversation.
+  assert.match(appRoot, /const ARCHIVED_PAGE_SIZE = 20/);
+  assert.match(appRoot, /setVisible\(\(current\) => current \+ ARCHIVED_PAGE_SIZE\)/);
+  // Restoring or deleting shortens the list; the page size must not outrun it.
+  assert.match(appRoot, /Math\.min\(visible, props\.jobs\.length\)/);
+  assert.match(appRoot, /remaining > 0 \?/);
+  assert.match(css, /\.archived-more/);
+});
+
 test('Archived is a navigation surface', () => {
   assert.match(appRoot, /type Surface = 'agent' \| 'projects' \| 'runs' \| 'archived'/);
   assert.match(appRoot, /aria-label="Archived"/);
