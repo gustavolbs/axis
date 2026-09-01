@@ -22,6 +22,11 @@ let quitting = false;
 let backendUrl;
 let saveBoundsTimer;
 
+function log(message, detail) {
+  const suffix = detail === undefined ? '' : ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
+  console.log(`[Local Coder desktop] ${message}${suffix}`);
+}
+
 function configuredPort() {
   const raw = process.env.LOCAL_CODER_CONSOLE_PORT?.trim();
   if (!raw) return DEFAULT_PORT;
@@ -155,6 +160,7 @@ async function startControlPlane() {
   if (await probeLocalCoder(url)) {
     ownsBackend = false;
     backendUrl = url;
+    log('using existing control plane', url);
     return url;
   }
 
@@ -166,21 +172,24 @@ async function startControlPlane() {
       LOCAL_CODER_CONSOLE_HOST: HOST,
       LOCAL_CODER_CONSOLE_PORT: String(port)
     },
-    stdio: 'ignore',
+    stdio: app.isPackaged ? 'ignore' : 'inherit',
     windowsHide: true
   });
   backendChild = child;
   ownsBackend = true;
+  log('starting control plane', { pid: child.pid, url });
 
   let exit;
   child.once('exit', (code, signal) => {
     exit = { code, signal };
+    log('control plane exited', exit);
   });
 
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await probeLocalCoder(url)) {
       backendUrl = url;
+      log('control plane ready', url);
       child.once('exit', () => {
         if (!quitting && ownsBackend) void recoverBackendAfterExit();
       });
@@ -215,6 +224,48 @@ function restrictRenderer(window, baseUrl) {
   });
 }
 
+function installRendererDiagnostics(window, url) {
+  window.webContents.on('did-start-loading', () => log('renderer loading', url));
+  window.webContents.on('did-finish-load', () => log('renderer loaded', window.webContents.getURL()));
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    const detail = `${errorDescription} (${errorCode}) while loading ${validatedURL || url}`;
+    console.error(`[Local Coder desktop] renderer load failed: ${detail}`);
+    if (!window.isDestroyed()) {
+      void dialog.showMessageBox(window, {
+        type: 'error',
+        title: 'Local Coder could not load',
+        message: 'The desktop window could not load the Local Coder interface.',
+        detail,
+        buttons: ['OK'],
+        noLink: true
+      });
+    }
+  });
+  window.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[Local Coder desktop] renderer process gone', details);
+    if (!window.isDestroyed()) {
+      void dialog.showMessageBox(window, {
+        type: 'error',
+        title: 'Local Coder renderer stopped',
+        message: 'The desktop renderer exited unexpectedly.',
+        detail: `Reason: ${details.reason}. Exit code: ${details.exitCode}.`,
+        buttons: ['Reload', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true
+      }).then(({ response }) => {
+        if (response === 0 && !window.isDestroyed()) window.reload();
+        else app.quit();
+      });
+    }
+  });
+  window.on('unresponsive', () => {
+    console.error('[Local Coder desktop] window became unresponsive');
+  });
+  window.on('responsive', () => log('window responsive'));
+}
+
 function createMainWindow(url) {
   const restored = normalizedWindowState(readWindowState());
   const window = new BrowserWindow({
@@ -224,7 +275,7 @@ function createMainWindow(url) {
     height: restored.height,
     minWidth: MIN_WINDOW_WIDTH,
     minHeight: MIN_WINDOW_HEIGHT,
-    show: false,
+    show: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f1e1b' : '#f7f6f2',
     title: 'Local Coder',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
@@ -240,15 +291,36 @@ function createMainWindow(url) {
   });
 
   restrictRenderer(window, url);
+  installRendererDiagnostics(window, url);
   window.on('resize', () => scheduleWindowStateSave(window));
   window.on('move', () => scheduleWindowStateSave(window));
   window.on('maximize', () => scheduleWindowStateSave(window));
   window.on('unmaximize', () => scheduleWindowStateSave(window));
-  window.once('ready-to-show', () => {
-    if (restored.maximized) window.maximize();
-    window.show();
+
+  if (restored.maximized) window.maximize();
+  window.show();
+  window.focus();
+  log('window created', window.getBounds());
+
+  window.loadURL(url).catch((error) => {
+    const message = error instanceof Error ? error.stack || error.message : String(error);
+    console.error('[Local Coder desktop] loadURL rejected', message);
+    if (!window.isDestroyed()) {
+      void dialog.showMessageBox(window, {
+        type: 'error',
+        title: 'Local Coder could not load',
+        message: 'The desktop window failed to load the Local Coder interface.',
+        detail: message,
+        buttons: ['Retry', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true
+      }).then(({ response }) => {
+        if (response === 0 && !window.isDestroyed()) void window.loadURL(url);
+        else app.quit();
+      });
+    }
   });
-  void window.loadURL(url);
   return window;
 }
 
@@ -258,6 +330,7 @@ async function startWithRecovery() {
       return await startControlPlane();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.error('[Local Coder desktop] control plane startup failed', message);
       const { response } = await dialog.showMessageBox({
         type: 'error',
         title: 'Local Coder could not start',
@@ -306,9 +379,11 @@ async function recoverBackendAfterExit() {
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
+  log('another Local Coder desktop instance already owns the single-instance lock');
   app.quit();
 } else {
   app.on('second-instance', () => {
+    log('second instance requested; focusing existing window');
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -335,6 +410,7 @@ if (!hasSingleInstanceLock) {
 
   await app.whenReady();
   app.setName('Local Coder');
+  log('Electron ready', { packaged: app.isPackaged, version: process.versions.electron });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
 
