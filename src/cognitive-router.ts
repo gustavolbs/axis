@@ -16,23 +16,19 @@ export interface RoutingCandidate {
   providerKind: ProviderKind;
   available: boolean;
   capabilities?: Partial<ProviderCapabilities>;
-  /** Estimated provider/compute queue before the request can begin. */
   queueDelayMs?: number;
-  /** Historical end-to-end p50 for comparable inference calls. */
   p50LatencyMs?: number;
-  /** Historical provider reliability in [0, 1] for comparable work. */
   successRate?: number;
   historicalSamples?: number;
-  /** Estimated monetary cost for this stage, not the entire job. */
   estimatedCostUsd?: number;
-  /** Config/eval-driven engineering-quality signal in [0, 100]. */
   qualityScore?: number;
-  /** Explicit model catalog classification; never inferred from a provider-specific name. */
   frontier?: boolean;
+  /** Bounded tiebreak signal from Project connectionPolicy, never an isolation override. */
+  preferredConnection?: boolean;
 }
 
 export interface CognitiveRoutingRequest {
-  project: Pick<ProjectDefinition, 'id' | 'defaultRoutingPolicy' | 'defaultModel' | 'privacy'>;
+  project: Pick<ProjectDefinition, 'id' | 'defaultRoutingPolicy' | 'defaultModel' | 'privacy' | 'connectionPolicy'>;
   stage: InferenceStage;
   candidates: RoutingCandidate[];
   policy?: RoutingPolicy;
@@ -100,9 +96,7 @@ function assertUniqueCandidates(candidates: RoutingCandidate[]): void {
   for (const candidate of candidates) {
     const key = candidateKey(candidate);
     if (seen.has(key)) {
-      throw new RoutingConstraintError(
-        `Duplicate routing candidate: ${candidate.providerId}/${candidate.modelId}.`
-      );
+      throw new RoutingConstraintError(`Duplicate routing candidate: ${candidate.providerId}/${candidate.modelId}.`);
     }
     seen.add(key);
   }
@@ -117,16 +111,11 @@ function exclusionReason(
   if (!candidate.available) return 'model/provider is unavailable';
 
   try {
-    assertProjectProviderAllowed(
-      request.project as ProjectDefinition,
-      candidate.providerId,
-      candidate.providerKind
-    );
+    assertProjectProviderAllowed(request.project as ProjectDefinition, candidate.providerId, candidate.providerKind);
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
 
-  // Capability-constrained stages fail closed. "Unknown" is not equivalent to support.
   if (request.requireReasoning && candidate.capabilities?.reasoning !== true) {
     return 'stage requires positively known reasoning support';
   }
@@ -142,9 +131,6 @@ function exclusionReason(
 function quality(candidate: RoutingCandidate): number {
   const explicit = finiteNonNegative(candidate.qualityScore);
   if (explicit !== undefined) return clamp(explicit, 0, 100);
-
-  // Transport/provider success is reliability, not evidence of engineering quality.
-  // These provider-agnostic priors remain until task-level evals supply qualityScore.
   if (candidate.frontier) return 86;
   return candidate.providerKind === 'cloud' ? 72 : 60;
 }
@@ -161,12 +147,7 @@ function reliabilityAdjustment(
 ): number {
   const reliability = historicalReliability(candidate);
   if (reliability === undefined) return 0;
-  const weight =
-    policy === 'speed-first' ? 0.25 :
-    policy === 'local-first' ? 0.15 :
-    0.20;
-  // 75 is a neutral learned-reliability baseline. Above it earns a bounded boost;
-  // below it is penalized without rewriting the independent engineering-quality signal.
+  const weight = policy === 'speed-first' ? 0.25 : policy === 'local-first' ? 0.15 : 0.20;
   return (reliability - 75) * weight;
 }
 
@@ -226,6 +207,9 @@ function scoreCandidate(
 
   score += reliabilityAdjustment(policy, candidate);
   score += stageAffinity(request.stage, candidate);
+  // Preferred identity is deliberately a small tiebreaker. It never makes an ineligible
+  // connection eligible and never overrides privacy/capability/budget constraints.
+  if (candidate.preferredConnection) score += 7;
   if (request.urgency === 'urgent') score += speedScore * 0.08;
   if ((request.complexityScore ?? 0) >= 70) score += qualityScore * 0.06;
   if (request.blastRadius === 'critical') score += qualityScore * 0.06;
@@ -243,6 +227,7 @@ function signalSummary(candidate: RoutingCandidate): string[] {
   if (success !== undefined) result.push(`historical success ${(success * 100).toFixed(0)}%`);
   if (estimate !== undefined) result.push(`estimated stage cost $${estimate.toFixed(4)}`);
   if (candidate.frontier) result.push('frontier model');
+  if (candidate.preferredConnection) result.push('Project-preferred connection');
   result.push(candidate.providerKind === 'local' ? 'local compute' : 'cloud compute');
   return result;
 }
@@ -287,9 +272,7 @@ function exactSelection(
         providerKind: item.providerKind,
         eligible: isSelected,
         score: isSelected ? scoreCandidate(request, policy, item) : undefined,
-        exclusionReason: isSelected
-          ? undefined
-          : 'not selected because the user/project chose an explicit model',
+        exclusionReason: isSelected ? undefined : 'not selected because the user/project chose an explicit model',
         signals: signalSummary(item)
       };
     })
