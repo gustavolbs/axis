@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { ClaudeAccountProfileStore, ClaudeAccountRuntime } from './claude-account-profiles.js';
-import { CodexAccountProfileStore, CodexAccountRuntime, type CodexMcpPolicy } from './codex-account-profiles.js';
+import { CodexAccountProfileStore, CodexAccountRuntime } from './codex-account-profiles.js';
 import { ProviderConnectionRuntime } from './provider-connections.js';
 
 export type WorkHubSourceKind = 'calendar' | 'tickets' | 'messages';
@@ -16,7 +16,7 @@ export interface WorkHubSource {
   connectionId: string;
   kind: WorkHubSourceKind;
   system: string;
-  /** Exact read-only tool identifiers. There is deliberately no implicit "allow all". */
+  /** Legacy advanced metadata. New sources let the selected account discover and use its connected MCPs automatically. */
   toolAllowlist: string[];
   retention: WorkHubRetention;
   enabled: boolean;
@@ -29,8 +29,8 @@ export interface CreateWorkHubSourceInput {
   label: string;
   connectionId: string;
   kind: WorkHubSourceKind;
-  system: string;
-  toolAllowlist: string[];
+  system?: string;
+  toolAllowlist?: string[];
   retention?: WorkHubRetention;
   enabled?: boolean;
 }
@@ -138,11 +138,10 @@ function retention(value: string | undefined): WorkHubRetention {
   throw new Error('Work Hub retention must be memory or local.');
 }
 
-function tools(values: string[]): string[] {
-  const clean = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-  if (clean.length === 0) throw new Error('A Work Hub source requires at least one exact read-only MCP tool allowlist entry.');
+function tools(values: string[] | undefined): string[] {
+  const clean = [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
   if (clean.length > 64 || clean.some((value) => value.length > 300 || /[\0\r\n]/.test(value))) {
-    throw new Error('Work Hub MCP tool allowlist is invalid.');
+    throw new Error('Work Hub MCP tool metadata is invalid.');
   }
   return clean;
 }
@@ -175,7 +174,7 @@ export class WorkHubSourceStore {
       label: boundedText(input.label, 'Work Hub source label'),
       connectionId: boundedText(input.connectionId, 'Connection id'),
       kind: sourceKind(input.kind),
-      system: boundedText(input.system, 'Source system'),
+      system: boundedText(input.system ?? 'Connected services', 'Source system'),
       toolAllowlist: tools(input.toolAllowlist),
       retention: retention(input.retention),
       enabled: input.enabled !== false,
@@ -218,7 +217,7 @@ export class WorkHubSourceStore {
   }
 
   private normalizeExisting(source: Partial<WorkHubSource>): WorkHubSource {
-    if (!source.id || !source.label || !source.connectionId || !source.kind || !source.system || !Array.isArray(source.toolAllowlist)) {
+    if (!source.id || !source.label || !source.connectionId || !source.kind || !source.system) {
       throw new Error('Work Hub source metadata is incomplete.');
     }
     return {
@@ -227,7 +226,7 @@ export class WorkHubSourceStore {
       connectionId: boundedText(source.connectionId, 'Connection id'),
       kind: sourceKind(source.kind),
       system: boundedText(source.system, 'Source system'),
-      toolAllowlist: tools(source.toolAllowlist),
+      toolAllowlist: tools(Array.isArray(source.toolAllowlist) ? source.toolAllowlist : undefined),
       retention: retention(source.retention),
       enabled: source.enabled !== false,
       createdAt: typeof source.createdAt === 'string' ? source.createdAt : new Date(0).toISOString(),
@@ -292,43 +291,27 @@ function array(value: unknown): Record<string, unknown>[] {
 
 function collectorPrompt(source: WorkHubSource): string {
   const common = [
-    `You are a read-only Local Coder Work Hub collector for ${source.system}.`,
-    'Use only the MCP tools explicitly made available to this invocation. Never write, update, delete, comment, send, acknowledge, transition, or otherwise mutate remote data.',
-    'Do not use shell/curl/browser fallbacks. If a read operation is unavailable, return an empty data array rather than attempting a workaround.',
-    'Return JSON only, with no Markdown fence or prose.'
+    'You are a Local Coder Work Hub synchronization task running through one exact provider account.',
+    'Discover and use the MCP servers/connectors configured for this account that are relevant to the requested data. The user does not provide MCP tool names and Local Coder does not require a manual tool allowlist.',
+    'This background refresh only synchronizes remote data, so collect current state without creating, updating, deleting, sending, transitioning, or otherwise changing remote resources. Interactive user requests outside Work Hub may use write actions normally.',
+    'Do not use shell/curl/browser fallbacks for remote business data. Return JSON only, with no Markdown fence or prose.'
   ];
   if (source.kind === 'calendar') {
     return [...common,
-      `Read calendar events from ${SOURCE_QUERY_DAYS_PAST} days ago through ${SOURCE_QUERY_DAYS_FUTURE} days ahead across calendars visible to this account.`,
-      'Return {"events":[{"externalId":"stable remote id","title":"...","start":"ISO-8601","end":"ISO-8601","allDay":false,"calendar":"...","location":"...","meetingUrl":"...","organizer":"...","status":"...","url":"..."}]}.'
+      `Read calendar events from ${SOURCE_QUERY_DAYS_PAST} days ago through ${SOURCE_QUERY_DAYS_FUTURE} days ahead across all relevant calendar services visible to this account. If more than one connected calendar service is relevant, combine the results.`,
+      'Return {"events":[{"externalId":"stable remote id","system":"Google Calendar or Outlook or other actual source","title":"...","start":"ISO-8601","end":"ISO-8601","allDay":false,"calendar":"...","location":"...","meetingUrl":"...","organizer":"...","status":"...","url":"..."}]}.'
     ].join('\n');
   }
   if (source.kind === 'tickets') {
     return [...common,
-      'Read work items/tickets assigned to the current account. Include unresolved items and enough recently completed items to make current status understandable. Preserve the remote status exactly.',
-      'Return {"tickets":[{"externalId":"stable remote id","key":"ABC-123","title":"...","status":"...","priority":"...","assignee":"...","dueAt":"ISO-8601","updatedAt":"ISO-8601","project":"...","url":"..."}]}.'
+      'Read work items/tickets assigned to the current account across all relevant connected issue trackers. Include unresolved items and enough recently completed items to make current status understandable. Preserve the remote status exactly.',
+      'Return {"tickets":[{"externalId":"stable remote id","system":"Jira or Linear or other actual source","key":"ABC-123","title":"...","status":"...","priority":"...","assignee":"...","dueAt":"ISO-8601","updatedAt":"ISO-8601","project":"...","url":"..."}]}.'
     ].join('\n');
   }
   return [...common,
-    'Read recent messages/threads visible to the current account that are useful for a unified work inbox. Prefer unread items and items that plausibly require the user’s attention.',
-    'Return {"messages":[{"externalId":"stable remote id","title":"thread/channel subject","preview":"short summary","sender":"...","timestamp":"ISO-8601","channel":"...","unread":true,"requiresAttention":true,"url":"..."}]}.'
+    'Read recent messages/threads across all relevant connected messaging or mail services visible to the current account. Prefer unread items and items that plausibly require the user’s attention.',
+    'Return {"messages":[{"externalId":"stable remote id","system":"Teams or Slack or mail or other actual source","title":"thread/channel subject","preview":"short summary","sender":"...","timestamp":"ISO-8601","channel":"...","unread":true,"requiresAttention":true,"url":"..."}]}.'
   ].join('\n');
-}
-
-function codexPolicies(entries: string[]): CodexMcpPolicy[] {
-  const grouped = new Map<string, string[]>();
-  for (const entry of entries) {
-    const slash = entry.indexOf('/');
-    const colon = entry.indexOf(':');
-    const split = slash > 0 ? slash : colon > 0 ? colon : -1;
-    if (split <= 0 || split >= entry.length - 1) {
-      throw new Error(`Codex Work Hub tool must be server/tool (or server:tool): ${entry}`);
-    }
-    const serverId = entry.slice(0, split).trim();
-    const toolName = entry.slice(split + 1).trim();
-    grouped.set(serverId, [...(grouped.get(serverId) ?? []), toolName]);
-  }
-  return [...grouped].map(([serverId, toolNames]) => ({ serverId, toolNames }));
 }
 
 export class WorkHubService {
@@ -416,7 +399,7 @@ export class WorkHubService {
       if (connection.auth === 'claude-account') {
         const result = await this.claudeRuntime.invoke(connection.accountProfileId, collectorPrompt(source), {
           timeoutMs: 180_000,
-          allowedTools: source.toolAllowlist
+          allowedTools: ['mcp__*']
         });
         if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
           throw new Error(result.stderr || result.stdout || 'Claude Work Hub collector failed.');
@@ -424,8 +407,7 @@ export class WorkHubService {
         output = result.stdout;
       } else if (connection.auth === 'chatgpt-account') {
         const result = await this.codexRuntime.invoke(connection.accountProfileId, collectorPrompt(source), {
-          timeoutMs: 180_000,
-          mcpPolicies: codexPolicies(source.toolAllowlist)
+          timeoutMs: 180_000
         });
         if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
           throw new Error(result.stderr || result.stdout || 'ChatGPT Work Hub collector failed.');
@@ -456,11 +438,11 @@ export class WorkHubService {
   private normalize(source: WorkHubSource, providerFamily: 'anthropic' | 'openai', payload: unknown, collectedAt: string): WorkHubItem[] {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Collector payload must be a JSON object.');
     const value = payload as Record<string, unknown>;
-    const base = (externalId: string): NormalizedBase => ({
+    const base = (externalId: string, system?: string): NormalizedBase => ({
       sourceId: source.id,
       connectionId: source.connectionId,
       providerFamily,
-      system: source.system,
+      system: system ?? source.system,
       externalId,
       collectedAt
     });
@@ -472,7 +454,7 @@ export class WorkHubService {
         const end = string(item.end);
         if (!externalId || !title || !start || !end) return [];
         return [{
-          ...base(externalId), kind: 'calendar', title, start, end,
+          ...base(externalId, string(item.system)), kind: 'calendar', title, start, end,
           allDay: bool(item.allDay) ?? false,
           calendar: string(item.calendar), location: string(item.location), meetingUrl: string(item.meetingUrl),
           organizer: string(item.organizer), status: string(item.status), url: string(item.url)
@@ -487,7 +469,7 @@ export class WorkHubService {
         const status = string(item.status);
         if (!externalId || !key || !title || !status) return [];
         return [{
-          ...base(externalId), kind: 'ticket', key, title, status, normalizedStatus: normalizeStatus(status),
+          ...base(externalId, string(item.system)), kind: 'ticket', key, title, status, normalizedStatus: normalizeStatus(status),
           priority: string(item.priority), assignee: string(item.assignee), dueAt: string(item.dueAt),
           updatedAt: string(item.updatedAt), project: string(item.project), url: string(item.url)
         }];
@@ -499,7 +481,7 @@ export class WorkHubService {
       const timestamp = string(item.timestamp);
       if (!externalId || !title || !timestamp) return [];
       return [{
-        ...base(externalId), kind: 'message', title, timestamp, preview: string(item.preview), sender: string(item.sender),
+        ...base(externalId, string(item.system)), kind: 'message', title, timestamp, preview: string(item.preview), sender: string(item.sender),
         channel: string(item.channel), unread: bool(item.unread), requiresAttention: bool(item.requiresAttention), url: string(item.url)
       }];
     });
