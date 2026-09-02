@@ -32,7 +32,7 @@ let saveBoundsTimer;
 
 function log(message, detail) {
   const suffix = detail === undefined ? '' : ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
-  console.log(`[Local Coder desktop] ${message}${suffix}`);
+  console.log(`[Axis desktop] ${message}${suffix}`);
 }
 
 log('main module loaded', {
@@ -171,12 +171,12 @@ function installRendererDiagnostics(window) {
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame) return;
     const detail = `${errorDescription} (${errorCode}) while loading ${validatedURL || rendererEntry()}`;
-    console.error(`[Local Coder desktop] renderer load failed: ${detail}`);
+    console.error(`[Axis desktop] renderer load failed: ${detail}`);
     if (!window.isDestroyed()) {
       void dialog.showMessageBox(window, {
         type: 'error',
-        title: 'Local Coder could not load',
-        message: 'The desktop window could not load the Local Coder interface.',
+        title: 'Axis could not load',
+        message: 'The desktop window could not load the Axis interface.',
         detail,
         buttons: ['OK'],
         noLink: true
@@ -184,11 +184,11 @@ function installRendererDiagnostics(window) {
     }
   });
   window.webContents.on('render-process-gone', (_event, details) => {
-    console.error('[Local Coder desktop] renderer process gone', details);
+    console.error('[Axis desktop] renderer process gone', details);
     if (!window.isDestroyed()) {
       void dialog.showMessageBox(window, {
         type: 'error',
-        title: 'Local Coder renderer stopped',
+        title: 'Axis renderer stopped',
         message: 'The desktop renderer exited unexpectedly.',
         detail: `Reason: ${details.reason}. Exit code: ${details.exitCode}.`,
         buttons: ['Reload', 'Quit'],
@@ -201,7 +201,7 @@ function installRendererDiagnostics(window) {
       });
     }
   });
-  window.on('unresponsive', () => console.error('[Local Coder desktop] window became unresponsive'));
+  window.on('unresponsive', () => console.error('[Axis desktop] window became unresponsive'));
   window.on('responsive', () => log('window responsive'));
 }
 
@@ -213,7 +213,7 @@ function emitCommand(command) {
 function installApplicationMenu() {
   const appMenu = process.platform === 'darwin'
     ? [{
-        label: 'Local Coder',
+        label: 'Axis',
         submenu: [
           { role: 'about' },
           { type: 'separator' },
@@ -328,7 +328,7 @@ function createMainWindow() {
     minHeight: MIN_WINDOW_HEIGHT,
     show: false,
     backgroundColor: '#151515',
-    title: 'Local Coder',
+    title: 'Axis',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 18, y: 18 } } : {}),
     autoHideMenuBar: process.platform !== 'darwin',
@@ -369,12 +369,12 @@ function createMainWindow() {
   window.loadFile(rendererEntry()).catch((error) => {
     showWindow();
     const message = error instanceof Error ? error.stack || error.message : String(error);
-    console.error('[Local Coder desktop] loadFile rejected', message);
+    console.error('[Axis desktop] loadFile rejected', message);
     if (!window.isDestroyed()) {
       void dialog.showMessageBox(window, {
         type: 'error',
-        title: 'Local Coder could not load',
-        message: 'The desktop window failed to load the Local Coder interface.',
+        title: 'Axis could not load',
+        message: 'The desktop window failed to load the Axis interface.',
         detail: message,
         buttons: ['Retry', 'Quit'],
         defaultId: 0,
@@ -415,7 +415,7 @@ app.on('activate', () => {
 });
 
 async function initializeDesktop() {
-  app.setName('Local Coder');
+  app.setName('Axis');
   log('Electron ready', { packaged: app.isPackaged, version: process.versions.electron });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
@@ -450,6 +450,6 @@ async function initializeDesktop() {
 app.whenReady()
   .then(initializeDesktop)
   .catch((error) => {
-    console.error('[Local Coder desktop] fatal startup failure', error);
+    console.error('[Axis desktop] fatal startup failure', error);
     app.exit(1);
   });
