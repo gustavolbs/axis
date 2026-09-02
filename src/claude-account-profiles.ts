@@ -59,6 +59,8 @@ export interface ClaudeInvokeOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   allowedTools?: string[];
+  /** Official Claude Code print-mode structured output. */
+  jsonSchema?: Record<string, unknown>;
 }
 
 export interface ClaudeRuntimeOptions {
@@ -382,17 +384,9 @@ export class ClaudeAccountRuntime {
       };
     } catch (error) {
       if (error instanceof ClaudeRuntimeNotFoundError) {
-        return {
-          installed: false,
-          usable: false,
-          error: error.message
-        };
+        return { installed: false, usable: false, error: error.message };
       }
-      return {
-        installed: true,
-        usable: false,
-        error: error instanceof Error ? error.message : String(error)
-      };
+      return { installed: true, usable: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -471,6 +465,11 @@ export class ClaudeAccountRuntime {
       '--permission-mode',
       'dontAsk'
     ];
+    if (options.jsonSchema) {
+      const serialized = JSON.stringify(options.jsonSchema);
+      if (serialized.length > 256_000) throw new Error('Claude JSON schema is too large.');
+      args.push('--json-schema', serialized);
+    }
     const allowedTools = [...new Set((options.allowedTools ?? []).map((tool) => tool.trim()).filter(Boolean))];
     if (allowedTools.length > 0) args.push('--allowedTools', ...allowedTools);
 
