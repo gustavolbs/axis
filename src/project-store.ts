@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { apiCredentialConnectionId } from './connection-identity.js';
 import type { CredentialProfile } from './credential-store.js';
 import type { ProviderKind } from './providers/types.js';
 
@@ -22,8 +23,25 @@ export type ModelSelection =
 export interface ProjectPrivacyPolicy {
   /** Cloud transmission is forbidden unless this is explicitly true. */
   cloudAllowed: boolean;
-  /** Hard provider allowlist. Local and cloud providers both require membership. */
+  /** Provider-family allowlist retained as a coarse privacy boundary and migration surface. */
   allowedProviderIds: string[];
+}
+
+export interface ProjectConnectionPolicy {
+  chat: {
+    /** New Chats inherit this exact identity. Existing Chats persist their own ModelSelection. */
+    defaultConnectionId?: string;
+    /** Optional model override for the default Chat identity. */
+    defaultModelId?: string;
+    allowedConnectionIds: string[];
+  };
+  inference: {
+    /** Exact identities Cowork/router may consider. No cross-identity fallback is permitted. */
+    allowedConnectionIds: string[];
+    preferredConnectionId?: string;
+  };
+  /** Work Hub sources are bound independently from inference identities. */
+  workSourceIds: string[];
 }
 
 export interface ProjectBudgetPolicy {
@@ -37,20 +55,20 @@ export interface ProjectBudgetPolicy {
 export interface ProjectDefinition {
   id: string;
   name: string;
-  /** Short gallery description. It is presentation metadata, not an execution prompt. */
   description?: string;
-  /** Optional default folder. Empty means this Project is conversation-only. */
   workspace: string;
-  /** Instructions injected into every Chat/Cowork execution explicitly scoped to this Project. */
   instructions?: string;
-  /** Stable isolation boundary for credentials/accounting. */
+  /** Stable organization isolation boundary. `personal` and `local` are explicit virtual domains. */
   organizationId: string;
   organizationName?: string;
   defaultRoutingPolicy: RoutingPolicy;
+  /** Cowork default model policy. Explicit providers are exact connection ids after migration. */
   defaultModel: ModelSelection;
   privacy: ProjectPrivacyPolicy;
-  /** provider id -> credential profile id */
+  /** Legacy provider id -> credential profile id. Retained for migration/backward compatibility only. */
   credentialProfileIds: Record<string, string>;
+  /** Primary identity policy for Chat, Cowork and Work Hub association. */
+  connectionPolicy: ProjectConnectionPolicy;
   budgets: ProjectBudgetPolicy;
   repoIntelligenceScope: 'project';
   concurrency: number;
@@ -61,11 +79,8 @@ export interface ProjectDefinition {
 export interface CreateProjectInput {
   id?: string;
   name: string;
-  /** Short human-readable summary shown in the Projects gallery. */
   description?: string;
-  /** Optional default folder. Cowork still requires some folder at execution time. */
   workspace?: string;
-  /** Shared instructions for every conversation in this Project. */
   instructions?: string;
   organizationId: string;
   organizationName?: string;
@@ -73,6 +88,7 @@ export interface CreateProjectInput {
   defaultModel?: ModelSelection;
   privacy?: ProjectPrivacyPolicy;
   credentialProfileIds?: Record<string, string>;
+  connectionPolicy?: ProjectConnectionPolicy;
   budgets?: Partial<ProjectBudgetPolicy>;
   concurrency?: number;
 }
@@ -158,23 +174,18 @@ function normalizeBudgets(input: Partial<ProjectBudgetPolicy> = {}): ProjectBudg
 function normalizePrivacy(input?: ProjectPrivacyPolicy): ProjectPrivacyPolicy {
   const policy = input ?? { cloudAllowed: false, allowedProviderIds: ['ollama'] };
   const allowedProviderIds = [...new Set(policy.allowedProviderIds.map((id) => safeId(id, 'Provider id')))];
-  if (allowedProviderIds.length === 0) {
-    throw new Error('Project provider allowlist cannot be empty.');
-  }
+  if (allowedProviderIds.length === 0) throw new Error('Project provider allowlist cannot be empty.');
   return { cloudAllowed: policy.cloudAllowed === true, allowedProviderIds };
 }
 
 function normalizeModel(input: ModelSelection | undefined): ModelSelection {
   if (!input || input.mode === 'auto') return { mode: 'auto' };
   if (input.mode === 'local-first') {
-    return {
-      mode: 'local-first',
-      modelId: text(input.modelId, 'Local-first model id', 240)
-    };
+    return { mode: 'local-first', modelId: text(input.modelId, 'Local-first model id', 240) };
   }
   return {
     mode: 'explicit',
-    providerId: safeId(input.providerId, 'Model provider id'),
+    providerId: safeId(input.providerId, 'Model provider/connection id'),
     modelId: text(input.modelId, 'Model id', 240)
   };
 }
@@ -185,6 +196,103 @@ function normalizeCredentialMap(input: Record<string, string> | undefined): Reco
     result[safeId(providerId, 'Credential provider id')] = safeId(credentialId, 'Credential profile id');
   }
   return result;
+}
+
+function connectionIds(values: string[] | undefined, label: string): string[] {
+  return [...new Set((values ?? []).map((value) => safeId(value, label)))];
+}
+
+function migrateExplicitModel(
+  model: ModelSelection,
+  credentials: Record<string, string>
+): ModelSelection {
+  if (model.mode !== 'explicit') return model;
+  const credentialId = credentials[model.providerId];
+  if (!credentialId) return model;
+  return {
+    ...model,
+    providerId: apiCredentialConnectionId(model.providerId, credentialId)
+  };
+}
+
+export function deriveLegacyConnectionPolicy(
+  privacy: ProjectPrivacyPolicy,
+  credentialProfileIds: Record<string, string>,
+  defaultModel: ModelSelection = { mode: 'auto' }
+): ProjectConnectionPolicy {
+  const allowed = privacy.allowedProviderIds.flatMap((providerId) => {
+    if (providerId === 'ollama') return ['ollama'];
+    const credentialId = credentialProfileIds[providerId];
+    return credentialId ? [apiCredentialConnectionId(providerId, credentialId)] : [];
+  });
+  const uniqueAllowed = [...new Set(allowed)];
+  let defaultConnectionId: string | undefined;
+  let defaultModelId: string | undefined;
+  if (defaultModel.mode === 'local-first') {
+    defaultConnectionId = uniqueAllowed.includes('ollama') ? 'ollama' : undefined;
+    defaultModelId = defaultModel.modelId;
+  } else if (defaultModel.mode === 'explicit') {
+    const credentialId = credentialProfileIds[defaultModel.providerId];
+    const migrated = credentialId
+      ? apiCredentialConnectionId(defaultModel.providerId, credentialId)
+      : defaultModel.providerId;
+    if (uniqueAllowed.includes(migrated)) {
+      defaultConnectionId = migrated;
+      defaultModelId = defaultModel.modelId;
+    }
+  }
+  defaultConnectionId ??= uniqueAllowed[0];
+  return {
+    chat: {
+      defaultConnectionId,
+      defaultModelId,
+      allowedConnectionIds: [...uniqueAllowed]
+    },
+    inference: {
+      allowedConnectionIds: [...uniqueAllowed],
+      preferredConnectionId: defaultConnectionId
+    },
+    workSourceIds: []
+  };
+}
+
+function normalizeConnectionPolicy(
+  input: ProjectConnectionPolicy | undefined,
+  legacy: ProjectConnectionPolicy
+): ProjectConnectionPolicy {
+  const candidate = input ?? legacy;
+  const inferenceAllowed = connectionIds(candidate.inference?.allowedConnectionIds, 'Inference connection id');
+  if (inferenceAllowed.length === 0) {
+    throw new Error('Project inference connection allowlist cannot be empty.');
+  }
+  const chatAllowed = connectionIds(candidate.chat?.allowedConnectionIds, 'Chat connection id');
+  const effectiveChat = chatAllowed.length > 0 ? chatAllowed : [...inferenceAllowed];
+  const defaultConnectionId = candidate.chat?.defaultConnectionId
+    ? safeId(candidate.chat.defaultConnectionId, 'Default Chat connection id')
+    : effectiveChat[0];
+  if (defaultConnectionId && !effectiveChat.includes(defaultConnectionId)) {
+    throw new Error(`Default Chat connection ${defaultConnectionId} is not in the Project Chat allowlist.`);
+  }
+  const preferredConnectionId = candidate.inference?.preferredConnectionId
+    ? safeId(candidate.inference.preferredConnectionId, 'Preferred inference connection id')
+    : undefined;
+  if (preferredConnectionId && !inferenceAllowed.includes(preferredConnectionId)) {
+    throw new Error(`Preferred inference connection ${preferredConnectionId} is not in the Project inference allowlist.`);
+  }
+  return {
+    chat: {
+      defaultConnectionId,
+      defaultModelId: candidate.chat?.defaultModelId
+        ? text(candidate.chat.defaultModelId, 'Default Chat model id', 240)
+        : undefined,
+      allowedConnectionIds: effectiveChat
+    },
+    inference: {
+      allowedConnectionIds: inferenceAllowed,
+      preferredConnectionId
+    },
+    workSourceIds: connectionIds(candidate.workSourceIds, 'Work Hub source id')
+  };
 }
 
 function normalizeProject(
@@ -200,15 +308,25 @@ function normalizeProject(
     throw new Error('Project concurrency must be an integer between 1 and 32.');
   }
   const privacy = normalizePrivacy(input.privacy ?? existing?.privacy);
-  const defaultModel = normalizeModel(input.defaultModel ?? existing?.defaultModel);
-  if (defaultModel.mode === 'explicit' && !privacy.allowedProviderIds.includes(defaultModel.providerId)) {
+  const credentials = normalizeCredentialMap(input.credentialProfileIds ?? existing?.credentialProfileIds);
+  const rawDefaultModel = normalizeModel(input.defaultModel ?? existing?.defaultModel);
+  const defaultModel = migrateExplicitModel(rawDefaultModel, credentials);
+  const legacyPolicy = deriveLegacyConnectionPolicy(privacy, credentials, rawDefaultModel);
+  const connectionPolicy = normalizeConnectionPolicy(input.connectionPolicy ?? existing?.connectionPolicy, legacyPolicy);
+
+  if (
+    defaultModel.mode === 'explicit' &&
+    !connectionPolicy.inference.allowedConnectionIds.includes(defaultModel.providerId) &&
+    !connectionPolicy.chat.allowedConnectionIds.includes(defaultModel.providerId)
+  ) {
     throw new Error(
-      `Explicit model provider ${defaultModel.providerId} is not allowed by the project provider allowlist.`
+      `Explicit model connection ${defaultModel.providerId} is not allowed by the Project connection policy.`
     );
   }
-  if (defaultModel.mode === 'local-first' && !privacy.allowedProviderIds.includes('ollama')) {
-    throw new Error('Local-first mode requires ollama in the project provider allowlist.');
+  if (defaultModel.mode === 'local-first' && !connectionPolicy.inference.allowedConnectionIds.includes('ollama')) {
+    throw new Error('Local-first mode requires the Ollama connection in the Project inference allowlist.');
   }
+
   return {
     id: safeId(input.id ?? existing?.id ?? randomUUID(), 'Project id'),
     name: text(input.name, 'Project name'),
@@ -216,11 +334,12 @@ function normalizeProject(
     workspace: normalizeWorkspace(input.workspace ?? existing?.workspace),
     instructions: optionalInstructions(input.instructions ?? existing?.instructions),
     organizationId: safeId(input.organizationId, 'Organization id'),
-    organizationName: input.organizationName ? text(input.organizationName, 'Organization name') : undefined,
+    organizationName: input.organizationName ? text(input.organizationName, 'Organization name') : existing?.organizationName,
     defaultRoutingPolicy: routing,
     defaultModel,
     privacy,
-    credentialProfileIds: normalizeCredentialMap(input.credentialProfileIds ?? existing?.credentialProfileIds),
+    credentialProfileIds: credentials,
+    connectionPolicy,
     budgets: normalizeBudgets(input.budgets ?? existing?.budgets),
     repoIntelligenceScope: 'project',
     concurrency,
@@ -244,6 +363,7 @@ function parseProject(value: unknown): ProjectDefinition | undefined {
       !item.defaultModel || typeof item.defaultModel !== 'object' ||
       !item.privacy || typeof item.privacy !== 'object' ||
       !item.credentialProfileIds || typeof item.credentialProfileIds !== 'object' ||
+      (item.connectionPolicy !== undefined && (!item.connectionPolicy || typeof item.connectionPolicy !== 'object' || Array.isArray(item.connectionPolicy))) ||
       !item.budgets || typeof item.budgets !== 'object' ||
       typeof item.concurrency !== 'number' ||
       typeof item.createdAt !== 'string' ||
@@ -265,6 +385,7 @@ function parseProject(value: unknown): ProjectDefinition | undefined {
       defaultModel: existing.defaultModel,
       privacy: existing.privacy,
       credentialProfileIds: existing.credentialProfileIds,
+      connectionPolicy: existing.connectionPolicy,
       budgets: existing.budgets,
       concurrency: existing.concurrency
     }, existing, existing.updatedAt);
@@ -294,31 +415,20 @@ function assertWorkspaceOrganizationIsolation(
 }
 
 export function projectStorePath(): string {
-  return process.env.LOCAL_CODER_PROJECTS_PATH?.trim() ||
-    path.join(os.homedir(), '.local-coder-mcp', 'projects.json');
+  return process.env.LOCAL_CODER_PROJECTS_PATH?.trim() || path.join(os.homedir(), '.local-coder-mcp', 'projects.json');
 }
 
 export function projectIsolationKey(project: Pick<ProjectDefinition, 'id' | 'organizationId'>): string {
-  return createHash('sha256')
-    .update(project.organizationId)
-    .update('\0')
-    .update(project.id)
-    .digest('hex');
+  return createHash('sha256').update(project.organizationId).update('\0').update(project.id).digest('hex');
 }
 
-/**
- * Repository intelligence must never bleed between two folders merely because they
- * live in the same folderless Project. Bound Projects keep their existing stable key;
- * ad-hoc Cowork folders receive a Project+workspace-scoped key.
- */
 export function projectRepoMemoryScopeKey(
   project: Pick<ProjectDefinition, 'id' | 'organizationId' | 'workspace'>,
   workspace: string
 ): string {
   const base = projectIsolationKey(project);
   if (project.workspace) return base;
-  const resolved = path.resolve(workspace);
-  return createHash('sha256').update(base).update('\0').update(resolved).digest('hex');
+  return createHash('sha256').update(base).update('\0').update(path.resolve(workspace)).digest('hex');
 }
 
 export function assertProjectProviderAllowed(
@@ -326,8 +436,12 @@ export function assertProjectProviderAllowed(
   providerId: string,
   providerKind: ProviderKind
 ): void {
-  if (!project.privacy.allowedProviderIds.includes(providerId)) {
-    throw new Error(`Provider ${providerId} is blocked by project ${project.id}'s allowlist.`);
+  const exactAllowed = new Set([
+    ...project.connectionPolicy.inference.allowedConnectionIds,
+    ...project.connectionPolicy.chat.allowedConnectionIds
+  ]);
+  if (!exactAllowed.has(providerId) && !project.privacy.allowedProviderIds.includes(providerId)) {
+    throw new Error(`Connection/provider ${providerId} is blocked by Project ${project.id}'s allowlist.`);
   }
   if (providerKind === 'cloud' && !project.privacy.cloudAllowed) {
     throw new Error(`Project ${project.id} does not allow cloud inference.`);
@@ -345,15 +459,8 @@ export function assertProjectCredentialIsolation(
     if (credential.providerId !== providerId) {
       throw new Error(`Credential ${credentialId} belongs to ${credential.providerId}, not ${providerId}.`);
     }
-    // An unscoped credential is a personal key the user may explicitly bind to
-    // a Project. Keys scoped to another organization remain a hard boundary.
-    if (
-      credential.organizationId !== undefined &&
-      credential.organizationId !== project.organizationId
-    ) {
-      throw new Error(
-        `Credential ${credentialId} is outside project ${project.id}'s organization isolation boundary.`
-      );
+    if (credential.organizationId !== undefined && credential.organizationId !== project.organizationId) {
+      throw new Error(`Credential ${credentialId} is outside Project ${project.id}'s organization isolation boundary.`);
     }
   }
 }
@@ -374,9 +481,7 @@ export class ProjectStore {
   create(input: CreateProjectInput): ProjectDefinition {
     const state = this.read();
     const project = normalizeProject(input);
-    if (state.projects.some((entry) => entry.id === project.id)) {
-      throw new Error(`Project already exists: ${project.id}`);
-    }
+    if (state.projects.some((entry) => entry.id === project.id)) throw new Error(`Project already exists: ${project.id}`);
     assertWorkspaceOrganizationIsolation(state.projects, project);
     state.projects.unshift(project);
     state.updatedAt = project.updatedAt;
@@ -389,9 +494,7 @@ export class ProjectStore {
     const state = this.read();
     const current = state.projects.find((entry) => entry.id === projectId);
     if (!current) throw new Error(`Project not found: ${projectId}`);
-    const mergedBudgets = patch.budgets
-      ? { ...current.budgets, ...patch.budgets }
-      : current.budgets;
+    const mergedBudgets = patch.budgets ? { ...current.budgets, ...patch.budgets } : current.budgets;
     const project = normalizeProject({
       id: current.id,
       name: patch.name ?? current.name,
@@ -404,6 +507,7 @@ export class ProjectStore {
       defaultModel: patch.defaultModel ?? current.defaultModel,
       privacy: patch.privacy ?? current.privacy,
       credentialProfileIds: patch.credentialProfileIds ?? current.credentialProfileIds,
+      connectionPolicy: patch.connectionPolicy ?? current.connectionPolicy,
       budgets: mergedBudgets,
       concurrency: patch.concurrency ?? current.concurrency
     }, current);
@@ -426,26 +530,20 @@ export class ProjectStore {
   }
 
   private read(): ProjectStoreFile {
-    if (!fs.existsSync(this.file)) {
-      return { version: 1, projects: [], updatedAt: new Date(0).toISOString() };
-    }
+    if (!fs.existsSync(this.file)) return { version: 1, projects: [], updatedAt: new Date(0).toISOString() };
     let parsed: unknown;
     try {
       parsed = JSON.parse(fs.readFileSync(this.file, 'utf8')) as unknown;
     } catch (error) {
       throw new Error(`Could not read Local Coder projects: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('Local Coder projects file must be a JSON object.');
-    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Local Coder projects file must be a JSON object.');
     const value = parsed as Record<string, unknown>;
     if (value.version !== 1 || !Array.isArray(value.projects)) {
       throw new Error(`Unsupported Local Coder projects version: ${String(value.version)}`);
     }
     const projects = value.projects.map(parseProject);
-    if (projects.some((project) => !project)) {
-      throw new Error('Local Coder projects file contains an invalid project.');
-    }
+    if (projects.some((project) => !project)) throw new Error('Local Coder projects file contains an invalid project.');
     return {
       version: 1,
       projects: projects as ProjectDefinition[],
