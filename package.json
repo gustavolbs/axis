@@ -1,9 +1,9 @@
 {
-  "name": "local-coder",
-  "productName": "Local Coder",
-  "version": "0.14.0",
+  "name": "axis",
+  "productName": "Axis",
+  "version": "0.15.0",
   "private": true,
-  "description": "Standalone provider-agnostic software engineering agent for macOS.",
+  "description": "Local-first, provider-agnostic AI engineering and work command center for macOS.",
   "type": "module",
   "main": "desktop/main.mjs",
   "engines": {
@@ -17,7 +17,7 @@
     "start:worker": "node dist/worker-server.js",
     "desktop": "npm run build && node scripts/run-desktop.mjs",
     "desktop:dir:mac": "npm run build && electron-builder --mac dir --publish never",
-    "desktop:pack:mac": "npm run build && electron-builder --mac dmg zip --publish never",
+    "desktop:pack:mac": "npm run build && electron-builder --mac dmg zip --x64 --arm64 --publish never",
     "desktop:release:mac": "node scripts/release-macos.mjs",
     "test": "tsx --test test/**/*.test.ts",
     "check": "npm run build && npm test",
