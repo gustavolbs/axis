@@ -111,21 +111,23 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "v44.1.0"
 
-      - name: Package unsigned Local Coder.app, DMG and ZIP
+      - name: Package unsigned Axis.app, DMG and ZIP for Intel and Apple Silicon
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run desktop:pack:mac
 
       - name: Verify desktop artifacts
         run: |
-          test -n "$(find release -maxdepth 3 -name 'Local Coder.app' -print -quit)"
-          test -n "$(find release -maxdepth 1 -name '*.dmg' -print -quit)"
-          test -n "$(find release -maxdepth 1 -name '*.zip' -print -quit)"
+          test -n "$(find release -maxdepth 3 -name 'Axis.app' -print -quit)"
+          test -n "$(find release -maxdepth 1 -name 'Axis-*-x64.dmg' -print -quit)"
+          test -n "$(find release -maxdepth 1 -name 'Axis-*-arm64.dmg' -print -quit)"
+          test -n "$(find release -maxdepth 1 -name 'Axis-*-x64.zip' -print -quit)"
+          test -n "$(find release -maxdepth 1 -name 'Axis-*-arm64.zip' -print -quit)"
 
       - name: Upload unsigned macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: local-coder-macos-unsigned
+          name: axis-macos-unsigned
           path: |
             release/*.dmg
             release/*.zip

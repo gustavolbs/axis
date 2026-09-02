@@ -1,8 +1,8 @@
-# Local Coder
+# Axis
 
-Local Coder is a standalone, provider-agnostic software-engineering agent for macOS. The desktop app owns the complete engineering loop itself: repository investigation, planning, implementation, deterministic validation, review, repair, routing, cost controls and persistent repository intelligence.
+Axis is a local-first, provider-agnostic AI engineering and work command center for macOS. The desktop app owns the complete engineering loop itself: repository investigation, planning, implementation, deterministic validation, review, repair, routing, cost controls and persistent repository intelligence. Its Work Hub brings work sources and connectors into the same desktop environment while preserving project and organization isolation.
 
-Claude Desktop is not a Local Coder host and Local Coder does not expose an MCP integration. Anthropic models may still be configured as ordinary inference providers alongside OpenAI and local Ollama models.
+Claude Desktop is not an Axis host and Axis does not expose an MCP integration. Anthropic models may still be configured as ordinary inference providers alongside OpenAI and local Ollama models.
 
 ## Architecture
 
@@ -10,7 +10,7 @@ Claude Desktop is not a Local Coder host and Local Coder does not expose an MCP 
 Developer
    │
    ▼
-Local Coder.app
+Axis.app
    │
    ▼
 Electron renderer
@@ -143,7 +143,7 @@ See [docs/MULTI_PROVIDER_FOUNDATION.md](docs/MULTI_PROVIDER_FOUNDATION.md).
 
 ## Providers
 
-Local Coder currently supports these inference paths:
+Axis currently supports these inference paths:
 
 - **Ollama** — local inference on the Mac;
 - **Windows worker** — authenticated local-network inference compute, with repository execution still owned by the Mac app;
@@ -182,7 +182,7 @@ See [docs/REMOTE_WORKER_ARCHITECTURE.md](docs/REMOTE_WORKER_ARCHITECTURE.md) and
 
 ## App state
 
-The standalone app uses one state root:
+Axis intentionally keeps the existing standalone state root for backward compatibility:
 
 ```text
 ~/.local-coder/
@@ -214,11 +214,11 @@ LOCAL_CODER_RESEARCH_ENABLED=true
 LOCAL_CODER_SEARXNG_URL=http://<trusted-instance>
 ```
 
-For Microsoft ecosystem questions, Local Coder narrows discovery to `site:learn.microsoft.com`; it does not connect to a Microsoft Learn MCP server.
+For Microsoft ecosystem questions, Axis narrows discovery to `site:learn.microsoft.com`; it does not connect to a Microsoft Learn MCP server.
 
 ## Persistent repository intelligence
 
-Local Coder retains evidence-backed per-repository knowledge such as architecture boundaries, conventions, procedures, invariants, failure lessons, regression invariants, successful task episodes and Git-change history.
+Axis retains evidence-backed per-repository knowledge such as architecture boundaries, conventions, procedures, invariants, failure lessons, regression invariants, successful task episodes and Git-change history.
 
 Authority remains:
 

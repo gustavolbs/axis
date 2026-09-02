@@ -64,7 +64,7 @@ jobs:
       - name: Verify Developer ID signature and notarization ticket
         run: |
           set -euo pipefail
-          app="$(find release -maxdepth 3 -type d -name 'Local Coder.app' -print -quit)"
+          app="$(find release -maxdepth 3 -type d -name 'Axis.app' -print -quit)"
           dmg="$(find release -maxdepth 1 -type f -name '*.dmg' -print -quit)"
           zip="$(find release -maxdepth 1 -type f -name '*.zip' -print -quit)"
 
@@ -84,7 +84,7 @@ jobs:
           }
           trap cleanup EXIT
           hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount" -quiet
-          packaged_app="$mount/Local Coder.app"
+          packaged_app="$mount/Axis.app"
           test -d "$packaged_app"
           codesign --verify --deep --strict --verbose=2 "$packaged_app"
           xcrun stapler validate "$packaged_app"
@@ -98,7 +98,7 @@ jobs:
       - name: Upload verified signed artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: local-coder-macos-signed-notarized
+          name: axis-macos-signed-notarized
           path: |
             release/*.dmg
             release/*.zip
