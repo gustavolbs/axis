@@ -338,6 +338,7 @@ async function collectSearchEvidence(workspace: string, queries: string[], confi
     reportProgress({
       phase: 'investigation',
       action: 'Searching the repository',
+      activityKind: 'searching-repository',
       detail: query,
       reasoningSummary: 'Searching local source files for the implementation context.'
     });
@@ -362,6 +363,7 @@ async function collectFullEvidence(workspace: string, files: string[], config: L
       reportProgress({
         phase: 'investigation',
         action: 'Reading repository file',
+        activityKind: 'reading',
         detail: file,
         reasoningSummary: 'Reading a bounded file window before planning the change.'
       });
@@ -529,6 +531,7 @@ export async function executeLocalEngineer(model: EngineerChatClient, config: Lo
   reportProgress({
     phase: 'investigation',
     action: 'Scanning the workspace',
+    activityKind: 'reading',
     detail: 'Building a repository map and locating relevant context.',
     reasoningSummary: 'The agent is establishing the local evidence it needs before making changes.'
   });

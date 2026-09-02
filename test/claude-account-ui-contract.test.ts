@@ -72,6 +72,7 @@ test('Work Hub is shell-owned, capability-driven and uses the shared stylesheet'
   const runtime = source('src/work-hub.ts');
   const styles = source('app/src/lc-fixes.css');
   assert.match(shell, /GlobalWorkHubLauncher/);
+  assert.match(shell, /surface === 'work-hub'/);
   assert.doesNotMatch(main, /GlobalWorkHubLauncher/);
   assert.match(hub, /Choose what to sync/);
   assert.match(hub, /Work board/);
@@ -89,6 +90,8 @@ test('Work Hub is shell-owned, capability-driven and uses the shared stylesheet'
   assert.match(hub, /hasCachedSnapshot/);
   assert.match(hub, /Checking connected services/);
   assert.match(hub, /The provider discovers its connected services automatically/);
+  assert.match(hub, /work-hub-shell work-hub-page/);
+  assert.doesNotMatch(hub, /work-hub-backdrop|aria-modal="true"|Close Work Hub/);
   assert.doesNotMatch(hub, /Exact read-only MCP tools|Remote system|Normalized-data retention|<style>/);
   assert.match(runtime, /does not require a manual tool allowlist/);
   assert.match(runtime, /Interactive user requests outside Work Hub may use write actions normally/);

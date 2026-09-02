@@ -356,12 +356,12 @@ async function executeDirectChat(
         const model = progress.model ?? input.chatModelLimits?.modelId ?? config.model;
         reportProgress({
           phase: 'other',
+          activityKind: progress.state === 'waiting' ? 'connecting' : progress.state === 'thinking' ? 'thinking' : 'writing',
           action: progress.state === 'waiting'
             ? 'Connecting to the model'
             : progress.state === 'thinking'
               ? 'Model is reasoning about the conversation'
               : 'Model is drafting the response',
-          detail: `provider=${providerId} · model=${model} · ${progress.chunkCount} stream events · ${progress.outputChars} output chars · elapsed=${Math.round(progress.elapsedMs / 1000)}s`,
           reasoningSummary: progress.state === 'thinking'
             ? 'The model is processing the request. Hidden reasoning remains private; only safe progress metadata is shown.'
             : progress.state === 'waiting'

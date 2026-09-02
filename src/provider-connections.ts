@@ -93,6 +93,41 @@ interface AccountModelSpec {
   alias?: boolean;
 }
 
+const CLAUDE_ACCOUNT_MODEL_FAMILIES = ['fable', 'opus', 'sonnet', 'haiku'] as const;
+type ClaudeAccountModelFamily = typeof CLAUDE_ACCOUNT_MODEL_FAMILIES[number];
+
+function claudeModelFamily(modelId: string): ClaudeAccountModelFamily | undefined {
+  const normalized = modelId.toLowerCase();
+  return CLAUDE_ACCOUNT_MODEL_FAMILIES.find((family) =>
+    normalized === family || normalized.includes(`-${family}-`)
+  );
+}
+
+function claudeVersionLabel(modelId: string): string {
+  const family = claudeModelFamily(modelId);
+  if (!family) return modelId;
+  const version = modelId
+    .toLowerCase()
+    .replace(/^claude-/, '')
+    .replace(new RegExp(`^${family}-`), '')
+    .replace(/-\d{8}$/, '')
+    .replace(/-/g, '.');
+  return `${family.charAt(0).toUpperCase()}${family.slice(1)}${version ? ` ${version}` : ''}`;
+}
+
+function latestClaudeModels(models: ModelDefinition[]): Map<ClaudeAccountModelFamily, ModelDefinition> {
+  const latest = new Map<ClaudeAccountModelFamily, ModelDefinition>();
+  for (const model of [...models].sort((left, right) => {
+    const created = Date.parse(right.createdAt ?? '') - Date.parse(left.createdAt ?? '');
+    if (Number.isFinite(created) && created !== 0) return created;
+    return right.id.localeCompare(left.id, undefined, { numeric: true });
+  })) {
+    const family = claudeModelFamily(model.id);
+    if (family && !latest.has(family)) latest.set(family, model);
+  }
+  return latest;
+}
+
 /**
  * Subscription CLIs do not expose the authenticated account's `/models`
  * endpoint. Claude does expose stable aliases, however, and those aliases are
@@ -124,7 +159,7 @@ function accountModels(providerId: string, family: 'anthropic' | 'openai', label
   }));
 }
 
-function aliasProvider(aliasId: string, label: string, inner: InferenceProvider): InferenceProvider {
+function aliasProvider(aliasId: string, inner: InferenceProvider): InferenceProvider {
   return {
     id: aliasId,
     kind: inner.kind,
@@ -132,8 +167,7 @@ function aliasProvider(aliasId: string, label: string, inner: InferenceProvider)
     async listModels() {
       return (await inner.listModels()).map((model) => ({
         ...model,
-        providerId: aliasId,
-        displayName: `${label} · ${model.displayName}`
+        providerId: aliasId
       }));
     },
     async health() {
@@ -181,6 +215,7 @@ class ClaudeAccountInferenceProvider implements InferenceProvider {
     const result = await this.runtime.invoke(this.profileId, accountPrompt(request), {
       timeoutMs: request.timeoutMs,
       model: request.model,
+      captureResultMetadata: true,
       allowedTools: ['mcp__*'],
       jsonSchema: request.output?.type === 'json_schema' ? request.output.schema : undefined
     });
@@ -189,7 +224,7 @@ class ClaudeAccountInferenceProvider implements InferenceProvider {
     if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || 'Claude account invocation failed.');
     return {
       providerId: this.id,
-      model: request.model,
+      model: result.model ?? request.model,
       content: result.stdout,
       latencyMs: Date.now() - startedAt,
       usage: {}
@@ -256,6 +291,14 @@ function credentialAvailability(manager: CredentialManager, credential: Credenti
   }
 }
 
+function apiConnectionLabel(providerFamily: 'anthropic' | 'openai', credentialLabel: string): string {
+  const alreadyNamesProvider = providerFamily === 'anthropic'
+    ? /\b(?:claude|anthropic)\b/i.test(credentialLabel)
+    : /\b(?:gpt|openai)\b/i.test(credentialLabel);
+  if (alreadyNamesProvider) return credentialLabel;
+  return `${providerFamily === 'openai' ? 'OpenAI' : 'Claude'} · ${credentialLabel}`;
+}
+
 function connectionBelongsToOrganization(
   view: ProviderConnectionView,
   organizationId: string,
@@ -318,7 +361,7 @@ export class ProviderConnectionRuntime {
       views.push({
         id: apiCredentialConnectionId(credential.providerId, credential.id),
         providerFamily: credential.providerId,
-        label: `${credential.providerId === 'openai' ? 'GPT' : 'Claude'} · ${credential.label}`,
+        label: apiConnectionLabel(credential.providerId, credential.label),
         auth: 'api-key',
         billing: 'api',
         organizationId: credential.organizationId ?? PERSONAL_ORGANIZATION_ID,
@@ -380,7 +423,11 @@ export class ProviderConnectionRuntime {
   async resolve(connectionId: string, modelId: string): Promise<{ provider: InferenceProvider; model: ModelDefinition }> {
     const view = this.view(connectionId);
     if (!view) throw new Error(`Unknown provider connection: ${connectionId}`);
-    if (view.organizationId !== PERSONAL_ORGANIZATION_ID && view.organizationId !== LOCAL_ORGANIZATION_ID) {
+    if (
+      view.auth === 'api-key' &&
+      view.organizationId !== PERSONAL_ORGANIZATION_ID &&
+      view.organizationId !== LOCAL_ORGANIZATION_ID
+    ) {
       throw new Error(`${view.label} belongs to organization ${view.organizationId} and requires an explicitly bound Project.`);
     }
     return await this.resolveView(view, modelId);
@@ -422,6 +469,7 @@ export class ProviderConnectionRuntime {
     providerFamily: ProviderFamily;
     auth: ProviderConnectionAuth;
     billing: ProviderConnectionBilling;
+    organizationLabel?: string;
     ready: boolean;
     reason?: string;
     models: Array<ModelDefinition & { providerDefault: boolean; projectDefault: false; available: boolean }>;
@@ -433,12 +481,17 @@ export class ProviderConnectionRuntime {
       providerFamily: ProviderFamily;
       auth: ProviderConnectionAuth;
       billing: ProviderConnectionBilling;
+      organizationLabel?: string;
       ready: boolean;
       reason?: string;
       models: Array<ModelDefinition & { providerDefault: boolean; projectDefault: false; available: boolean }>;
     }> = [];
     for (const view of this.list()) {
-      if (view.organizationId !== PERSONAL_ORGANIZATION_ID || view.auth === 'local') continue;
+      if (view.auth === 'local') continue;
+      // Organization-scoped API keys remain Project-only. Subscription
+      // accounts are explicit user-selectable identities and may be used in a
+      // project-less Chat without weakening Project organization boundaries.
+      if (view.auth === 'api-key' && view.organizationId !== PERSONAL_ORGANIZATION_ID) continue;
       let models: ModelDefinition[] = [];
       let reason = view.reason;
       if (view.available) {
@@ -456,9 +509,29 @@ export class ProviderConnectionRuntime {
         providerFamily: view.providerFamily,
         auth: view.auth,
         billing: view.billing,
+        organizationLabel: view.organizationLabel,
         ready: view.available && models.length > 0,
         reason: view.available && models.length > 0 ? undefined : reason ?? `${view.label} is unavailable.`,
         models: models.map((model) => ({ ...model, available: true, providerDefault: false, projectDefault: false }))
+      });
+    }
+    const currentClaudeModels = latestClaudeModels(
+      results
+        .filter((provider) => provider.providerFamily === 'anthropic' && provider.auth === 'api-key' && provider.ready)
+        .flatMap((provider) => provider.models)
+    );
+    for (const provider of results) {
+      if (provider.auth !== 'claude-account') continue;
+      provider.models = provider.models.map((model) => {
+        const family = claudeModelFamily(model.id);
+        const current = family ? currentClaudeModels.get(family) : undefined;
+        return current
+          ? {
+              ...model,
+              displayName: `${claudeVersionLabel(current.id)} · latest alias`,
+              metadata: { ...model.metadata, resolvedModelHint: current.id }
+            }
+          : model;
       });
     }
     return results;
@@ -487,7 +560,7 @@ export class ProviderConnectionRuntime {
         throw new Error(`API provider factory for ${view.providerFamily} returned an inconsistent provider.`);
       }
       const guarded = this.budget.wrap(withSafeModelLimits(raw));
-      return this.capabilities.wrap(aliasProvider(view.id, view.label, guarded));
+      return this.capabilities.wrap(aliasProvider(view.id, guarded));
     }
     if (view.auth === 'claude-account' && view.accountProfileId) {
       return withSafeModelLimits(

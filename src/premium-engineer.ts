@@ -171,6 +171,7 @@ async function collectSearchEvidence(
     reportProgress({
       phase: 'investigation',
       action: 'Searching the repository',
+      activityKind: 'searching-repository',
       detail: query,
       reasoningSummary: 'Searching local source files for the symbols and behavior relevant to this request.'
     });
@@ -253,6 +254,7 @@ async function collectFullEvidence(
       reportProgress({
         phase: 'investigation',
         action: 'Reading repository file',
+        activityKind: 'reading',
         detail: file,
         reasoningSummary: 'Reading a bounded, relevant file window as evidence for the answer.'
       });

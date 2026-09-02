@@ -25,11 +25,11 @@ import { RunInspector } from './RunInspector.js';
 import { SettingsModal } from './SettingsModal.js';
 import { ShellDialog, type ShellDialogRequest } from './ShellDialog.js';
 import { displayProfileName, type DesktopCommand } from './native.js';
-import { GlobalWorkHubLauncher } from './GlobalWorkHubLauncher.js';
+import { GlobalWorkHubLauncher, type WorkHubTab } from './GlobalWorkHubLauncher.js';
 
 /** Conversations live in the sidebar, under their project or in the
  *  project-less Chats section. Archived holds what has been hidden from it. */
-type Surface = 'agent' | 'projects' | 'project' | 'runs' | 'archived';
+type Surface = 'agent' | 'projects' | 'project' | 'runs' | 'archived' | 'work-hub';
 
 interface SidebarJob {
   id: string;
@@ -48,7 +48,12 @@ function jobTitle(job: SidebarJob): string {
 
 function storedSurface(): Surface {
   const value = localStorage.getItem('local-coder.surface');
-  return value === 'projects' || value === 'project' || value === 'runs' || value === 'archived' ? value : 'agent';
+  return value === 'projects' || value === 'project' || value === 'runs' || value === 'archived' || value === 'work-hub' ? value : 'agent';
+}
+
+function storedWorkHubTab(): WorkHubTab {
+  const value = localStorage.getItem('local-coder.work-hub-tab');
+  return value === 'today' || value === 'calendar' || value === 'work' || value === 'sources' ? value : 'inbox';
 }
 
 const READ_KEY = 'local-coder.read-jobs';
@@ -111,7 +116,7 @@ export function AppRoot() {
   const [agentEpoch, setAgentEpoch] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [workHubOpen, setWorkHubOpen] = useState(false);
+  const [workHubTab, setWorkHubTab] = useState<WorkHubTab>(storedWorkHubTab);
   const [searchQuery, setSearchQuery] = useState('');
   const [jobMenuId, setJobMenuId] = useState<string>();
   const [projectMenuId, setProjectMenuId] = useState<string>();
@@ -287,6 +292,11 @@ export function AppRoot() {
   function selectSurface(next: Surface) {
     localStorage.setItem('local-coder.surface', next);
     setSurface(next);
+  }
+
+  function selectWorkHubTab(next: WorkHubTab) {
+    localStorage.setItem('local-coder.work-hub-tab', next);
+    setWorkHubTab(next);
   }
 
   function startNewTask() {
@@ -504,7 +514,6 @@ export function AppRoot() {
     data-shell={isElectron ? 'electron' : 'web'}
     data-platform={platform}
   >
-    <GlobalWorkHubLauncher open={workHubOpen} onClose={() => setWorkHubOpen(false)} />
     {/* Window-level row, deliberately outside the sidebar: it has to sit beside
         the traffic lights whatever the sidebar's width, and a 56px rail cannot
         hold 76px of lights plus a button. Toggle and search only — a wordmark
@@ -524,7 +533,7 @@ export function AppRoot() {
         <button className={surface === 'projects' || surface === 'project' ? 'active' : ''} onClick={() => selectSurface('projects')} aria-label="Projects" data-tooltip={tooltip('Projects')}><Folder size={16} aria-hidden="true" /><span>Projects</span></button>
         <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')} aria-label="Runs" data-tooltip={tooltip('Runs')}><History size={16} aria-hidden="true" /><span>Runs</span></button>
         <button className={surface === 'archived' ? 'active' : ''} onClick={() => selectSurface('archived')} aria-label="Archived" data-tooltip={tooltip('Archived')}><Archive size={16} aria-hidden="true" /><span>Archived</span></button>
-        <button className={workHubOpen ? 'active' : ''} onClick={() => setWorkHubOpen(true)} aria-label="Work Hub" data-tooltip={tooltip('Work Hub')}><LayoutDashboard size={16} aria-hidden="true" /><span>Work Hub</span></button>
+        <button className={surface === 'work-hub' ? 'active' : ''} onClick={() => selectSurface('work-hub')} aria-label="Work Hub" data-tooltip={tooltip('Work Hub')}><LayoutDashboard size={16} aria-hidden="true" /><span>Work Hub</span></button>
       </nav>
 
       <div className="lc-shell-sidebar-scroll">
@@ -618,6 +627,7 @@ export function AppRoot() {
       /> : null}
       {surface === 'project' && !selectedProject ? <ProjectGallery onOpenProject={runProject} /> : null}
       {surface === 'runs' ? <RunInspector /> : null}
+      {surface === 'work-hub' ? <GlobalWorkHubLauncher tab={workHubTab} onTabChange={selectWorkHubTab} /> : null}
       {surface === 'archived' ? <ArchivedView
         jobs={archivedJobs}
         projects={archivedProjects}

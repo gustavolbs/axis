@@ -116,6 +116,28 @@ interface JobTurn {
   content: string;
   createdAt: string;
 }
+interface JobActivity {
+  action: string;
+  detail?: string;
+  reasoningSummary?: string;
+  activityKind?:
+    | 'connecting'
+    | 'thinking'
+    | 'reading'
+    | 'searching-repository'
+    | 'searching-web'
+    | 'tool'
+    | 'writing'
+    | 'validating'
+    | 'working';
+  streamState?: 'waiting-response' | 'reasoning' | 'generating';
+  providerId?: string;
+  model?: string;
+  eventCount?: number;
+  outputChars?: number;
+  elapsedMs?: number;
+  updatedAt: string;
+}
 interface Job {
   id: string;
   status: string;
@@ -132,18 +154,8 @@ interface Job {
     reasoningEffort?: JobReasoningEffort;
   };
   turns: JobTurn[];
-  activity?: {
-    action: string;
-    detail?: string;
-    reasoningSummary?: string;
-    streamState?: 'waiting-response' | 'reasoning' | 'generating';
-    providerId?: string;
-    model?: string;
-    eventCount?: number;
-    outputChars?: number;
-    elapsedMs?: number;
-    updatedAt: string;
-  };
+  activity?: JobActivity;
+  activityHistory?: JobActivity[];
   decisionRequest?: DecisionRequest;
   escalationPlan?: EscalationPlan;
   result?: EngineerResult;
@@ -178,6 +190,7 @@ interface CatalogProvider {
   providerFamily?: 'ollama' | 'anthropic' | 'openai';
   auth?: 'local' | 'api-key' | 'claude-account' | 'chatgpt-account';
   billing?: 'local' | 'api' | 'subscription';
+  organizationLabel?: string;
   kind: 'local' | 'cloud';
   ready: boolean;
   reason?: string;
@@ -258,8 +271,8 @@ function providerLabel(providerId: string): string {
 function providerDescription(provider: CatalogProvider): string {
   if (provider.auth === 'local' || provider.kind === 'local') return 'Local model · stays on this computer';
   if (provider.auth === 'api-key') return 'API key · provider model list updates live';
-  if (provider.auth === 'claude-account') return 'Claude subscription · uses your CLI account';
-  if (provider.auth === 'chatgpt-account') return 'ChatGPT subscription · uses your CLI account';
+  if (provider.auth === 'claude-account') return `Claude subscription${provider.organizationLabel ? ` · ${provider.organizationLabel}` : ''} · uses your CLI account`;
+  if (provider.auth === 'chatgpt-account') return `ChatGPT subscription${provider.organizationLabel ? ` · ${provider.organizationLabel}` : ''} · uses your CLI account`;
   if (provider.id === 'anthropic') return 'API key · use the selected Claude model directly';
   if (provider.id === 'openai') return 'API key · use the selected OpenAI model directly';
   return `Use the selected ${provider.label ?? providerLabel(provider.id)} model directly`;
@@ -365,6 +378,39 @@ function claudeMenuModels(models: ModelOption[]): { recent: ModelOption[]; legac
   }
   legacy.push(...models.filter((model) => !claudeFamily(model.modelId)));
   return { recent, legacy };
+}
+
+function providerMenuModels(
+  provider: ProviderModeConfig,
+  models: ModelOption[]
+): { recent: ModelOption[]; legacy: ModelOption[] } {
+  if (provider.providerFamily === 'anthropic') return claudeMenuModels(models);
+  if (provider.providerFamily === 'openai' && models.length > 6) {
+    return { recent: models.slice(0, 6), legacy: models.slice(6) };
+  }
+  return { recent: models, legacy: [] };
+}
+
+function moreModelsCopy(provider: ProviderModeConfig): { title: string; description: string; empty: string } {
+  if (provider.providerFamily === 'anthropic') {
+    return {
+      title: 'More Claude models',
+      description: 'Older Claude versions and dated snapshots',
+      empty: 'No older Claude models are available.'
+    };
+  }
+  if (provider.providerFamily === 'openai') {
+    return {
+      title: 'More OpenAI models',
+      description: 'Older versions and specialized OpenAI models',
+      empty: 'No additional OpenAI models are available.'
+    };
+  }
+  return {
+    title: `More ${provider.label} models`,
+    description: 'Additional models from this provider',
+    empty: 'No additional models are available.'
+  };
 }
 function isWorking(status?: string) {
   return status === 'queued' || status === 'running';
@@ -1204,11 +1250,10 @@ function ModelMenu(props: {
       description: '',
       providerId: currentMode === 'local-first' ? 'ollama' : currentMode,
       ready: false
-    };
+  };
   const currentModels = props.modelOptions.filter((model) => model.providerId === currentModeConfig.providerId);
-  const claudeGroups = currentModeConfig.providerFamily === 'anthropic'
-    ? claudeMenuModels(currentModels)
-    : { recent: currentModels, legacy: [] };
+  const modelGroups = providerMenuModels(currentModeConfig, currentModels);
+  const moreCopy = moreModelsCopy(currentModeConfig);
   const selectedModelId = props.modelSelection.includes('\0')
     ? props.modelSelection.slice(props.modelSelection.indexOf('\0') + 1)
     : '';
@@ -1226,16 +1271,16 @@ function ModelMenu(props: {
 
   if (props.modelMenu === 'models' || props.modelMenu === 'legacy-models') {
     const legacy = props.modelMenu === 'legacy-models';
-    const visibleModels = legacy ? claudeGroups.legacy : claudeGroups.recent;
+    const visibleModels = legacy ? modelGroups.legacy : modelGroups.recent;
     return <div className="lc-agent-popover model-popover model-list-popover" role="menu">
-      <button className="popover-back" onClick={() => props.setModelMenu(legacy ? 'models' : 'providers')}><ChevronLeft size={16} /><strong>{legacy ? 'More Claude models' : `${currentModeConfig.label} models`}</strong></button>
+      <button className="popover-back" onClick={() => props.setModelMenu(legacy ? 'models' : 'providers')}><ChevronLeft size={16} /><strong>{legacy ? moreCopy.title : `${currentModeConfig.label} models`}</strong></button>
       <div className="popover-separator" />
       {visibleModels.map((model) => <button key={`${currentMode}-${model.modelId}`} className={selectedModelId === model.modelId ? 'selected' : ''} disabled={!model.available} title={!model.available ? model.reason ?? 'Provider unavailable' : undefined} onClick={() => { props.setModelSelection(modeValue(currentMode, model.modelId)); props.setModelMenu('closed'); }}>
         <span><strong>{currentModeConfig.providerFamily === 'anthropic' ? claudeDisplayLabel(model) : model.label}</strong><small>{model.description}{model.available ? '' : ` · ${model.reason ?? 'unavailable'}`}</small></span>
         {selectedModelId === model.modelId ? <Check size={16} /> : null}
       </button>)}
-      {!legacy && claudeGroups.legacy.length > 0 ? <><div className="popover-separator" /><button className="popover-row-link" onClick={() => props.setModelMenu('legacy-models')}><span><strong>More models</strong><small>Older Claude versions and dated snapshots</small></span><ChevronRight size={16} /></button></> : null}
-      {visibleModels.length === 0 ? <div className="model-menu-note">{legacy ? 'No older Claude models are available.' : currentModeConfig.reason ?? 'No Chat models are available for this provider. Check its connection and API key.'}</div> : null}
+      {!legacy && modelGroups.legacy.length > 0 ? <><div className="popover-separator" /><button className="popover-row-link" onClick={() => props.setModelMenu('legacy-models')}><span><strong>More models</strong><small>{moreCopy.description}</small></span><ChevronRight size={16} /></button></> : null}
+      {visibleModels.length === 0 ? <div className="model-menu-note">{legacy ? moreCopy.empty : currentModeConfig.reason ?? 'No Chat models are available for this provider. Check its connection and API key.'}</div> : null}
     </div>;
   }
 
@@ -1350,111 +1395,167 @@ function chatProgress(
   };
 }
 
-type ActivityStepState = 'done' | 'active' | 'pending';
+type ActivityKind = 'connecting' | 'thinking' | 'reading' | 'searching' | 'writing' | 'validating' | 'working';
+
+interface ActivityDisplay {
+  key: string;
+  label: string;
+  target?: string;
+  explanation?: string;
+  timestamp: string;
+  kind: ActivityKind;
+}
+
+function displayActivity(activity: JobActivity, fallbackKind: ReturnType<typeof chatProgress>['kind'] = 'working'): ActivityDisplay {
+  const action = activity.action.trim();
+  const text = `${action} ${activity.detail ?? ''}`.toLowerCase();
+  let kind: ActivityKind = fallbackKind;
+  let label = action || 'Working';
+  let target = activity.detail;
+
+  if (activity.activityKind === 'searching-web') {
+    kind = 'searching';
+    label = 'Searching the web';
+  } else if (activity.activityKind === 'searching-repository') {
+    kind = 'searching';
+    label = 'Searching the repository';
+  } else if (activity.activityKind === 'reading') {
+    kind = 'reading';
+    label = 'Reading';
+  } else if (activity.activityKind === 'thinking') {
+    kind = 'thinking';
+    label = 'Thinking';
+  } else if (activity.activityKind === 'writing') {
+    kind = 'writing';
+    label = 'Writing the response';
+  } else if (activity.activityKind === 'validating') {
+    kind = 'validating';
+    label = 'Running checks';
+  } else if (activity.activityKind === 'connecting') {
+    kind = 'connecting';
+    label = 'Connecting';
+  } else if (activity.activityKind === 'tool') {
+    kind = 'working';
+    label = action || 'Using a tool';
+  } else if (!activity.activityKind && /research broker|external knowledge|internet|\bweb\b/.test(text)) {
+    kind = 'searching';
+    label = 'Searching the web';
+  } else if (!activity.activityKind && /searching the repository|search workspace|repository search/.test(text)) {
+    kind = 'searching';
+    label = 'Searching the repository';
+  } else if (!activity.activityKind && /reading repository file|reading file|read workspace file/.test(text)) {
+    kind = 'reading';
+    label = 'Reading';
+  } else if (!activity.activityKind && /scan(?:ning)? the workspace|repository map|ranked repository context/.test(text)) {
+    kind = 'reading';
+    label = 'Scanning the workspace';
+  } else if (!activity.activityKind && (activity.streamState === 'reasoning' || /reasoning|thinking|analy[sz]|investigat|planning|preflight/.test(text))) {
+    kind = 'thinking';
+    label = 'Thinking';
+  } else if (!activity.activityKind && (activity.streamState === 'generating' || /draft|writing|generating|compos|report/.test(text))) {
+    kind = 'writing';
+    label = 'Writing the response';
+  } else if (!activity.activityKind && /validat|running checks|test suite|typecheck|lint/.test(text)) {
+    kind = 'validating';
+    label = 'Running checks';
+  } else if (!activity.activityKind && (activity.streamState === 'waiting-response' || /connect|waiting/.test(text))) {
+    kind = 'connecting';
+    label = 'Connecting';
+  }
+
+  if (kind === 'reading' && label === 'Reading' && !target) target = 'repository context';
+  return {
+    key: `${activity.updatedAt}-${action}-${target ?? ''}`,
+    label,
+    target,
+    explanation: activity.reasoningSummary,
+    timestamp: activity.updatedAt,
+    kind
+  };
+}
+
+function compactActivityHistory(items: ActivityDisplay[]): ActivityDisplay[] {
+  return items.filter((item, index) => {
+    const previous = items[index - 1];
+    return !previous || previous.label !== item.label || previous.target !== item.target;
+  }).slice(-12);
+}
+
+function visibleActivityTarget(value?: string): string | undefined {
+  const target = value?.trim();
+  if (!target || /(?:^|\s)provider=.+(?:stream events|output chars|elapsed=)/i.test(target)) return undefined;
+  return target;
+}
 
 function ChatActivityCard(props: {
   job: Job;
   progress: ReturnType<typeof chatProgress>;
   currentInference?: NonNullable<WorkerStatus['inference']>['current'];
   latestEvent?: JobEvent;
+  complete?: boolean;
 }) {
-  const { job, progress, currentInference, latestEvent } = props;
+  const { job, progress, currentInference, latestEvent, complete = false } = props;
   const activity = job.activity;
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const startedAt = useRef(Date.now());
 
   useEffect(() => {
     startedAt.current = Date.now();
-    setOpen(true);
+    setOpen(false);
   }, [job.id, job.status]);
 
   useEffect(() => {
+    if (complete) return undefined;
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [complete]);
 
-  const elapsedMs = activity?.elapsedMs ?? currentInference?.runningMs ?? Math.max(0, now - startedAt.current);
-  const providerId = activity?.providerId ?? (job.input.modelSelection?.mode === 'explicit' ? job.input.modelSelection.providerId : undefined) ?? 'ollama';
-  const model = activity?.model
-    ?? currentInference?.model
-    ?? (job.input.modelSelection && job.input.modelSelection.mode !== 'auto' ? job.input.modelSelection.modelId : undefined)
-    ?? 'Default model';
-  const eventCount = activity?.eventCount ?? currentInference?.streamChunks;
-  const outputChars = activity?.outputChars ?? currentInference?.outputChars;
-  const streamActive = progress.kind === 'thinking' || progress.kind === 'writing';
-  const steps: Array<{ label: string; detail: string; state: ActivityStepState }> = [
-    { label: 'Request received', detail: 'Your message is in the active conversation.', state: 'done' },
-    {
-      label: 'Provider connected',
-      detail: streamActive ? `${providerLabel(providerId)} is streaming updates.` : 'Opening the provider response stream.',
-      state: progress.kind === 'connecting' ? 'active' : 'done'
-    },
-    {
-      label: 'Reasoning',
-      detail: progress.kind === 'thinking' ? 'Processing the request with private reasoning.' : progress.kind === 'writing' ? 'Reasoning is complete or not required.' : 'Waiting for the first model event.',
-      state: progress.kind === 'thinking' ? 'active' : progress.kind === 'writing' ? 'done' : 'pending'
-    },
-    {
-      label: 'Drafting response',
-      detail: progress.kind === 'writing' ? 'Building the answer you will see next.' : 'The user-visible answer will appear here.',
-      state: progress.kind === 'writing' ? 'active' : 'pending'
-    }
-  ];
-  const updates = [
-    ...job.events
-      .filter((event) => event.type === 'status')
-      .slice(-3)
-      .map((event) => ({ label: event.title, timestamp: event.timestamp })),
-    ...(latestEvent?.type === 'status' ? [{ label: latestEvent.title, timestamp: latestEvent.timestamp }] : []),
-    ...(activity ? [{ label: activity.action, timestamp: activity.updatedAt }] : [])
-  ].filter((item, index, items) => index === items.findIndex((candidate) => candidate.label === item.label));
+  const firstHistoricActivity = job.activityHistory?.at(0);
+  const lastHistoricActivity = job.activityHistory?.at(-1);
+  const historicElapsedMs = firstHistoricActivity && lastHistoricActivity
+    ? Math.max(1_000, Date.parse(lastHistoricActivity.updatedAt) - Date.parse(firstHistoricActivity.updatedAt))
+    : undefined;
+  const elapsedMs = activity?.elapsedMs
+    ?? lastHistoricActivity?.elapsedMs
+    ?? currentInference?.runningMs
+    ?? (complete ? historicElapsedMs : undefined)
+    ?? Math.max(0, now - startedAt.current);
+  const activities = compactActivityHistory([
+    ...(job.activityHistory ?? []).map((item) => displayActivity(item, progress.kind)),
+    ...(activity && job.activityHistory?.at(-1)?.updatedAt !== activity.updatedAt
+      ? [displayActivity(activity, progress.kind)]
+      : [])
+  ]);
+  const fallback: ActivityDisplay = {
+    key: latestEvent?.id ?? `fallback-${progress.kind}`,
+    label: progress.title,
+    target: progress.detail,
+    timestamp: latestEvent?.timestamp ?? new Date(now).toISOString(),
+    kind: progress.kind
+  };
+  const steps = activities.length ? activities : [fallback];
+  const current = steps.at(-1)!;
+  const currentTarget = visibleActivityTarget(current.target);
 
-  return <section className="assistant-activity-card" data-state={progress.kind} aria-label="Live response activity">
-    <div className="assistant-activity-header">
-      <div className="assistant-activity-heading">
-        <span className="assistant-live-indicator" aria-hidden="true"><i /></span>
-        <strong>{progress.title}</strong>
-        <span className="assistant-activity-time">{duration(elapsedMs)}</span>
-      </div>
-      <span className="assistant-provider-chip" title={`${providerLabel(providerId)} · ${model}`}>
-        {providerLabel(providerId)}<span>·</span>{model}
+  return <section className="assistant-activity-card assistant-live-activity" data-state={current.kind} aria-label={complete ? 'Response activity summary' : 'Live response activity'} aria-live="off">
+    <button className="assistant-activity-toggle assistant-live-activity-summary" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+      <span className="assistant-live-copy" role={complete ? undefined : 'status'} aria-live={complete ? undefined : 'polite'}>
+        <strong>{complete ? `Thought for ${duration(elapsedMs)}` : current.label}</strong>
+        {!complete && currentTarget ? <span>{currentTarget}</span> : null}
       </span>
-    </div>
+      <ChevronRight className="assistant-live-chevron" size={16} aria-hidden="true" />
+    </button>
 
-    <div className="assistant-activity-current">
-      <div className="assistant-activity-orb" aria-hidden="true"><Sparkles size={15} strokeWidth={1.65} /></div>
-      <div>
-        <strong>{progress.kind === 'connecting' ? 'Starting the response' : progress.kind === 'thinking' ? 'Working through your request' : progress.kind === 'writing' ? 'Composing the answer' : 'Preparing the next step'}</strong>
-        <p>{progress.detail}</p>
-      </div>
-    </div>
-
-    <div className="assistant-activity-steps" aria-label="Response stages">
-      {steps.map((step) => <div className={`assistant-activity-step ${step.state}`} key={step.label}>
-        <span className="assistant-step-mark" aria-hidden="true">{step.state === 'done' ? <Check size={11} /> : step.state === 'active' ? <LoaderCircle size={11} /> : null}</span>
-        <span><strong>{step.label}</strong><small>{step.detail}</small></span>
+    {open ? <div className="assistant-activity-steps assistant-live-history" aria-label="Activity history">
+      {steps.map((step, index) => <div className={`assistant-live-step ${index === steps.length - 1 && !complete ? 'active' : 'done'}`} key={step.key}>
+        <span className="assistant-live-rail" aria-hidden="true"><i /></span>
+        <div>
+          <strong>{step.label}</strong>
+          {visibleActivityTarget(step.target) ? <p>{visibleActivityTarget(step.target)}</p> : null}
+        </div>
       </div>)}
-    </div>
-
-    <div className="assistant-activity-footer">
-      <div className="assistant-activity-stats" aria-label="Stream statistics">
-        {streamActive ? <span><i className="assistant-stat-dot" />Live stream</span> : <span>Waiting for stream</span>}
-        {eventCount !== undefined ? <span>{eventCount} events</span> : null}
-        {outputChars !== undefined && outputChars > 0 ? <span>{outputChars.toLocaleString()} chars</span> : null}
-      </div>
-      <button className="assistant-activity-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        {open ? 'Hide activity' : 'Show activity'}<ChevronDown size={14} />
-      </button>
-    </div>
-
-    {open ? <div className="assistant-activity-log" aria-label="Recent activity updates">
-      {updates.length ? updates.map((update) => <div className="assistant-activity-log-row" key={`${update.label}-${update.timestamp}`}>
-        <span className="assistant-log-dot" aria-hidden="true" />
-        <span>{update.label}</span>
-        <time dateTime={update.timestamp}>{time(update.timestamp)}</time>
-      </div>) : <div className="assistant-activity-log-row"><span className="assistant-log-dot" aria-hidden="true" /><span>Waiting for the first update</span></div>}
-      <p className="assistant-privacy-note">Private reasoning text stays hidden. This timeline shows safe progress metadata only.</p>
+      <span className="assistant-toggle-copy">{open ? 'Hide activity' : 'Show activity'}</span>
     </div> : null}
   </section>;
 }
@@ -1488,14 +1589,12 @@ function TaskThread(props: {
   const selectedChatModel = job.input.modelSelection && job.input.modelSelection.mode !== 'auto'
     ? job.input.modelSelection.modelId
     : undefined;
-  const progress = job.input.interactionMode === 'chat'
-      ? chatProgress(
-        currentInference?.streamState,
-        job.activity?.model ?? selectedChatModel ?? currentInference?.model,
-        job.activity,
-        latestEvent
-      )
-    : undefined;
+  const progress = chatProgress(
+    currentInference?.streamState,
+    job.activity?.model ?? selectedChatModel ?? currentInference?.model,
+    job.activity,
+    latestEvent
+  );
 
   return <div className="lc-agent-thread" aria-live="polite">
     {job.turns.map((turn, index) => turn.role === 'user'
@@ -1514,6 +1613,13 @@ function TaskThread(props: {
       : <div className="thread-assistant-turn" key={turn.id}>
           <div className="assistant-mark"><Sparkles size={18} strokeWidth={1.55} /></div>
           <div className="assistant-body message-turn-shell">
+            {index === job.turns.length - 1 && job.status === 'success' && (job.activityHistory?.length ?? 0) > 0 ? <ChatActivityCard
+              job={job}
+              progress={progress}
+              currentInference={currentInference}
+              latestEvent={latestEvent}
+              complete
+            /> : null}
             <div className="assistant-result-message"><MarkdownMessage content={turn.content} /></div>
             <MessageActions turn={turn} />
           </div>
@@ -1522,7 +1628,7 @@ function TaskThread(props: {
     {terminalAssistant ? <div className="thread-assistant-turn">
       <div className={`assistant-mark ${working ? 'working' : ''}`}><Sparkles size={18} strokeWidth={1.55} /></div>
       <div className="assistant-body">
-        {working && progress ? <ChatActivityCard
+        {working ? <ChatActivityCard
           job={job}
           progress={progress}
           currentInference={currentInference}
@@ -1531,7 +1637,10 @@ function TaskThread(props: {
         {job.status === 'waiting-guidance' && result?.escalation ? <GuidanceMessage job={job} guidance={props.guidance} setGuidance={props.setGuidance} onContinue={props.sendGuidance} onEscalate={props.sendEscalation} /> : null}
         {job.status === 'error' ? <div className="assistant-result-message error"><strong>Something went wrong</strong><p>{job.error ?? 'The task stopped unexpectedly.'}</p></div> : null}
         {job.status === 'cancelled' ? <div className="assistant-result-message muted-result"><strong>Task stopped</strong><p>The run was cancelled and will not resume automatically.</p></div> : null}
-        {job.status === 'success' && result && job.input.interactionMode !== 'chat' ? <ResultMessage result={result} /> : null}
+        {job.status === 'success' && result && job.input.interactionMode !== 'chat' ? <>
+          {(job.activityHistory?.length ?? 0) > 0 ? <ChatActivityCard job={job} progress={progress} currentInference={currentInference} latestEvent={latestEvent} complete /> : null}
+          <ResultMessage result={result} />
+        </> : null}
       </div>
     </div> : null}
     <div ref={endRef} aria-hidden="true" />

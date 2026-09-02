@@ -133,11 +133,13 @@ test('chat publishes safe live activity from the provider progress stream', asyn
     executeEngineer: async (input) => {
       reportProgress({
         action: 'Model is reasoning about the conversation',
+        activityKind: 'thinking',
         reasoningSummary: 'The model is processing the request; hidden reasoning stays private.'
       });
       await new Promise((resolve) => setTimeout(resolve, 5));
       reportProgress({
         action: 'Model is drafting the response',
+        activityKind: 'writing',
         reasoningSummary: 'The model is composing the user-visible answer.'
       });
       return success(input.goal, 'ok');
@@ -151,6 +153,11 @@ test('chat publishes safe live activity from the provider progress stream', asyn
   const finished = await waitForTerminal(manager, created.id);
 
   assert.equal(finished.activity, undefined, 'ephemeral activity is cleared when the answer completes');
+  assert.deepEqual(finished.activityHistory?.map((entry) => entry.action), [
+    'Model is reasoning about the conversation',
+    'Model is drafting the response'
+  ], 'safe operational history remains available for the completed disclosure');
+  assert.deepEqual(finished.activityHistory?.map((entry) => entry.activityKind), ['thinking', 'writing']);
   assert.deepEqual(activity.map((entry) => entry.action), [
     'Model is reasoning about the conversation',
     'Model is drafting the response'

@@ -56,7 +56,31 @@ if (promptIndex >= 0) {
     }
     process.exit(0);
   } else {
-    process.stdout.write(`profile=${configDir}\nprompt=${prompt}\nargs=${JSON.stringify(args)}\n`);
+    const content = `profile=${configDir}\nprompt=${prompt}\nargs=${JSON.stringify(args)}\n`;
+    const modelIndex = args.indexOf('--model');
+    const requestedModel = modelIndex >= 0 ? args[modelIndex + 1] : 'default';
+    const canonicalModels = {
+      fable: 'claude-fable-5-1',
+      opus: 'claude-opus-5',
+      sonnet: 'claude-sonnet-5',
+      haiku: 'claude-haiku-4-5-20251001',
+      default: 'claude-sonnet-5'
+    };
+    const canonicalModel = canonicalModels[requestedModel] ?? requestedModel;
+    const formatIndex = args.indexOf('--output-format');
+    if (formatIndex >= 0 && args[formatIndex + 1] === 'json') {
+      process.stdout.write(JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: content,
+        modelUsage: {
+          [canonicalModel]: { canonicalModel, costUSD: 0.01 }
+        }
+      }));
+    } else {
+      process.stdout.write(content);
+    }
     process.exit(0);
   }
 } else {

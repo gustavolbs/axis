@@ -71,6 +71,7 @@ test('Work Hub normalizes Jira-like ticket states while preserving the source st
   assert.equal(snapshot.tickets[0]?.connectionId, claudeAccountConnectionId('livenation'));
   assert.equal(snapshot.tickets[0]?.providerFamily, 'anthropic');
   assert.equal(snapshot.tickets[0]?.system, 'Jira');
+  assert.equal(snapshot.tickets[0]?.url, 'https://jira.example.test/browse/LIV-1');
 });
 
 test('Work Hub collects ChatGPT/Codex MCP data into the same normalized store', async () => {
@@ -112,7 +113,13 @@ test('Work Hub Messages is restricted to Jira comments and Slack, including for 
       prompt = nextPrompt;
       mcpPolicies = options.mcpPolicies;
       return {
-        stdout: JSON.stringify({ messages: [] }),
+        stdout: JSON.stringify({ messages: [{
+          externalId: 'comment-11685990',
+          system: 'Jira',
+          title: 'LIV-16777 · New comment',
+          timestamp: '2026-09-02T10:00:00Z',
+          url: 'https://jira.livenation.com/browse/LIV-16777?focusedCommentId=11685990'
+        }] }),
         stderr: '', exitCode: 0, durationMs: 1, timedOut: false, cancelled: false
       };
     }
@@ -120,7 +127,7 @@ test('Work Hub Messages is restricted to Jira comments and Slack, including for 
   const service = new WorkHubService(sources, { connections, codexRuntime });
   service.upsertSource({ id: 'scope-messages', label: 'Messages', connectionId: connection.id, kind: 'messages' });
 
-  await service.refresh('scope-messages');
+  const snapshot = await service.refresh('scope-messages');
   assert.deepEqual(mcpPolicies, [
     { serverId: 'jira', enabled: true },
     { serverId: 'slack', enabled: true },
@@ -129,6 +136,44 @@ test('Work Hub Messages is restricted to Jira comments and Slack, including for 
   assert.match(prompt, /recent comments.*assigned Jira tickets/i);
   assert.match(prompt, /recent Slack messages/i);
   assert.match(prompt, /Do not access GitHub, email, Teams, calendars/i);
+  assert.match(prompt, /explicitly ask its MCP for a canonical browser URL or permalink/i);
+  assert.match(prompt, /Do not append focusedCommentId/i);
+  assert.equal(snapshot.messages[0]?.url, 'https://jira.livenation.com/browse/LIV-16777?focusedCommentId=11685990');
+});
+
+test('Work Hub uses the configured Jira MCP origin when Jira omits browser permalinks', async () => {
+  const sources = new WorkHubSourceStore(temp('local-coder-work-hub-jira-origin-'));
+  const connection = {
+    id: 'chatgpt-account-jira-origin', providerFamily: 'openai', label: 'Jira Origin', auth: 'chatgpt-account',
+    billing: 'subscription', available: true, supportsMcpSources: true, accountProfileId: 'jira-origin'
+  };
+  const connections = { view: () => connection } as unknown as ProviderConnectionRuntime;
+  const codexRuntime = {
+    listMcp: async () => ({
+      stdout: JSON.stringify([
+        { name: 'LN Jira', enabled: true, transport: { type: 'streamable_http', url: 'https://jira.livenation.com/mcp' }, auth_status: 'authenticated' }
+      ]),
+      stderr: '', exitCode: 0, durationMs: 1, timedOut: false, cancelled: false
+    }),
+    invoke: async () => ({
+      stdout: JSON.stringify({ messages: [{
+        externalId: 'jira-comment-11685990',
+        system: 'Jira',
+        ticketKey: 'LIV-16777',
+        commentId: '11685990',
+        title: 'LIV-16777 · New comment',
+        timestamp: '2026-09-02T10:00:00Z'
+      }] }),
+      stderr: '', exitCode: 0, durationMs: 1, timedOut: false, cancelled: false
+    })
+  } as unknown as CodexAccountRuntime;
+  const service = new WorkHubService(sources, { connections, codexRuntime });
+  service.upsertSource({ id: 'jira-comments', label: 'Jira comments', connectionId: connection.id, kind: 'messages' });
+
+  const snapshot = await service.refresh('jira-comments');
+  assert.equal(snapshot.messages[0]?.ticketKey, 'LIV-16777');
+  assert.equal(snapshot.messages[0]?.commentId, '11685990');
+  assert.equal(snapshot.messages[0]?.url, 'https://jira.livenation.com/browse/LIV-16777?focusedCommentId=11685990');
 });
 
 test('Work Hub persists local message read and dismissal state', async () => {
@@ -280,7 +325,10 @@ test('Work Hub uses the fast Teams and Jira intents for enterprise collectors', 
 
   await service.refresh();
   assert.match(prompts.find((prompt) => prompt.includes('MCP do Teams')) ?? '', /reuniões/);
-  assert.match(prompts.find((prompt) => prompt.includes('MCP do Jira')) ?? '', /assignadas pra mim/);
+  const jiraPrompt = prompts.find((prompt) => prompt.includes('MCP do Jira')) ?? '';
+  assert.match(jiraPrompt, /assignadas pra mim/);
+  assert.match(jiraPrompt, /peça explicitamente ao MCP a URL canônica/);
+  assert.match(jiraPrompt, /origem HTTPS configurada para esse mesmo MCP como fallback/);
 });
 
 test('Work Hub reports live progress and limits Claude to relevant connector servers', async () => {

@@ -14,6 +14,7 @@ import {
   claudeAccountConnectionId,
   chatGptAccountConnectionId
 } from '../src/provider-connections.js';
+import type { InferenceProvider, ModelDefinition, ProviderCapabilities } from '../src/providers/types.js';
 
 const fakeClaude = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 
@@ -23,6 +24,30 @@ function temp(prefix: string): string {
 
 function credentials(): CredentialManager {
   return new CredentialManager(new CredentialProfileStore(path.join(temp('local-coder-connections-creds-'), 'credentials.json')));
+}
+
+const cloudCapabilities: ProviderCapabilities = {
+  modelDiscovery: true,
+  streaming: true,
+  structuredOutput: true,
+  reasoning: true,
+  promptCaching: true,
+  toolUse: true
+};
+
+function anthropicCatalogProvider(models: ModelDefinition[]): InferenceProvider {
+  return {
+    id: 'anthropic',
+    kind: 'cloud',
+    capabilities: cloudCapabilities,
+    async listModels() { return models; },
+    async health() {
+      return { providerId: 'anthropic', ok: true, checkedAt: new Date(0).toISOString(), latencyMs: 0, modelsAvailable: models.length };
+    },
+    async invoke(request) {
+      return { providerId: 'anthropic', model: request.model, content: 'ok', latencyMs: 0, usage: {} };
+    }
+  };
 }
 
 test('every API credential becomes a distinct stable connection instance', () => {
@@ -40,6 +65,10 @@ test('every API credential becomes a distinct stable connection instance', () =>
     apiCredentialConnectionId('openai', 'gpt-personal-b')
   ]));
   assert.notEqual(ids[0], ids[1]);
+  assert.deepEqual(
+    runtime.list().filter((item) => item.auth === 'api-key').map((item) => item.label),
+    ['GPT Personal A', 'GPT Personal B']
+  );
 });
 
 test('Claude and ChatGPT subscription profiles are different connection identities', () => {
@@ -59,6 +88,7 @@ test('Claude and ChatGPT subscription profiles are different connection identiti
 test('authenticated Claude accounts expose explicit stable model choices', async () => {
   const claude = new ClaudeAccountProfileStore(temp('local-coder-models-claude-'));
   claude.create({ id: 'personal', name: 'Claude Personal' });
+  claude.create({ id: 'company', name: 'Claude Company', organizationLabel: 'Company' });
   const runtime = new ClaudeAccountRuntime(claude, {
     claudeBinary: process.execPath,
     commandPrefixArgs: [fakeClaude]
@@ -80,6 +110,57 @@ test('authenticated Claude accounts expose explicit stable model choices', async
   assert.equal(account.billing, 'subscription');
   assert.deepEqual(account.models.map((model) => model.id), ['default', 'fable', 'opus', 'sonnet', 'haiku']);
   assert.deepEqual(account.models.map((model) => model.displayName), ['Account default', 'Fable', 'Opus', 'Sonnet', 'Haiku']);
+
+  const companyId = claudeAccountConnectionId('company');
+  const company = catalog.find((provider) => provider.id === companyId);
+  assert.ok(company);
+  assert.equal(company.label, 'Claude Company');
+  assert.equal(company.auth, 'claude-account');
+  assert.equal(company.organizationLabel, 'Company');
+  assert.equal((await connections.resolve(companyId, 'sonnet')).provider.id, companyId);
+});
+
+test('Claude account aliases show the current version discovered from the live API catalog', async () => {
+  const environmentVariable = 'LOCAL_CODER_TEST_CLAUDE_ACCOUNT_VERSION_CATALOG';
+  process.env[environmentVariable] = 'sk-ant-test-version-catalog';
+  try {
+    const manager = credentials();
+    manager.addEnvironmentCredential({
+      id: 'personal-anthropic',
+      providerId: 'anthropic',
+      label: 'Claude API',
+      environmentVariable
+    });
+    const claude = new ClaudeAccountProfileStore(temp('local-coder-versioned-models-claude-'));
+    claude.create({ id: 'personal', name: 'Claude Personal' });
+    const connections = new ProviderConnectionRuntime({
+      credentials: manager,
+      claudeProfiles: claude,
+      claudeRuntime: new ClaudeAccountRuntime(claude, {
+        claudeBinary: process.execPath,
+        commandPrefixArgs: [fakeClaude]
+      }),
+      codexProfiles: new CodexAccountProfileStore(temp('local-coder-versioned-models-codex-')),
+      apiProviderFactories: {
+        anthropic: () => anthropicCatalogProvider([
+          { providerId: 'anthropic', id: 'claude-opus-3-7-20250219', displayName: 'Claude Opus 3.7', createdAt: '2025-02-19T00:00:00.000Z' },
+          { providerId: 'anthropic', id: 'claude-opus-5', displayName: 'Claude Opus 5', createdAt: '2026-07-24T00:00:00.000Z' },
+          { providerId: 'anthropic', id: 'claude-fable-5-1', displayName: 'Claude Fable 5.1', createdAt: '2026-08-20T00:00:00.000Z' },
+          { providerId: 'anthropic', id: 'claude-haiku-4-5-20251001', displayName: 'Claude Haiku 4.5', createdAt: '2025-10-01T00:00:00.000Z' }
+        ])
+      }
+    });
+
+    const catalog = await connections.catalogProviders();
+    const account = catalog.find((provider) => provider.id === claudeAccountConnectionId('personal'));
+    assert.ok(account);
+    assert.equal(account.models.find((model) => model.id === 'opus')?.displayName, 'Opus 5 · latest alias');
+    assert.equal(account.models.find((model) => model.id === 'fable')?.displayName, 'Fable 5.1 · latest alias');
+    assert.equal(account.models.find((model) => model.id === 'haiku')?.displayName, 'Haiku 4.5 · latest alias');
+    assert.equal(account.models.find((model) => model.id === 'sonnet')?.displayName, 'Sonnet');
+  } finally {
+    delete process.env[environmentVariable];
+  }
 });
 
 test('organization-scoped API credentials remain Project-only and do not enter personal Chat catalog', async () => {

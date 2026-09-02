@@ -367,13 +367,15 @@ test('agent remains thread-first with lightweight streaming state', () => {
   assert.doesNotMatch(agentSurface, /thinkingChars/);
 });
 
-test('chat activity exposes a polished safe live timeline for every provider', () => {
-  for (const required of ['ChatActivityCard', 'assistant-activity-card', 'assistant-activity-steps', 'Show activity', 'Private reasoning text stays hidden']) {
+test('provider-neutral activity uses a compact expandable GPT/Claude-style timeline', () => {
+  for (const required of ['ChatActivityCard', 'assistant-live-activity', 'assistant-live-activity-summary', 'assistant-activity-steps', 'activityHistory', 'activityKind', 'searching-repository', 'searching-web', 'Searching the web', 'Reading', 'Thought for', 'Show activity']) {
     assert.match(agentSurface, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `missing activity primitive: ${required}`);
   }
   assert.match(agentSurface, /streamState\?: 'waiting-response' \| 'reasoning' \| 'generating'/);
-  assert.match(agentSurface, /providerLabel\(providerId\)/);
+  assert.doesNotMatch(agentSurface, /assistant-live-meta|assistant-privacy-note/);
   assert.match(fixesCss, /\.assistant-activity-card\s*\{/);
+  assert.match(fixesCss, /\.assistant-activity-card\.assistant-live-activity\s*\{/);
+  assert.match(fixesCss, /\.assistant-live-activity-summary\[aria-expanded='true'\]/);
   assert.match(fixesCss, /\.assistant-activity-toggle\[aria-expanded='true'\]/);
   assert.match(fixesCss, /@keyframes lc-activity-pulse/);
 });

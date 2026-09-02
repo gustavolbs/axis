@@ -79,6 +79,7 @@ export interface PersonalChatCatalogProvider {
   providerFamily?: 'ollama' | 'anthropic' | 'openai';
   auth?: 'local' | 'api-key' | 'claude-account' | 'chatgpt-account';
   billing?: 'local' | 'api' | 'subscription';
+  organizationLabel?: string;
   kind: ProviderKind;
   ready: boolean;
   reason?: string;
@@ -121,6 +122,7 @@ function isPersonalChatModel(providerId: string, model: ModelDefinition): boolea
   // enumerate active chat models here, otherwise a newly released model
   // requires a Local Coder update.
   if (providerId === 'anthropic') return /^claude-/i.test(model.id);
+  if (providerId === 'openai' && /(?:sora|babbage|davinci|instruct|search)/i.test(model.id)) return false;
   if (providerId === 'openai' && /^gpt-4(?:[.-]|$)/i.test(model.id)) return false;
   if (providerId === 'openai' && /-\d{4}-\d{2}-\d{2}$/i.test(model.id)) return false;
   return !/(?:image|audio|realtime|transcrib|tts|embedding|moderation|whisper)/.test(model.id.toLowerCase());
@@ -269,10 +271,22 @@ export class ProjectProviderRuntime {
 
   async personalChatCatalog(): Promise<PersonalChatCatalog> {
     const providerIds = unique([this.localProvider?.id ?? 'ollama', ...Object.keys(this.factories)]);
+    const connectionProviders = await this.connections.catalogProviders();
+    const explicitApiFamilies = new Set(
+      connectionProviders
+        .filter((connection) => connection.auth === 'api-key')
+        .map((connection) => connection.providerFamily)
+    );
     const providers: PersonalChatCatalogProvider[] = [];
     for (const providerId of providerIds) {
+      // OpenAI and Anthropic credentials already have stable connection ids.
+      // Keeping the provider-family entry as well would show the same API key
+      // twice (for example “OpenAI API” and “GPT · Personal OpenAI”).
+      if (explicitApiFamilies.has(providerId as 'ollama' | 'anthropic' | 'openai')) continue;
       const resolution = this.personalChatProvider(providerId);
       const provider = resolution.provider;
+      const localProviderId = this.localProvider?.id ?? 'ollama';
+      const isLocalProvider = providerId === localProviderId;
       const settings = this.settings.get(providerId) ?? defaultSettings();
       let models: ModelDefinition[] = [];
       let discoveryError: string | undefined;
@@ -286,17 +300,17 @@ export class ProjectProviderRuntime {
       const ready = Boolean(provider) && !discoveryError && models.length > 0;
       providers.push({
         id: providerId,
-        providerFamily: providerId === (this.localProvider?.id ?? 'ollama') ? 'ollama' : providerId as 'anthropic' | 'openai',
-        auth: provider?.kind === 'local' ? 'local' : 'api-key',
-        billing: provider?.kind === 'local' ? 'local' : 'api',
-        label: providerId === (this.localProvider?.id ?? 'ollama')
+        providerFamily: isLocalProvider ? 'ollama' : providerId as 'anthropic' | 'openai',
+        auth: isLocalProvider ? 'local' : 'api-key',
+        billing: isLocalProvider ? 'local' : 'api',
+        label: isLocalProvider
           ? 'Ollama local'
           : providerId === 'anthropic'
             ? 'Claude API'
             : providerId === 'openai'
               ? 'OpenAI API'
               : undefined,
-        kind: provider?.kind ?? (providerId === (this.localProvider?.id ?? 'ollama') ? 'local' : 'cloud'),
+        kind: provider?.kind ?? (isLocalProvider ? 'local' : 'cloud'),
         ready,
         reason: ready ? undefined : discoveryError ?? resolution.reason ?? `No conversational models are available for ${providerId}.`,
         models: models.map((model) => ({
@@ -312,25 +326,33 @@ export class ProjectProviderRuntime {
         }))
       });
     }
-    for (const connection of await this.connections.catalogProviders()) {
+    for (const connection of connectionProviders) {
+      const connectionSettings = this.settings.get(connection.providerFamily) ?? defaultSettings();
+      const connectionModels = connection.auth === 'api-key'
+        ? curatePersonalChatModels(connection.providerFamily, connection.models, connectionSettings.defaultModelId)
+        : connection.models;
+      const connectionReady = connection.ready && connectionModels.length > 0;
       providers.push({
         id: connection.id,
         label: connection.label,
         providerFamily: connection.providerFamily,
         auth: connection.auth,
         billing: connection.billing,
+        organizationLabel: connection.organizationLabel,
         kind: connection.kind,
-        ready: connection.ready,
-        reason: connection.reason,
-        models: connection.models.map((model) => ({
+        ready: connectionReady,
+        reason: connectionReady
+          ? undefined
+          : connection.reason ?? `No conversational models are available for ${connection.label}.`,
+        models: connectionModels.map((model) => ({
           id: model.id,
           displayName: model.displayName,
           createdAt: model.createdAt,
-          available: model.available,
+          available: true,
           contextWindow: model.contextWindow,
           maxOutputTokens: model.maxOutputTokens,
           capabilities: model.capabilities,
-          providerDefault: model.providerDefault,
+          providerDefault: connectionSettings.defaultModelId === model.id,
           projectDefault: false
         }))
       });

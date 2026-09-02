@@ -81,6 +81,8 @@ export interface NormalizedTicket extends NormalizedBase {
 export interface NormalizedMessage extends NormalizedBase {
   kind: 'message';
   title: string;
+  ticketKey?: string;
+  commentId?: string;
   preview?: string;
   sender?: string;
   timestamp: string;
@@ -419,6 +421,40 @@ function array(value: unknown): Record<string, unknown>[] {
     : [];
 }
 
+function jiraConnectorOrigin(connectors: McpConnector[]): string | undefined {
+  for (const connector of connectors) {
+    if (!/jira/i.test(connector.name) || !connector.target) continue;
+    try {
+      const target = new URL(connector.target);
+      if (target.protocol === 'https:' && !target.username && !target.password) return target.origin;
+    } catch { /* ignore malformed connector metadata */ }
+  }
+  return undefined;
+}
+
+function jiraIssueKey(value: string | undefined): string | undefined {
+  const key = value?.trim();
+  return key && /^[A-Z][A-Z0-9_]*-\d+$/.test(key) ? key : undefined;
+}
+
+function jiraCommentId(value: string | undefined): string | undefined {
+  const id = value?.trim();
+  return id && /^\d+$/.test(id) ? id : undefined;
+}
+
+function jiraBrowserUrl(
+  connectors: McpConnector[],
+  keyValue: string | undefined,
+  commentIdValue?: string
+): string | undefined {
+  const origin = jiraConnectorOrigin(connectors);
+  const key = jiraIssueKey(keyValue);
+  if (!origin || !key) return undefined;
+  const issueUrl = `${origin}/browse/${encodeURIComponent(key)}`;
+  const commentId = jiraCommentId(commentIdValue);
+  return commentId ? `${issueUrl}?focusedCommentId=${encodeURIComponent(commentId)}` : issueUrl;
+}
+
 function collectorPrompt(source: WorkHubSource, systems: string[] = []): string {
   const date = (offsetDays: number) => {
     const value = new Date();
@@ -434,13 +470,17 @@ function collectorPrompt(source: WorkHubSource, systems: string[] = []): string 
   if (source.kind === 'tickets' && systems.some((system) => /jira/i.test(system))) {
     return [
       'Usando o MCP do Jira, diga quais tasks estão assignadas pra mim e o status de cada uma. Não altere nada e não busque histórico de tasks concluídas.',
-      'Responda apenas JSON, sem Markdown ou explicações, no formato {"tickets":[{"externalId":"id estável","key":"ABC-123","title":"...","status":"..."}]}. Inclua somente esses quatro campos por ticket.'
+      'Para cada task, peça explicitamente ao MCP a URL canônica de navegador ou permalink. Se a listagem não trouxer esse campo, consulte os detalhes da task pelo MCP antes de finalizar. Copie em "url" somente a URL exata que o MCP retornar.',
+      'Nunca monte, complete, reescreva ou adivinhe uma URL usando a key, o nome da conta ou um domínio conhecido. Se o MCP não retornar uma URL direta, omita "url"; o aplicativo usará apenas a origem HTTPS configurada para esse mesmo MCP como fallback.',
+      'Responda apenas JSON, sem Markdown ou explicações, no formato {"tickets":[{"externalId":"id estável","system":"Jira","key":"ABC-123","title":"...","status":"...","url":"URL exata retornada pelo MCP"}]}.'
     ].join('\n');
   }
   const common = [
     'You are a Local Coder Work Hub synchronization task running through one exact provider account.',
     'Discover and use the MCP servers/connectors configured for this account that are relevant to the requested data. The user does not provide MCP tool names and Local Coder does not require a manual tool allowlist.',
     'This background refresh only synchronizes remote data, so collect current state without creating, updating, deleting, sending, transitioning, or otherwise changing remote resources. Interactive user requests outside Work Hub may use write actions normally.',
+    'For every remote item, explicitly ask its MCP for a canonical browser URL or permalink. If a list response omits it, use a relevant MCP detail/link lookup before finalizing. Copy every returned url field verbatim.',
+    'Never derive, assemble, transform, repair, or guess a URL from an item key, id, account name, tenant, or familiar hostname. If the MCP response has no direct URL, omit the url field; the application may use only the HTTPS origin configured for that same MCP as a constrained fallback.',
     'Do not use shell/curl/browser fallbacks for remote business data. Return JSON only, with no Markdown fence or prose.'
   ];
   if (source.kind === 'calendar') {
@@ -457,7 +497,8 @@ function collectorPrompt(source: WorkHubSource, systems: string[] = []): string 
   }
   return [...common,
     'This Messages source is deliberately limited to two places: (1) recent comments on the current account\'s assigned Jira tickets, and (2) recent Slack messages or threads that plausibly require the user\'s attention. Do not access GitHub, email, Teams, calendars, or any other connector, and do not read unrelated Jira tickets or broad Jira history.',
-    'Return {"messages":[{"externalId":"stable remote id","system":"Jira or Slack","title":"ticket key and comment or Slack thread/channel subject","preview":"short comment or message summary","sender":"...","timestamp":"ISO-8601","channel":"...","unread":true,"requiresAttention":true,"url":"..."}]}.'
+    'For Jira comments, ask the Jira MCP for the exact comment permalink; otherwise ask for the exact ticket browser URL. Do not append focusedCommentId or substitute an Atlassian Cloud hostname yourself. Include ticketKey and commentId as separate values returned by Jira so the application can use the configured Jira MCP origin if that server omits browser links.',
+    'Return {"messages":[{"externalId":"stable remote id","system":"Jira or Slack","ticketKey":"ABC-123 for Jira","commentId":"numeric Jira comment id","title":"ticket key and comment or Slack thread/channel subject","preview":"short comment or message summary","sender":"...","timestamp":"ISO-8601","channel":"...","unread":true,"requiresAttention":true,"url":"exact URL returned by the MCP"}]}.'
   ].join('\n');
 }
 
@@ -620,6 +661,7 @@ export class WorkHubService {
       if (!connection?.accountProfileId) throw new Error('Work Hub source connection is missing its account profile.');
       let output: string;
       let systems: string[] | undefined;
+      let connectorMetadata: McpConnector[] = [];
       if (connection.auth === 'claude-account') {
         const connectors = await this.connectorsFor('claude', connection.accountProfileId);
         const relevant = relevantConnectors(source.kind, connectors);
@@ -627,6 +669,7 @@ export class WorkHubService {
           throw new Error(`No connected ${sourceKindLabel(source.kind)} connector was found for ${connection.label}. Open Settings → Connections to connect one, then try again.`);
         }
         systems = relevant.map((connector) => connector.name);
+        connectorMetadata = relevant;
         this.setState({ ...this.states.get(source.id)!, stage: 'collecting', systems });
         const result = await this.claudeRuntime.invoke(connection.accountProfileId, collectorPrompt(source, systems), {
           timeoutMs: 180_000,
@@ -644,6 +687,7 @@ export class WorkHubService {
           throw new Error(`No connected ${sourceKindLabel(source.kind)} connector was found for ${connection.label}. Open Settings → Connections to connect one, then try again.`);
         }
         systems = relevant.map((connector) => connector.name);
+        connectorMetadata = relevant;
         this.setState({ ...this.states.get(source.id)!, stage: 'collecting', systems });
         const result = await this.codexRuntime.invoke(connection.accountProfileId, collectorPrompt(source, systems), {
           timeoutMs: 180_000,
@@ -662,7 +706,14 @@ export class WorkHubService {
       }
       const collectedAt = new Date().toISOString();
       this.setState({ ...this.states.get(source.id)!, stage: 'normalizing', systems });
-      const normalized = this.normalize(source, connection.providerFamily as 'anthropic' | 'openai', extractJson(output), collectedAt, systems?.[0]);
+      const normalized = this.normalize(
+        source,
+        connection.providerFamily as 'anthropic' | 'openai',
+        extractJson(output),
+        collectedAt,
+        systems?.[0],
+        connectorMetadata
+      );
       this.items.set(source.id, normalized);
       this.setState({
         sourceId: source.id,
@@ -736,7 +787,14 @@ export class WorkHubService {
     return this.snapshot();
   }
 
-  private normalize(source: WorkHubSource, providerFamily: 'anthropic' | 'openai', payload: unknown, collectedAt: string, discoveredSystem?: string): WorkHubItem[] {
+  private normalize(
+    source: WorkHubSource,
+    providerFamily: 'anthropic' | 'openai',
+    payload: unknown,
+    collectedAt: string,
+    discoveredSystem?: string,
+    connectors: McpConnector[] = []
+  ): WorkHubItem[] {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Collector payload must be a JSON object.');
     const value = payload as Record<string, unknown>;
     const base = (externalId: string, system?: string): NormalizedBase => ({
@@ -769,10 +827,12 @@ export class WorkHubService {
         const title = string(item.title) ?? string(item.summary);
         const status = string(item.status);
         if (!externalId || !key || !title || !status) return [];
+        const system = string(item.system);
         return [{
-          ...base(externalId, string(item.system)), kind: 'ticket', key, title, status, normalizedStatus: normalizeStatus(status),
+          ...base(externalId, system), kind: 'ticket', key, title, status, normalizedStatus: normalizeStatus(status),
           priority: string(item.priority), assignee: string(item.assignee), dueAt: string(item.dueAt),
-          updatedAt: string(item.updatedAt), project: string(item.project), url: string(item.url)
+          updatedAt: string(item.updatedAt), project: string(item.project),
+          url: string(item.url) ?? (/jira/i.test(system ?? discoveredSystem ?? '') ? jiraBrowserUrl(connectors, key) : undefined)
         }];
       });
     }
@@ -781,9 +841,14 @@ export class WorkHubService {
       const title = string(item.title) ?? string(item.subject) ?? string(item.channel);
       const timestamp = string(item.timestamp);
       if (!externalId || !title || !timestamp) return [];
+      const system = string(item.system);
+      const ticketKey = string(item.ticketKey) ?? (/jira/i.test(system ?? '') ? title.match(/\b[A-Z][A-Z0-9_]*-\d+\b/)?.[0] : undefined);
+      const commentId = string(item.commentId) ?? (/jira/i.test(system ?? '') ? externalId.match(/(?:^|[-_:])comment[-_:]?(\d+)$/i)?.[1] : undefined);
       return [{
-        ...base(externalId, string(item.system)), kind: 'message', title, timestamp, preview: string(item.preview), sender: string(item.sender),
-        channel: string(item.channel), unread: bool(item.unread), requiresAttention: bool(item.requiresAttention), url: string(item.url)
+        ...base(externalId, system), kind: 'message', title, timestamp, ticketKey, commentId,
+        preview: string(item.preview), sender: string(item.sender), channel: string(item.channel), unread: bool(item.unread),
+        requiresAttention: bool(item.requiresAttention),
+        url: string(item.url) ?? (/jira/i.test(system ?? discoveredSystem ?? '') ? jiraBrowserUrl(connectors, ticketKey, commentId) : undefined)
       }];
     });
   }

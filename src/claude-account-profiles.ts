@@ -54,6 +54,8 @@ export interface ClaudeCommandResult {
   durationMs: number;
   timedOut: boolean;
   cancelled: boolean;
+  /** Canonical model reported by Claude Code for the served response. */
+  model?: string;
 }
 
 export interface ClaudeInvokeOptions {
@@ -67,6 +69,8 @@ export interface ClaudeInvokeOptions {
   stopOnValidJson?: boolean;
   /** Official Claude Code print-mode structured output. */
   jsonSchema?: Record<string, unknown>;
+  /** Capture the canonical served model and unwrap the result envelope. */
+  captureResultMetadata?: boolean;
 }
 
 export interface ClaudeRuntimeOptions {
@@ -338,6 +342,51 @@ function statusSummary(raw: string): Pick<ClaudeAccountStatus, 'email' | 'authMe
   };
 }
 
+function unwrapClaudeResult(
+  result: ClaudeCommandResult,
+  requestedModel?: string
+): ClaudeCommandResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout) as unknown;
+  } catch {
+    return result;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return result;
+  const envelope = parsed as Record<string, unknown>;
+  if (envelope.type !== 'result') return result;
+
+  const modelUsage = envelope.modelUsage;
+  const candidates: Array<{ id: string; cost: number }> = [];
+  if (modelUsage && typeof modelUsage === 'object' && !Array.isArray(modelUsage)) {
+    for (const [key, rawUsage] of Object.entries(modelUsage as Record<string, unknown>)) {
+      const usage = rawUsage && typeof rawUsage === 'object' && !Array.isArray(rawUsage)
+        ? rawUsage as Record<string, unknown>
+        : {};
+      const canonical = typeof usage.canonicalModel === 'string' && usage.canonicalModel.trim()
+        ? usage.canonicalModel.trim()
+        : key;
+      candidates.push({ id: canonical, cost: typeof usage.costUSD === 'number' ? usage.costUSD : 0 });
+    }
+  }
+
+  const requested = requestedModel?.trim().toLowerCase();
+  const requestedFamily = requested && ['fable', 'opus', 'sonnet', 'haiku'].includes(requested)
+    ? requested
+    : undefined;
+  const served = candidates.find((candidate) => candidate.id.toLowerCase() === requested)
+    ?? candidates.find((candidate) => requestedFamily && candidate.id.toLowerCase().includes(`-${requestedFamily}-`))
+    ?? [...candidates].sort((left, right) => right.cost - left.cost)[0];
+
+  const structured = envelope.structured_output ?? envelope.structuredOutput;
+  const content = structured !== undefined
+    ? JSON.stringify(structured)
+    : typeof envelope.result === 'string'
+      ? envelope.result
+      : result.stdout;
+  return { ...result, stdout: content, model: served?.id };
+}
+
 export class ClaudeRuntimeNotFoundError extends Error {
   readonly binary: string;
 
@@ -466,7 +515,7 @@ export class ClaudeAccountRuntime {
       '-p',
       cleanPrompt,
       '--output-format',
-      'text',
+      options.captureResultMetadata ? 'json' : 'text',
       '--no-session-persistence',
       '--permission-mode',
       'dontAsk'
@@ -480,13 +529,14 @@ export class ClaudeAccountRuntime {
     const allowedTools = [...new Set((options.allowedTools ?? []).map((tool) => tool.trim()).filter(Boolean))];
     if (allowedTools.length > 0) args.push('--allowedTools', ...allowedTools);
 
-    return await this.run(args, {
+    const result = await this.run(args, {
       cwd: options.cwd,
       env: this.profileEnv(profile),
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       signal: options.signal,
       stopOnValidJson: options.stopOnValidJson
     });
+    return options.captureResultMetadata ? unwrapClaudeResult(result, options.model) : result;
   }
 
   async listMcp(profileId: string, options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<ClaudeCommandResult> {

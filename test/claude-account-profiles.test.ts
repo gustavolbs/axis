@@ -71,6 +71,19 @@ test('Claude account invocation forwards an explicit stable model alias', async 
   assert.match(result.stdout, /"--model","sonnet"/);
 });
 
+test('Claude account invocation captures the canonical served model from result metadata', async () => {
+  const { store, runtime } = fakeRuntime(tempRoot());
+  store.create({ id: 'personal', name: 'Personal' });
+
+  const result = await runtime.invoke('personal', 'OK', {
+    model: 'opus',
+    captureResultMetadata: true
+  });
+  assert.equal(result.model, 'claude-opus-5');
+  assert.match(result.stdout, /"--output-format","json"/);
+  assert.doesNotMatch(result.stdout, /modelUsage/);
+});
+
 test('status exposes allowlisted identity metadata but never raw credential fields', async () => {
   const root = tempRoot();
   const { store, runtime } = fakeRuntime(root);

@@ -50,6 +50,8 @@ A credential carrying `organizationId` is still a hard Project boundary. Organiz
 
 This preserves the previous invariant that a corporate API key cannot silently become a personal Chat credential.
 
+Subscription account profiles are different: each one is an explicit isolated CLI identity. Personal, Team, and Enterprise account profiles may therefore be selected directly in a project-less Chat. This does not make them eligible for a Project with a different organization boundary.
+
 ## Claude account profiles
 
 Claude account profiles use one `CLAUDE_CONFIG_DIR` per identity under:

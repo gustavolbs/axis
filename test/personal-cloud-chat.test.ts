@@ -9,6 +9,7 @@ import {
   CredentialProfileStore
 } from '../src/credential-store.js';
 import { ProjectProviderRuntime } from '../src/project-provider-runtime.js';
+import { apiCredentialConnectionId } from '../src/provider-connections.js';
 import { ProviderSettingsStore } from '../src/provider-settings.js';
 import type {
   InferenceProvider,
@@ -178,8 +179,10 @@ test('personal Chat discovers an available personal OpenAI credential and only c
   });
 
   const catalog = await runtime.personalChatCatalog();
-  const openai = catalog.providers.find((provider) => provider.id === 'openai');
+  const connectionId = apiCredentialConnectionId('openai', 'personal-openai');
+  const openai = catalog.providers.find((provider) => provider.id === connectionId);
   assert.ok(openai);
+  assert.equal(catalog.providers.some((provider) => provider.id === 'openai'), false);
   assert.equal(openai.ready, true);
   assert.deepEqual(openai.models.map((model) => model.id), [
     'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.4-mini', 'gpt-5.5-pro'
@@ -188,8 +191,8 @@ test('personal Chat discovers an available personal OpenAI credential and only c
   assert.equal(openai.models[0]?.contextWindow, 1_050_000);
   assert.equal(openAiSecrets.includes('sk-personal-test-value'), true);
 
-  const resolved = await runtime.personalModelDefinition('openai', 'gpt-5.6-sol');
-  assert.equal(resolved.provider.id, 'openai');
+  const resolved = await runtime.personalModelDefinition(connectionId, 'gpt-5.6-sol');
+  assert.equal(resolved.provider.id, connectionId);
   assert.equal(resolved.model.id, 'gpt-5.6-sol');
   assert.equal(resolved.model.maxOutputTokens, 128_000);
 });
@@ -212,10 +215,11 @@ test('personal Chat accepts a newly discovered OpenAI conversational model witho
   });
 
   const catalog = await runtime.personalChatCatalog();
-  const openai = catalog.providers.find((provider) => provider.id === 'openai');
+  const connectionId = apiCredentialConnectionId('openai', 'personal-openai');
+  const openai = catalog.providers.find((provider) => provider.id === connectionId);
   assert.ok(openai);
   assert.ok(openai.models.some((model) => model.id === futureModel.id));
-  const resolved = await runtime.personalModelDefinition('openai', futureModel.id);
+  const resolved = await runtime.personalModelDefinition(connectionId, futureModel.id);
   assert.equal(resolved.model.id, futureModel.id);
 });
 
@@ -229,8 +233,10 @@ test('Anthropic uses the same personal credential path as OpenAI', async () => {
   });
 
   const catalog = await runtime.personalChatCatalog();
-  const anthropic = catalog.providers.find((provider) => provider.id === 'anthropic');
+  const connectionId = apiCredentialConnectionId('anthropic', 'personal-anthropic');
+  const anthropic = catalog.providers.find((provider) => provider.id === connectionId);
   assert.ok(anthropic);
+  assert.equal(catalog.providers.some((provider) => provider.id === 'anthropic'), false);
   assert.equal(anthropic.ready, true);
   assert.deepEqual(anthropic.models.map((model) => model.id), [
     'claude-opus-5',
@@ -241,8 +247,8 @@ test('Anthropic uses the same personal credential path as OpenAI', async () => {
   ]);
   assert.equal(anthropicSecrets.includes('sk-ant-personal-test-value'), true);
 
-  const resolved = await runtime.personalModelDefinition('anthropic', 'claude-sonnet-5');
-  assert.equal(resolved.provider.id, 'anthropic');
+  const resolved = await runtime.personalModelDefinition(connectionId, 'claude-sonnet-5');
+  assert.equal(resolved.provider.id, connectionId);
   assert.equal(resolved.model.id, 'claude-sonnet-5');
   assert.equal(resolved.model.contextWindow, 1_000_000);
 });
@@ -282,7 +288,7 @@ test('personal Chat never uses organization-scoped credentials for any provider'
   assert.deepEqual(anthropicSecrets, []);
 });
 
-test('personal Chat fails closed when multiple personal credentials could match one provider', async () => {
+test('personal Chat lists multiple API credentials explicitly while the legacy family id fails closed', async () => {
   const { credentials, runtime } = runtimeFixture();
   for (const id of ['personal-openai-a', 'personal-openai-b']) {
     credentials.addOrReplaceKeychainCredential({
@@ -294,10 +300,15 @@ test('personal Chat fails closed when multiple personal credentials could match 
   }
 
   const catalog = await runtime.personalChatCatalog();
-  const openai = catalog.providers.find((provider) => provider.id === 'openai');
-  assert.ok(openai);
-  assert.equal(openai.ready, false);
-  assert.match(openai.reason ?? '', /Multiple personal openai credentials/);
+  assert.equal(catalog.providers.some((provider) => provider.id === 'openai'), false);
+  const explicitConnections = catalog.providers.filter(
+    (provider) => provider.providerFamily === 'openai' && provider.auth === 'api-key'
+  );
+  assert.deepEqual(new Set(explicitConnections.map((provider) => provider.id)), new Set([
+    apiCredentialConnectionId('openai', 'personal-openai-a'),
+    apiCredentialConnectionId('openai', 'personal-openai-b')
+  ]));
+  assert.equal(explicitConnections.every((provider) => provider.ready), true);
   await assert.rejects(
     runtime.personalModelDefinition('openai', 'gpt-5.6-sol'),
     /Multiple personal openai credentials/

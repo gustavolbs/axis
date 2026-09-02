@@ -69,6 +69,7 @@ export interface StandaloneJobActivity {
   action: string;
   detail?: string;
   reasoningSummary?: string;
+  activityKind?: EngineeringProgress['activityKind'];
   streamState?: EngineeringProgress['streamState'];
   providerId?: string;
   model?: string;
@@ -327,6 +328,7 @@ export class StandaloneJobManager {
         content: input.goal.trim(),
         createdAt: now
       }],
+      activityHistory: [],
       rounds: 0,
       events: [],
       controller: new AbortController()
@@ -573,6 +575,7 @@ export class StandaloneJobManager {
     job.decisionRequest = undefined;
     job.escalationPlan = undefined;
     job.activity = undefined;
+    job.activityHistory = [];
     job.archivedAt = undefined;
     job.rounds = 0;
     job.controller = new AbortController();
@@ -651,6 +654,16 @@ export class StandaloneJobManager {
       action,
       detail: progress.detail?.trim() || undefined,
       reasoningSummary: progress.reasoningSummary?.trim() || undefined,
+      activityKind: progress.activityKind ?? (
+        progress.streamState === 'waiting-response' ? 'connecting'
+          : progress.streamState === 'reasoning' ? 'thinking'
+            : progress.streamState === 'generating' ? 'writing'
+              : progress.phase === 'research' ? 'searching-web'
+                : progress.phase === 'validation' || progress.phase === 'quality-gate' ? 'validating'
+                  : progress.phase === 'implementation' ? 'tool'
+                    : progress.phase === 'report' ? 'writing'
+                      : progress.phase ? 'thinking' : 'working'
+      ),
       streamState: progress.streamState,
       providerId: progress.providerId,
       model: progress.model,

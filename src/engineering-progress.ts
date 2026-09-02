@@ -3,6 +3,17 @@ export interface EngineeringProgress {
   action?: string;
   detail?: string;
   reasoningSummary?: string;
+  /** Provider-neutral UI event. Labels are rendered from this value, not inferred from prose. */
+  activityKind?:
+    | 'connecting'
+    | 'thinking'
+    | 'reading'
+    | 'searching-repository'
+    | 'searching-web'
+    | 'tool'
+    | 'writing'
+    | 'validating'
+    | 'working';
   taskId?: string;
   files?: string[];
   validation?: string;

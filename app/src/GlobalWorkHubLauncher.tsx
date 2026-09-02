@@ -32,11 +32,11 @@ import type {
 import { UiSelect, type UiSelectOption } from './UiSelect.js';
 
 interface GlobalWorkHubLauncherProps {
-  open: boolean;
-  onClose: () => void;
+  tab: WorkHubTab;
+  onTabChange: (tab: WorkHubTab) => void;
 }
 
-type WorkHubTab = 'today' | 'calendar' | 'work' | 'inbox' | 'sources';
+export type WorkHubTab = 'today' | 'calendar' | 'work' | 'inbox' | 'sources';
 
 const SYNC_KINDS: Array<{ kind: WorkHubSourceKind; label: string; description: string }> = [
   { kind: 'calendar', label: 'Calendar', description: 'Meetings and events from connected calendars' },
@@ -138,9 +138,8 @@ function placeCalendarEvents(events: WorkHubCalendarEventView[]): CalendarPlacem
   return placements.map((placement) => ({ ...placement, laneCount }));
 }
 
-export function GlobalWorkHubLauncher({ open, onClose }: GlobalWorkHubLauncherProps) {
+export function GlobalWorkHubLauncher({ tab, onTabChange: setTab }: GlobalWorkHubLauncherProps) {
   const bridge = window.lc;
-  const [tab, setTab] = useState<WorkHubTab>('today');
   const [snapshot, setSnapshot] = useState<WorkHubSnapshotView>();
   const [connections, setConnections] = useState<ProviderConnectionView[]>([]);
   const [busy, setBusy] = useState<string>();
@@ -171,10 +170,6 @@ export function GlobalWorkHubLauncher({ open, onClose }: GlobalWorkHubLauncherPr
   }
 
   useEffect(() => {
-    if (!open) {
-      automaticRefreshStarted.current = false;
-      return;
-    }
     if (automaticRefreshStarted.current) return;
     automaticRefreshStarted.current = true;
     void load()
@@ -183,24 +178,17 @@ export function GlobalWorkHubLauncher({ open, onClose }: GlobalWorkHubLauncherPr
         if (loaded?.sources.length && !hasCachedSnapshot && !loaded.sourceStates.some((state) => state.status === 'syncing')) void refresh();
       })
       .catch((next) => setError(errorMessage(next)));
-  }, [open]);
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, []);
   useEffect(() => { mainRef.current?.scrollTo({ top: 0 }); }, [tab]);
 
   const hasActiveSync = busy?.startsWith('refresh') === true || snapshot?.sourceStates.some((state) => state.status === 'syncing') === true;
   useEffect(() => {
-    if (!open) return;
     const poll = window.setInterval(() => {
       setClock(Date.now());
       if (hasActiveSync) void loadSnapshot().catch((next) => setError(errorMessage(next)));
     }, hasActiveSync ? 1_000 : 30_000);
     return () => window.clearInterval(poll);
-  }, [open, hasActiveSync]);
+  }, [hasActiveSync]);
 
   const connectionOptions = useMemo<UiSelectOption[]>(() => connections.map((connection) => ({
     value: connection.id,
@@ -336,7 +324,7 @@ export function GlobalWorkHubLauncher({ open, onClose }: GlobalWorkHubLauncherPr
     finally { setBusy(undefined); }
   }
 
-  if (!bridge || !open) return null;
+  if (!bridge) return null;
 
   const sourceName = (id: string) => sourcesById.get(id)?.label ?? id;
   const externalLink = (url?: string, labelText = 'Open') => url ? <a className="work-hub-link" href={url} target="_blank" rel="noreferrer"><span>{labelText}</span><ExternalLink size={11} /></a> : null;
@@ -348,20 +336,19 @@ export function GlobalWorkHubLauncher({ open, onClose }: GlobalWorkHubLauncherPr
   const currentMinute = now.getHours() * 60 + now.getMinutes();
   const showCurrentTime = currentDayIndex >= 0 && currentMinute >= CALENDAR_START_HOUR * 60 && currentMinute <= CALENDAR_END_HOUR * 60;
 
-  return <div className="work-hub-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
-    <section className="work-hub-shell" role="dialog" aria-modal="true" aria-label="Work Hub">
+  return <section className="work-hub-shell work-hub-page" aria-label="Work Hub">
       <aside className="work-hub-rail">
         <div className="work-hub-rail-title">Work Hub</div>
         {([
-          ['today', LayoutDashboard, 'Today'], ['calendar', CalendarDays, 'Calendar'], ['work', BriefcaseBusiness, 'Work board'], ['inbox', Inbox, 'Inbox'], ['sources', Settings2, 'Sources']
+          ['inbox', Inbox, 'Messages'], ['work', BriefcaseBusiness, 'Work board'], ['today', LayoutDashboard, 'Overview'], ['calendar', CalendarDays, 'Calendar'], ['sources', Settings2, 'Sources']
         ] as const).map(([id, Icon, text]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}><Icon size={15} /><span>{text}</span></button>)}
         <div className="work-hub-rail-footer"><span className={hasActiveSync ? 'syncing' : ''} />{hasActiveSync ? 'Sync in progress' : `${snapshot?.sources.length ?? 0} connected source${snapshot?.sources.length === 1 ? '' : 's'}`}</div>
       </aside>
 
       <main className="work-hub-main" ref={mainRef}>
         <header className="work-hub-header">
-          <div><h2>{tab === 'today' ? 'Today' : tab === 'calendar' ? 'Calendar' : tab === 'work' ? 'Work board' : tab === 'inbox' ? 'Inbox' : 'Sources'}</h2><p>{tab === 'sources' ? 'Choose an account and what you want to sync. The provider discovers its connected services automatically. Messages includes Jira comments on your tickets and Slack messages.' : `Your meetings, work and messages across connected accounts.${latestSyncedAt ? ` Updated ${localDateTime(latestSyncedAt)}.` : ''}`}</p></div>
-          <div className="work-hub-actions">{tab !== 'sources' ? <button className="btn-secondary" disabled={hasActiveSync || (snapshot?.sources.length ?? 0) === 0} onClick={() => void refresh()}><RefreshCw className={hasActiveSync ? 'spin' : ''} size={13} />{syncAllLabel}</button> : null}<button className="work-hub-close" onClick={onClose} aria-label="Close Work Hub"><X size={17} /></button></div>
+          <div><h2>{tab === 'today' ? 'Overview' : tab === 'calendar' ? 'Calendar' : tab === 'work' ? 'Work board' : tab === 'inbox' ? 'Messages' : 'Sources'}</h2><p>{tab === 'sources' ? 'Choose an account and what you want to sync. The provider discovers its connected services automatically. Messages includes Jira comments on your tickets and Slack messages.' : `Your meetings, work and messages across connected accounts.${latestSyncedAt ? ` Updated ${localDateTime(latestSyncedAt)}.` : ''}`}</p></div>
+          <div className="work-hub-actions">{tab !== 'sources' ? <button className="btn-secondary" disabled={hasActiveSync || (snapshot?.sources.length ?? 0) === 0} onClick={() => void refresh()}><RefreshCw className={hasActiveSync ? 'spin' : ''} size={13} />{syncAllLabel}</button> : null}</div>
         </header>
 
         {error ? <div className="work-hub-error"><AlertCircle size={15} /><span>{error}</span><button onClick={() => setError(undefined)} aria-label="Dismiss error"><X size={13} /></button></div> : null}
@@ -371,7 +358,7 @@ export function GlobalWorkHubLauncher({ open, onClose }: GlobalWorkHubLauncherPr
         {tab === 'today' ? <>
           <div className="work-hub-summary-grid"><button className="work-hub-stat" onClick={() => setTab('calendar')}><CalendarDays size={16} /><strong>{todayEvents.length}</strong><small>meetings today</small></button><button className="work-hub-stat" onClick={() => setTab('work')}><BriefcaseBusiness size={16} /><strong>{activeTickets.length}</strong><small>active tickets</small></button><button className="work-hub-stat" onClick={() => setTab('inbox')}><Inbox size={16} /><strong>{attentionMessages.length}</strong><small>need attention</small></button></div>
           <section className="work-hub-section"><div className="work-hub-section-heading"><h3>Today’s schedule</h3><button onClick={() => setTab('calendar')}>View calendar</button></div><div className="work-hub-list">{todayEvents.map((item) => <div className={`work-hub-item ${accountClass(item.connectionId)}`} key={`${item.sourceId}:${item.externalId}`}><div className="work-hub-time">{item.allDay ? 'All day' : localTime(item.start)}</div><div className="work-hub-item-copy"><strong>{item.title}</strong><small>{sourceName(item.sourceId)} · {item.system}{item.location ? ` · ${item.location}` : ''}</small></div><aside>{externalLink(item.meetingUrl ?? item.url, item.meetingUrl ? 'Join' : 'Open')}</aside></div>)}{todayEvents.length === 0 ? <div className="work-hub-empty"><CalendarDays size={20} /><strong>No meetings synced for today</strong><span>Sync a calendar source to see your day here.</span><button onClick={() => setTab('sources')}>Go to sources</button></div> : null}</div></section>
-          <section className="work-hub-section"><div className="work-hub-section-heading"><h3>Priority work</h3><button onClick={() => setTab('work')}>Open board</button></div><div className="work-hub-list">{activeTickets.slice(0, 8).map((item) => <div className={`work-hub-item ${accountClass(item.connectionId)}`} key={`${item.sourceId}:${item.externalId}`}><span className={`work-hub-ticket-status status-${item.normalizedStatus}`}>{stateLabel(item.normalizedStatus)}</span><div className="work-hub-item-copy"><strong>{item.key} · {item.title}</strong><small>{sourceName(item.sourceId)} · {item.system}{item.priority ? ` · ${item.priority}` : ''}</small></div><aside>{externalLink(item.url)}</aside></div>)}{activeTickets.length === 0 ? <div className="work-hub-empty"><BriefcaseBusiness size={20} /><strong>No active tickets synced</strong><span>Add a work source to populate your board.</span><button onClick={() => setTab('sources')}>Go to sources</button></div> : null}</div></section>
+          <section className="work-hub-section"><div className="work-hub-section-heading"><h3>Priority work</h3><button onClick={() => setTab('work')}>Open board</button></div><div className="work-hub-list">{activeTickets.slice(0, 8).map((item) => <div className={`work-hub-item ${accountClass(item.connectionId)}`} key={`${item.sourceId}:${item.externalId}`}><span className={`work-hub-ticket-status status-${item.normalizedStatus}`}>{stateLabel(item.normalizedStatus)}</span><div className="work-hub-item-copy"><strong>{item.key} · {item.title}</strong><small>{sourceName(item.sourceId)} · {item.system}{item.priority ? ` · ${item.priority}` : ''}</small></div><aside>{externalLink(item.url, 'Open ticket')}</aside></div>)}{activeTickets.length === 0 ? <div className="work-hub-empty"><BriefcaseBusiness size={20} /><strong>No active tickets synced</strong><span>Add a work source to populate your board.</span><button onClick={() => setTab('sources')}>Go to sources</button></div> : null}</div></section>
         </> : null}
 
         {tab === 'calendar' ? <div className="work-hub-calendar">
@@ -439,7 +426,7 @@ export function GlobalWorkHubLauncher({ open, onClose }: GlobalWorkHubLauncherPr
 
         {tab === 'work' ? <div className="work-hub-board">{BOARD_COLUMNS.map((column) => {
           const tickets = visibleTickets.filter((ticket) => column.statuses.includes(ticket.normalizedStatus));
-          return <section className={`work-hub-board-column column-${column.id}`} key={column.id}><header><span>{column.label}</span><small>{tickets.length}</small></header><div>{tickets.map((item) => <article className={`work-hub-ticket-card ${accountClass(item.connectionId)}`} key={`${item.sourceId}:${item.externalId}`}><div className="work-hub-ticket-meta"><span>{item.key}</span>{item.priority ? <span>{item.priority}</span> : null}</div><strong>{item.title}</strong><small>{item.project ?? item.system}</small><footer><span>{item.updatedAt ? localDate(item.updatedAt) : sourceName(item.sourceId)}</span>{externalLink(item.url)}</footer></article>)}{tickets.length === 0 ? <div className="work-hub-column-empty">No tickets</div> : null}</div></section>;
+          return <section className={`work-hub-board-column column-${column.id}`} key={column.id}><header><span>{column.label}</span><small>{tickets.length}</small></header><div>{tickets.map((item) => <article className={`work-hub-ticket-card ${accountClass(item.connectionId)}`} key={`${item.sourceId}:${item.externalId}`}><div className="work-hub-ticket-meta"><span>{item.key}</span>{item.priority ? <span>{item.priority}</span> : null}</div><strong>{item.title}</strong><small>{item.project ?? item.system}</small><footer><span>{item.updatedAt ? localDate(item.updatedAt) : sourceName(item.sourceId)}</span>{externalLink(item.url, 'Open ticket')}</footer></article>)}{tickets.length === 0 ? <div className="work-hub-column-empty">No tickets</div> : null}</div></section>;
         })}{visibleTickets.length === 0 ? <div className="work-hub-board-empty"><BriefcaseBusiness size={22} /><strong>Your work board is empty</strong><span>Add and sync a ticket source to see assigned work here.</span><button onClick={() => setTab('sources')}>Go to sources</button></div> : null}</div> : null}
 
         {tab === 'inbox' ? <div className="work-hub-list">{visibleMessages.map((item) => <div className={`work-hub-item ${accountClass(item.connectionId)} ${item.unread ? 'unread' : ''}`} key={`${item.sourceId}:${item.externalId}`}><span className="work-hub-message-dot" /><div className="work-hub-item-copy"><strong>{item.title}</strong><small>{sourceName(item.sourceId)} · {item.system}{item.sender ? ` · ${item.sender}` : ''}</small>{item.preview ? <p>{item.preview}</p> : null}</div><aside><time>{localDate(item.timestamp)}<br />{localTime(item.timestamp)}</time><div className="work-hub-message-actions">{item.unread || item.requiresAttention ? <button className="work-hub-message-action" disabled={busy !== undefined} onClick={() => void updateMessage(item, 'read')} aria-label={`Mark ${item.title} as read`}><CheckCircle2 size={11} />Mark read</button> : <span className="work-hub-message-read">Read</span>}<button className="work-hub-message-action" disabled={busy !== undefined} onClick={() => void updateMessage(item, 'dismiss')} aria-label={`Dismiss ${item.title}`}><Trash2 size={11} />Dismiss</button>{externalLink(item.url)}</div></aside></div>)}{visibleMessages.length === 0 ? <div className="work-hub-empty large"><Inbox size={24} /><strong>Your inbox is empty</strong><span>Dismissed messages stay hidden locally.</span><button className="btn-primary" onClick={() => setTab('sources')}>Choose what to sync</button></div> : null}</div> : null}
@@ -471,6 +458,5 @@ export function GlobalWorkHubLauncher({ open, onClose }: GlobalWorkHubLauncherPr
           })}{(snapshot?.sources.length ?? 0) === 0 ? <div className="work-hub-empty large"><Settings2 size={24} /><strong>No sources yet</strong><span>Choose an account and what you want Work Hub to sync.</span><button className="btn-primary" onClick={() => prepareSourceForm()}>Choose what to sync</button></div> : null}</div>
         </> : null}
       </main>
-    </section>
-  </div>;
+  </section>;
 }
