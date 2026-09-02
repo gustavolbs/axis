@@ -99,13 +99,17 @@ function accountModel(providerId: string, family: 'anthropic' | 'openai', label:
   };
 }
 
-function aliasProvider(aliasId: string, inner: InferenceProvider): InferenceProvider {
+function aliasProvider(aliasId: string, label: string, inner: InferenceProvider): InferenceProvider {
   return {
     id: aliasId,
     kind: inner.kind,
     capabilities: inner.capabilities,
     async listModels() {
-      return (await inner.listModels()).map((model) => ({ ...model, providerId: aliasId }));
+      return (await inner.listModels()).map((model) => ({
+        ...model,
+        providerId: aliasId,
+        displayName: `${label} · ${model.displayName}`
+      }));
     },
     async health() {
       const health = await inner.health();
@@ -298,7 +302,7 @@ export class ProviderConnectionRuntime {
       views.push({
         id: claudeAccountConnectionId(profile.id),
         providerFamily: 'anthropic',
-        label: `Claude · ${profile.name}`,
+        label: profile.name,
         auth: 'claude-account',
         billing: 'subscription',
         organizationLabel: profile.organizationLabel,
@@ -312,7 +316,7 @@ export class ProviderConnectionRuntime {
       views.push({
         id: chatGptAccountConnectionId(profile.id),
         providerFamily: 'openai',
-        label: `GPT · ${profile.name}`,
+        label: profile.name,
         auth: 'chatgpt-account',
         billing: 'subscription',
         organizationLabel: profile.organizationLabel,
@@ -336,6 +340,9 @@ export class ProviderConnectionRuntime {
   async resolve(connectionId: string, modelId: string): Promise<{ provider: InferenceProvider; model: ModelDefinition }> {
     const view = this.view(connectionId);
     if (!view || view.id === this.localProvider?.id) throw new Error(`Unknown provider connection: ${connectionId}`);
+    if (view.auth === 'api-key' && view.organizationId !== undefined) {
+      throw new Error(`Organization API connection ${view.label} requires an explicitly bound Project.`);
+    }
     if (!view.available) throw new Error(view.reason ?? `Provider connection ${connectionId} is unavailable.`);
     const provider = this.provider(view);
     const models = await provider.listModels();
@@ -351,9 +358,18 @@ export class ProviderConnectionRuntime {
     reason?: string;
     models: Array<ModelDefinition & { providerDefault: boolean; projectDefault: false; available: boolean }>;
   }>> {
-    const results = [];
+    const results: Array<{
+      id: string;
+      kind: 'cloud';
+      ready: boolean;
+      reason?: string;
+      models: Array<ModelDefinition & { providerDefault: boolean; projectDefault: false; available: boolean }>;
+    }> = [];
     for (const view of this.list()) {
       if (view.id === this.localProvider?.id) continue;
+      // Preserve the existing hard boundary: organization-scoped API secrets may only
+      // be used through a Project that binds that credential explicitly.
+      if (view.auth === 'api-key' && view.organizationId !== undefined) continue;
       let models: ModelDefinition[] = [];
       let reason = view.reason;
       if (view.available) {
@@ -366,14 +382,14 @@ export class ProviderConnectionRuntime {
       }
       results.push({
         id: view.id,
-        kind: 'cloud' as const,
+        kind: 'cloud',
         ready: view.available && models.length > 0,
         reason: view.available && models.length > 0 ? undefined : reason ?? `${view.label} is unavailable.`,
         models: models.map((model) => ({
           ...model,
           available: true,
           providerDefault: false,
-          projectDefault: false as const
+          projectDefault: false
         }))
       });
     }
@@ -387,10 +403,8 @@ export class ProviderConnectionRuntime {
       const raw = view.providerFamily === 'openai'
         ? new OpenAIInferenceProvider({ apiKey: secret })
         : new AnthropicInferenceProvider({ apiKey: secret });
-      // API connections preserve the existing base-provider dollar budget. The alias is
-      // applied only after that guard, then capability policy is keyed to the connection.
       const guarded = this.budget.wrap(withSafeModelLimits(raw));
-      return this.capabilities.wrap(aliasProvider(view.id, guarded));
+      return this.capabilities.wrap(aliasProvider(view.id, view.label, guarded));
     }
     if (view.auth === 'claude-account' && view.accountProfileId) {
       return this.capabilities.wrap(withSafeModelLimits(
