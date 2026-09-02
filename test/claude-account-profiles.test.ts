@@ -157,6 +157,19 @@ test('ambient provider secrets are not inherited by Claude account subprocesses'
   assert.doesNotMatch(result.stdout, /known-sensitive/);
 });
 
+test('Claude MCP management is profile-scoped and accepts only safe remote connectors', async () => {
+  const { store, runtime } = fakeRuntime(tempRoot());
+  const profile = store.create({ id: 'personal', name: 'Personal' });
+  const added = await runtime.addRemoteMcp('personal', { name: 'trusted-mcp', url: 'https://mcp.example.test/mcp' });
+  assert.match(added.stdout, new RegExp(profile.configDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(added.stdout, /"--transport","http","--scope","user","trusted-mcp"/);
+  const removed = await runtime.removeMcp('personal', 'trusted-mcp');
+  assert.match(removed.stdout, /"remove","--scope","user","trusted-mcp"/);
+  await assert.rejects(() => runtime.addRemoteMcp('personal', { name: '../unsafe', url: 'https://mcp.example.test/mcp' }), /connector name/i);
+  await assert.rejects(() => runtime.addRemoteMcp('personal', { name: 'unsafe-url', url: 'http://mcp.example.test/mcp' }), /HTTPS/i);
+  await assert.rejects(() => runtime.addRemoteMcp('personal', { name: 'secret-url', url: 'https://mcp.example.test/mcp?token=secret' }), /query parameters/i);
+});
+
 test('spike does not weaken the existing provider capability defaults', () => {
   assert.equal(DEFAULT_PROVIDER_CAPABILITIES.mcps.enabled, false);
   assert.equal(DEFAULT_PROVIDER_CAPABILITIES.plugins.enabled, false);

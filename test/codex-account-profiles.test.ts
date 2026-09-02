@@ -134,3 +134,13 @@ test('Codex profile metadata never persists OAuth/API token fields', () => {
   const metadata = fs.readFileSync(store.metadataPath(), 'utf8');
   assert.doesNotMatch(metadata, /must-not-persist|oauthToken/i);
 });
+
+test('Codex MCP management is profile-scoped and delegates to the official CLI', async () => {
+  const { store, runtime } = fakeRuntime(tempRoot());
+  const profile = store.create({ id: 'personal', name: 'Personal' });
+  const added = await runtime.addRemoteMcp('personal', { name: 'trusted-mcp', url: 'https://mcp.example.test/mcp' });
+  assert.match(added.stdout, new RegExp(profile.configDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(added.stdout, /"add","trusted-mcp","--url","https:\/\/mcp\.example\.test\/mcp"/);
+  const removed = await runtime.removeMcp('personal', 'trusted-mcp');
+  assert.match(removed.stdout, /"remove","trusted-mcp"/);
+});

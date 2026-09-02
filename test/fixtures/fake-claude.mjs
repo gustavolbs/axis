@@ -29,6 +29,11 @@ if (args[0] === 'mcp' && args[1] === 'list') {
   process.exit(0);
 }
 
+if (args[0] === 'mcp' && ['add', 'remove', 'login'].includes(args[1])) {
+  process.stdout.write(`profile=${configDir}\nargs=${JSON.stringify(args)}\n`);
+  process.exit(0);
+}
+
 const promptIndex = args.indexOf('-p');
 if (promptIndex >= 0) {
   const prompt = args[promptIndex + 1] ?? '';

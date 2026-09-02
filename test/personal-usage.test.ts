@@ -95,7 +95,8 @@ test('ships verified pricing for the curated Anthropic chat models', () => {
       'claude-fable-5',
       'claude-opus-5',
       'claude-sonnet-5',
-      'claude-haiku-4-5-20251001'
+      'claude-haiku-4-5-20251001',
+      'claude-haiku-4-5'
     ]) assert.ok(pricing.get('anthropic', modelId), `missing built-in pricing for ${modelId}`);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

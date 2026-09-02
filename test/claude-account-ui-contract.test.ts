@@ -18,8 +18,8 @@ test('desktop installs the bounded provider account bridge', () => {
 test('preload exposes bounded connection and Work Hub actions without generic account execution', () => {
   const preload = source('desktop/preload.cjs');
   for (const method of [
-    'claudeDiscover', 'claudeAccounts', 'createClaudeAccount', 'claudeAccountStatus', 'loginClaudeAccount', 'listClaudeAccountMcps',
-    'codexDiscover', 'codexAccounts', 'createCodexAccount', 'codexAccountStatus', 'loginCodexAccount', 'listCodexAccountMcps',
+    'claudeDiscover', 'claudeAccounts', 'createClaudeAccount', 'claudeAccountStatus', 'loginClaudeAccount', 'listClaudeAccountMcps', 'addClaudeAccountMcp', 'removeClaudeAccountMcp', 'loginClaudeAccountMcp',
+    'codexDiscover', 'codexAccounts', 'createCodexAccount', 'codexAccountStatus', 'loginCodexAccount', 'listCodexAccountMcps', 'addCodexAccountMcp', 'removeCodexAccountMcp', 'loginCodexAccountMcp',
     'providerConnections', 'workHubSnapshot', 'upsertWorkHubSource', 'removeWorkHubSource', 'refreshWorkHub'
   ]) assert.match(preload, new RegExp(`\\b${method}\\b`));
 
@@ -30,12 +30,24 @@ test('preload exposes bounded connection and Work Hub actions without generic ac
 test('Settings exposes a first-class provider Connections page', () => {
   const settings = source('app/src/SettingsModal.tsx');
   const connections = source('app/src/ConnectionsSettings.tsx');
+  const styles = source('app/src/lc-app.css');
   assert.match(settings, /ConnectionsSettings/);
   assert.match(settings, />Connections</);
   assert.match(connections, /Enterprise SSO/);
   assert.match(connections, /Device login/);
-  assert.match(connections, /MCP \/ connector sources/);
-  assert.match(connections, /distinct identity/);
+  assert.match(connections, /Search connectors/);
+  assert.match(connections, /Add custom connector/);
+  assert.match(connections, /Account-isolated and cached/);
+  assert.match(connections, /nested-settings-dialog connection-create-dialog/);
+  assert.doesNotMatch(connections, /<style>/);
+  for (const selector of [
+    '.connections-settings-page',
+    '.connections-runtime-grid',
+    '.connection-card-main',
+    '.connector-table',
+    '.connector-search',
+    '.connection-create-dialog'
+  ]) assert.match(styles, new RegExp(selector.replace('.', '\\.')));
 });
 
 test('desktop account IPC delegates auth and MCP discovery to official runtime abstractions', () => {
@@ -47,6 +59,9 @@ test('desktop account IPC delegates auth and MCP discovery to official runtime a
   assert.match(bridge, /\.login\(/);
   assert.match(bridge, /\.status\(/);
   assert.match(bridge, /\.listMcp\(/);
+  assert.match(bridge, /mcpDiscoveryCache = new Map/);
+  assert.match(bridge, /refresh !== true && mcpDiscoveryCache\.has/);
+  assert.match(bridge, /invalidateMcpCache/);
   assert.doesNotMatch(bridge, /spawn\(|exec\(|setup-token|cookie|credentials\.json/i);
 });
 

@@ -1,26 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Cloud,
-  KeyRound,
-  Laptop,
-  Plus,
-  RefreshCw,
-  Server,
-  UserRound
-} from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, Cloud, KeyRound, Laptop, Link2, Plus, RefreshCw, Search, Server, ShieldCheck, Trash2, UserRound, Wrench } from 'lucide-react';
 
-import type {
-  ClaudeAccountProfileView,
-  ClaudeAccountStatusView,
-  ClaudeRuntimeDiscoveryView,
-  CodexAccountProfileView,
-  CodexAccountStatusView,
-  CodexRuntimeDiscoveryView,
-  ProviderConnectionView
-} from './native.js';
+import type { ClaudeAccountStatusView, ClaudeRuntimeDiscoveryView, CodexAccountStatusView, CodexRuntimeDiscoveryView, McpConnectorView, ProviderConnectionView } from './native.js';
+import { ShellDialog, type ShellDialogRequest } from './ShellDialog.js';
 import { UiSelect, type UiSelectOption } from './UiSelect.js';
 
 function message(error: unknown): string {
@@ -28,6 +10,16 @@ function message(error: unknown): string {
 }
 
 type AccountKind = 'claude' | 'chatgpt';
+type ConnectionsSurface = 'connectors' | 'accounts';
+type ConnectorFilter = 'all' | 'connected' | 'not-connected';
+
+interface AccountConnector extends McpConnectorView {
+  key: string;
+  connectionId: string;
+  profileId: string;
+  accountKind: AccountKind;
+  accountLabel: string;
+}
 
 const accountOptions: UiSelectOption[] = [
   { value: 'claude', label: 'Claude account', description: 'Claude Personal, Team or Enterprise via Claude Code' },
@@ -42,48 +34,94 @@ function connectionDescription(connection: ProviderConnectionView): string {
   return 'Local runtime · no cloud credential';
 }
 
+function connectionType(connection: ProviderConnectionView): string {
+  if (connection.auth === 'api-key') return 'API key';
+  if (connection.auth === 'claude-account') return 'Claude account';
+  if (connection.auth === 'chatgpt-account') return 'ChatGPT account';
+  return 'Local';
+}
+
+function connectorStatusLabel(status: McpConnectorView['status']): string {
+  if (status === 'connected') return 'Connected';
+  if (status === 'needs-auth') return 'Needs authentication';
+  if (status === 'error') return 'Unavailable';
+  if (status === 'disabled') return 'Disabled';
+  return 'Unknown';
+}
+
+function connectorTypeLabel(connector: McpConnectorView): string {
+  if (connector.managed) return 'Provider';
+  if (connector.transport === 'http') return 'Remote MCP';
+  if (connector.transport === 'stdio') return 'Local MCP';
+  return connector.transport === 'unknown' ? 'MCP' : connector.transport.toUpperCase();
+}
+
 export function ConnectionsSettings() {
   const bridge = window.lc;
+  const [surface, setSurface] = useState<ConnectionsSurface>('connectors');
   const [connections, setConnections] = useState<ProviderConnectionView[]>([]);
   const [claudeRuntime, setClaudeRuntime] = useState<ClaudeRuntimeDiscoveryView>();
   const [codexRuntime, setCodexRuntime] = useState<CodexRuntimeDiscoveryView>();
-  const [claudeProfiles, setClaudeProfiles] = useState<ClaudeAccountProfileView[]>([]);
-  const [codexProfiles, setCodexProfiles] = useState<CodexAccountProfileView[]>([]);
   const [claudeStatuses, setClaudeStatuses] = useState<Record<string, ClaudeAccountStatusView>>({});
   const [codexStatuses, setCodexStatuses] = useState<Record<string, CodexAccountStatusView>>({});
-  const [mcpOpen, setMcpOpen] = useState<string>();
-  const [mcpOutput, setMcpOutput] = useState<Record<string, string>>({});
+  const [connectors, setConnectors] = useState<AccountConnector[]>([]);
+  const [connectorSearch, setConnectorSearch] = useState('');
+  const [connectorFilter, setConnectorFilter] = useState<ConnectorFilter>('all');
+  const [connectorLoading, setConnectorLoading] = useState(false);
+  const [dialog, setDialog] = useState<ShellDialogRequest>();
   const [busy, setBusy] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [adding, setAdding] = useState(false);
+  const [addingMcp, setAddingMcp] = useState(false);
   const [accountKind, setAccountKind] = useState<AccountKind>('claude');
   const [id, setId] = useState('');
   const [name, setName] = useState('');
   const [organizationLabel, setOrganizationLabel] = useState('');
+  const [mcpConnectionId, setMcpConnectionId] = useState('');
+  const [mcpName, setMcpName] = useState('');
+  const [mcpUrl, setMcpUrl] = useState('');
+
+  function authenticated(connection: ProviderConnectionView, claude = claudeStatuses, codex = codexStatuses): boolean {
+    if (!connection.accountProfileId) return connection.available;
+    if (connection.auth === 'claude-account') return claude[connection.accountProfileId]?.authenticated === true;
+    if (connection.auth === 'chatgpt-account') return codex[connection.accountProfileId]?.authenticated === true;
+    return connection.available;
+  }
+
+  async function discoverConnectors(sourceConnections: ProviderConnectionView[], claude: Record<string, ClaudeAccountStatusView>, codex: Record<string, CodexAccountStatusView>, refresh = false) {
+    if (!bridge) return;
+    const eligible = sourceConnections.filter((connection) => Boolean(connection.accountProfileId) && (connection.auth === 'claude-account' || connection.auth === 'chatgpt-account') && authenticated(connection, claude, codex));
+    setConnectorLoading(true);
+    try {
+      const discoveries = await Promise.allSettled(eligible.map(async (connection) => {
+        const profileId = connection.accountProfileId!;
+        const accountKind: AccountKind = connection.auth === 'claude-account' ? 'claude' : 'chatgpt';
+        const result = accountKind === 'claude' ? await bridge.listClaudeAccountMcps(profileId, refresh) : await bridge.listCodexAccountMcps(profileId, refresh);
+        return result.connectors.map((connector): AccountConnector => ({ ...connector, key: `${connection.id}:${connector.name}`, connectionId: connection.id, profileId, accountKind, accountLabel: connection.label }));
+      }));
+      setConnectors(discoveries.flatMap((result) => result.status === 'fulfilled' ? result.value : []));
+      const failures = discoveries.filter((result) => result.status === 'rejected');
+      if (failures.length > 0) setNotice(`Could not refresh connectors for ${failures.length} account${failures.length === 1 ? '' : 's'}.`);
+    } finally {
+      setConnectorLoading(false);
+    }
+  }
 
   async function load() {
     if (!bridge) return;
     setBusy('refresh');
     setNotice(undefined);
     try {
-      const [nextConnections, nextClaudeRuntime, nextCodexRuntime, nextClaudeProfiles, nextCodexProfiles] = await Promise.all([
-        bridge.providerConnections(),
-        bridge.claudeDiscover(),
-        bridge.codexDiscover(),
-        bridge.claudeAccounts(),
-        bridge.codexAccounts()
-      ]);
-      setConnections(nextConnections);
-      setClaudeRuntime(nextClaudeRuntime);
-      setCodexRuntime(nextCodexRuntime);
-      setClaudeProfiles(nextClaudeProfiles);
-      setCodexProfiles(nextCodexProfiles);
+      const [nextConnections, nextClaudeRuntime, nextCodexRuntime, nextClaudeProfiles, nextCodexProfiles] = await Promise.all([bridge.providerConnections(), bridge.claudeDiscover(), bridge.codexDiscover(), bridge.claudeAccounts(), bridge.codexAccounts()]);
+      setConnections(nextConnections); setClaudeRuntime(nextClaudeRuntime); setCodexRuntime(nextCodexRuntime);
       const [claude, codex] = await Promise.all([
         Promise.all(nextClaudeProfiles.map(async (profile) => [profile.id, await bridge.claudeAccountStatus(profile.id)] as const)),
         Promise.all(nextCodexProfiles.map(async (profile) => [profile.id, await bridge.codexAccountStatus(profile.id)] as const))
       ]);
-      setClaudeStatuses(Object.fromEntries(claude));
-      setCodexStatuses(Object.fromEntries(codex));
+      const nextClaudeStatuses = Object.fromEntries(claude);
+      const nextCodexStatuses = Object.fromEntries(codex);
+      setClaudeStatuses(nextClaudeStatuses); setCodexStatuses(nextCodexStatuses);
+      await discoverConnectors(nextConnections, nextClaudeStatuses, nextCodexStatuses, false);
     } catch (error) {
       setNotice(message(error));
     } finally {
@@ -93,35 +131,35 @@ export function ConnectionsSettings() {
 
   useEffect(() => { void load(); }, []);
 
-  const accountConnections = useMemo(() => connections.filter((connection) =>
-    connection.auth === 'claude-account' || connection.auth === 'chatgpt-account'
-  ), [connections]);
+  const accountConnections = useMemo(() => connections.filter((connection) => connection.auth === 'claude-account' || connection.auth === 'chatgpt-account'), [connections]);
   const apiConnections = useMemo(() => connections.filter((connection) => connection.auth === 'api-key'), [connections]);
   const localConnections = useMemo(() => connections.filter((connection) => connection.auth === 'local'), [connections]);
+  const connectorAccountOptions = useMemo<UiSelectOption[]>(() => accountConnections.filter((connection) => authenticated(connection)).map((connection) => ({ value: connection.id, label: connection.label, description: connection.auth === 'claude-account' ? 'Claude account' : 'ChatGPT account' })), [accountConnections, claudeStatuses, codexStatuses]);
+  const filteredConnectors = useMemo(() => {
+    const query = connectorSearch.trim().toLowerCase();
+    return connectors.filter((connector) => {
+      if (connectorFilter === 'connected' && connector.status !== 'connected') return false;
+      if (connectorFilter === 'not-connected' && connector.status === 'connected') return false;
+      return !query || [connector.name, connector.accountLabel, connector.target, connector.detail].some((value) => value?.toLowerCase().includes(query));
+    });
+  }, [connectorFilter, connectorSearch, connectors]);
+  const attentionConnectors = useMemo(() => connectors.filter((connector) => connector.status === 'needs-auth' || connector.status === 'error').slice(0, 3), [connectors]);
 
   async function create(event: FormEvent) {
     event.preventDefault();
     if (!bridge || !id.trim() || !name.trim()) return;
-    setBusy('create');
-    setNotice(undefined);
+    setBusy('create'); setNotice(undefined);
     try {
       const input = { id: id.trim(), name: name.trim(), organizationLabel: organizationLabel.trim() || undefined };
-      if (accountKind === 'claude') await bridge.createClaudeAccount(input);
-      else await bridge.createCodexAccount(input);
+      if (accountKind === 'claude') await bridge.createClaudeAccount(input); else await bridge.createCodexAccount(input);
       setId(''); setName(''); setOrganizationLabel(''); setAdding(false);
-      await load();
-      setNotice('Connection profile created. Sign in to activate it.');
-    } catch (error) {
-      setNotice(message(error));
-    } finally {
-      setBusy(undefined);
-    }
+      await load(); setNotice('Connection profile created. Sign in to activate it.');
+    } catch (error) { setNotice(message(error)); } finally { setBusy(undefined); }
   }
 
   async function login(connection: ProviderConnectionView, alternate = false) {
     if (!bridge?.isElectron || !connection.accountProfileId) return;
-    setBusy(`login:${connection.id}`);
-    setNotice('Complete the provider-owned sign-in flow. Local Coder does not receive or copy the OAuth credential.');
+    setBusy(`login:${connection.id}`); setNotice('Complete the provider-owned sign-in flow. Local Coder does not receive or copy the OAuth credential.');
     try {
       if (connection.auth === 'claude-account') {
         const status = await bridge.loginClaudeAccount(connection.accountProfileId, alternate);
@@ -130,13 +168,8 @@ export function ConnectionsSettings() {
         const status = await bridge.loginCodexAccount(connection.accountProfileId, alternate);
         setCodexStatuses((current) => ({ ...current, [connection.accountProfileId!]: status }));
       }
-      await load();
-      setNotice('Account connection is ready. It is now available as a distinct Chat connection.');
-    } catch (error) {
-      setNotice(message(error));
-    } finally {
-      setBusy(undefined);
-    }
+      await load(); setNotice('Account connection is ready. It is now available as a distinct Chat connection.');
+    } catch (error) { setNotice(message(error)); } finally { setBusy(undefined); }
   }
 
   async function refreshAccount(connection: ProviderConnectionView) {
@@ -150,18 +183,7 @@ export function ConnectionsSettings() {
         const status = await bridge.codexAccountStatus(connection.accountProfileId);
         setCodexStatuses((current) => ({ ...current, [connection.accountProfileId!]: status }));
       }
-    } catch (error) {
-      setNotice(message(error));
-    } finally {
-      setBusy(undefined);
-    }
-  }
-
-  function authenticated(connection: ProviderConnectionView): boolean {
-    if (!connection.accountProfileId) return connection.available;
-    if (connection.auth === 'claude-account') return claudeStatuses[connection.accountProfileId]?.authenticated === true;
-    if (connection.auth === 'chatgpt-account') return codexStatuses[connection.accountProfileId]?.authenticated === true;
-    return connection.available;
+    } catch (error) { setNotice(message(error)); } finally { setBusy(undefined); }
   }
 
   function accountDetail(connection: ProviderConnectionView): string {
@@ -170,26 +192,56 @@ export function ConnectionsSettings() {
       const status = claudeStatuses[connection.accountProfileId];
       return [status?.email, status?.organization, status?.subscriptionType].filter(Boolean).join(' · ') || connectionDescription(connection);
     }
-    const status = codexStatuses[connection.accountProfileId];
-    return status?.detail || connectionDescription(connection);
+    return codexStatuses[connection.accountProfileId]?.detail || connectionDescription(connection);
   }
 
-  async function toggleMcp(connection: ProviderConnectionView) {
-    if (!bridge || !connection.accountProfileId) return;
-    if (mcpOpen === connection.id) { setMcpOpen(undefined); return; }
-    setMcpOpen(connection.id);
-    if (mcpOutput[connection.id] !== undefined) return;
-    setBusy(`mcp:${connection.id}`);
+  function openMcpDialog() {
+    setMcpConnectionId((current) => current || connectorAccountOptions[0]?.value || '');
+    setAddingMcp(true);
+  }
+
+  async function addMcp(event: FormEvent) {
+    event.preventDefault();
+    const connection = accountConnections.find((candidate) => candidate.id === mcpConnectionId);
+    if (!bridge || !connection?.accountProfileId || !mcpName.trim() || !mcpUrl.trim()) return;
+    setBusy('mcp-add'); setNotice(undefined);
     try {
-      const result = connection.auth === 'claude-account'
-        ? await bridge.listClaudeAccountMcps(connection.accountProfileId)
-        : await bridge.listCodexAccountMcps(connection.accountProfileId);
-      setMcpOutput((current) => ({ ...current, [connection.id]: result.output || 'No MCP servers reported.' }));
-    } catch (error) {
-      setMcpOutput((current) => ({ ...current, [connection.id]: `Could not list MCPs: ${message(error)}` }));
-    } finally {
-      setBusy(undefined);
-    }
+      const input = { profileId: connection.accountProfileId, name: mcpName.trim(), url: mcpUrl.trim() };
+      if (connection.auth === 'claude-account') await bridge.addClaudeAccountMcp(input); else await bridge.addCodexAccountMcp(input);
+      setAddingMcp(false); setMcpName(''); setMcpUrl('');
+      await discoverConnectors(connections, claudeStatuses, codexStatuses, true);
+      setNotice('Remote MCP connector added to the selected account.');
+    } catch (error) { setNotice(message(error)); } finally { setBusy(undefined); }
+  }
+
+  async function authenticateConnector(connector: AccountConnector) {
+    if (!bridge) return;
+    setBusy(`mcp-login:${connector.key}`); setNotice('Complete the connector authentication in the provider-owned flow.');
+    try {
+      if (connector.accountKind === 'claude') await bridge.loginClaudeAccountMcp(connector.profileId, connector.name); else await bridge.loginCodexAccountMcp(connector.profileId, connector.name);
+      await discoverConnectors(connections, claudeStatuses, codexStatuses, true); setNotice(`${connector.name} is connected.`);
+    } catch (error) { setNotice(message(error)); } finally { setBusy(undefined); }
+  }
+
+  function requestRemoveConnector(connector: AccountConnector) {
+    if (!connector.removable) return;
+    setDialog({
+      kind: 'confirm',
+      title: 'Remove connector',
+      message: `“${connector.name}” will be removed from ${connector.accountLabel}. Provider-managed connectors are not changed.`,
+      confirmLabel: 'Remove',
+      danger: true,
+      onConfirm: () => void removeConnector(connector)
+    });
+  }
+
+  async function removeConnector(connector: AccountConnector) {
+    if (!bridge || !connector.removable) return;
+    setBusy(`mcp-remove:${connector.key}`); setNotice(undefined);
+    try {
+      if (connector.accountKind === 'claude') await bridge.removeClaudeAccountMcp(connector.profileId, connector.name); else await bridge.removeCodexAccountMcp(connector.profileId, connector.name);
+      await discoverConnectors(connections, claudeStatuses, codexStatuses, true); setNotice(`${connector.name} was removed.`);
+    } catch (error) { setNotice(message(error)); } finally { setBusy(undefined); }
   }
 
   if (!bridge) return <div className="focused-settings-page"><h1>Connections</h1><div className="settings-empty-state">Open the standalone desktop app to manage provider identities.</div></div>;
@@ -198,50 +250,38 @@ export function ConnectionsSettings() {
     const ready = authenticated(connection);
     const account = connection.auth === 'claude-account' || connection.auth === 'chatgpt-account';
     const runtimeReady = connection.auth === 'claude-account' ? claudeRuntime?.usable : connection.auth === 'chatgpt-account' ? codexRuntime?.usable : true;
-    return <article className="connection-card" key={connection.id}>
-      <div className="connection-card-main">
-        <span className="connection-icon">{connection.auth === 'local' ? <Laptop size={16} /> : connection.auth === 'api-key' ? <KeyRound size={16} /> : <UserRound size={16} />}</span>
-        <div className="connection-copy"><strong>{connection.label}</strong><small>{accountDetail(connection)}</small><span className={`connection-state ${ready ? 'ready' : ''}`}>{ready ? <CheckCircle2 size={11} /> : null}{ready ? 'Ready' : connection.reason ?? 'Sign in required'}</span></div>
-        <div className="connection-actions">
-          {account ? <>
-            <button className="btn-secondary" disabled={busy !== undefined} onClick={() => void refreshAccount(connection)}><RefreshCw size={13} />Refresh</button>
-            {!ready ? <button className="btn-primary" disabled={!runtimeReady || busy !== undefined} onClick={() => void login(connection, false)}>Sign in</button> : null}
-            {!ready && connection.auth === 'claude-account' ? <button className="btn-secondary" disabled={!runtimeReady || busy !== undefined} onClick={() => void login(connection, true)}>Enterprise SSO</button> : null}
-            {!ready && connection.auth === 'chatgpt-account' ? <button className="btn-secondary" disabled={!runtimeReady || busy !== undefined} onClick={() => void login(connection, true)}>Device login</button> : null}
-          </> : null}
-        </div>
-      </div>
-      {account ? <>
-        <button className="connection-mcp-toggle" disabled={!ready} onClick={() => void toggleMcp(connection)}><span>MCP / connector sources</span>{mcpOpen === connection.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
-        {mcpOpen === connection.id ? <pre className="connection-mcp-output">{mcpOutput[connection.id] ?? 'Loading…'}</pre> : null}
-      </> : null}
-    </article>;
+    return <article className="connection-card" key={connection.id}><div className="connection-card-main">
+      <span className="connection-icon">{connection.auth === 'local' ? <Laptop size={16} /> : connection.auth === 'api-key' ? <KeyRound size={16} /> : <UserRound size={16} />}</span>
+      <div className="connection-copy"><div className="connection-title-row"><strong>{connection.label}</strong><span>{connectionType(connection)}</span></div><small>{accountDetail(connection)}</small><span className={`connection-state ${ready ? 'ready' : ''}`}>{ready ? <CheckCircle2 size={12} /> : null}{ready ? 'Ready' : connection.reason ?? 'Sign in required'}</span></div>
+      <div className="connection-actions">{account ? <><button type="button" className="btn-secondary connection-refresh" disabled={busy !== undefined} onClick={() => void refreshAccount(connection)}><RefreshCw size={13} />Refresh</button>{!ready ? <button type="button" className="btn-primary" disabled={!runtimeReady || busy !== undefined} onClick={() => void login(connection)}>Sign in</button> : null}{!ready && connection.auth === 'claude-account' ? <button type="button" className="btn-secondary" disabled={!runtimeReady || busy !== undefined} onClick={() => void login(connection, true)}>Enterprise SSO</button> : null}{!ready && connection.auth === 'chatgpt-account' ? <button type="button" className="btn-secondary" disabled={!runtimeReady || busy !== undefined} onClick={() => void login(connection, true)}>Device login</button> : null}</> : null}</div>
+    </div></article>;
   };
 
   return <div className="focused-settings-page connections-settings-page">
-    <style>{`
-      .connections-settings-page{width:min(880px,calc(100% - 48px))}.connections-runtime-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0}.connections-runtime{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:12px;border:1px solid var(--lc-border);border-radius:12px;background:var(--lc-surface)}.connections-runtime span:first-child,.connection-icon{width:31px;height:31px;display:grid;place-items:center;border-radius:9px;background:var(--lc-surface-raised);color:var(--lc-text-soft)}.connections-runtime strong,.connections-runtime small,.connection-copy strong,.connection-copy small{display:block}.connections-runtime small,.connection-copy small{margin-top:2px;color:var(--lc-muted);font-size:9.5px}.connections-runtime em{font-style:normal;font-size:9px;color:var(--lc-muted)}.connections-runtime em.ready,.connection-state.ready{color:var(--lc-positive)}.connection-section{margin-top:18px}.connection-section>header{display:flex;align-items:end;justify-content:space-between;margin-bottom:8px}.connection-section h2{font-size:11px;margin:0}.connection-section p{font-size:9.5px;color:var(--lc-muted);margin:3px 0 0}.connection-list{display:grid;gap:8px}.connection-card{border:1px solid var(--lc-border);border-radius:12px;background:var(--lc-surface);overflow:hidden}.connection-card-main{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:11px;padding:12px}.connection-state{display:inline-flex;align-items:center;gap:5px;margin-top:5px;font-size:9px;color:var(--lc-muted)}.connection-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.connection-mcp-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;border-top:1px solid var(--lc-border);background:transparent;color:var(--lc-text-soft);padding:8px 12px;font-size:9.5px}.connection-mcp-output{margin:0;max-height:190px;overflow:auto;padding:10px 12px;border-top:1px solid var(--lc-border);font:9.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;color:var(--lc-text-soft)}.connection-create{display:grid;gap:9px;margin-top:12px;padding:13px;border:1px solid var(--lc-border);border-radius:12px;background:var(--lc-surface)}.connection-create label>span{display:block;margin-bottom:5px;font-size:9.5px;color:var(--lc-text-soft)}.connection-create-actions{display:flex;justify-content:flex-end;gap:7px}.connection-note{margin-top:16px;padding:11px;border:1px solid var(--lc-border);border-radius:10px;color:var(--lc-muted);font-size:9.5px;line-height:1.5}@media(max-width:760px){.connections-runtime-grid{grid-template-columns:1fr}.connection-card-main{grid-template-columns:auto 1fr}.connection-actions{grid-column:2;justify-content:flex-start}}
-    `}</style>
-    <header><div><h1>Connections</h1><p>Every account, API credential and local runtime is a distinct identity that Chat can select independently.</p></div><button className="settings-save-button" onClick={() => setAdding((value) => !value)}><Plus size={14} />Add account</button></header>
+    <header><div><h1>Connections</h1><p>Manage provider identities and the MCP tools connected to each account.</p></div>{surface === 'accounts' ? <button type="button" className="settings-save-button" onClick={() => setAdding(true)}><Plus size={14} />Add account</button> : null}</header>
+    <nav className="connections-surface-tabs" aria-label="Connection settings"><button type="button" className={surface === 'connectors' ? 'active' : ''} onClick={() => setSurface('connectors')}><Link2 size={14} />Connectors</button><button type="button" className={surface === 'accounts' ? 'active' : ''} onClick={() => setSurface('accounts')}><UserRound size={14} />Accounts</button></nav>
     {notice ? <div className="settings-inline-message" role="status">{notice}</div> : null}
 
-    <div className="connections-runtime-grid">
-      <div className="connections-runtime"><span><Server size={15} /></span><div><strong>Claude Code</strong><small>{claudeRuntime?.version ?? claudeRuntime?.error ?? 'Checking…'}</small></div><em className={claudeRuntime?.usable ? 'ready' : ''}>{claudeRuntime?.usable ? 'Ready' : 'Unavailable'}</em></div>
-      <div className="connections-runtime"><span><Cloud size={15} /></span><div><strong>Codex / ChatGPT</strong><small>{codexRuntime?.version ?? codexRuntime?.error ?? 'Checking…'}</small></div><em className={codexRuntime?.usable ? 'ready' : ''}>{codexRuntime?.usable ? 'Ready' : 'Unavailable'}</em></div>
-    </div>
+    {surface === 'connectors' ? <>
+      <section className="connector-browser">
+        <div className="connector-toolbar"><label className="connector-search"><Search size={14} /><input aria-label="Search connectors" value={connectorSearch} onChange={(event) => setConnectorSearch(event.target.value)} placeholder="Search connectors" /></label><button type="button" className={`btn-secondary connector-refresh ${connectorLoading ? 'loading' : ''}`} disabled={connectorLoading || busy !== undefined} onClick={() => void discoverConnectors(connections, claudeStatuses, codexStatuses, true)}><RefreshCw size={13} />Refresh</button><button type="button" className="settings-save-button" disabled={connectorAccountOptions.length === 0} onClick={openMcpDialog}><Plus size={14} />Add MCP</button></div>
+        {attentionConnectors.length > 0 ? <div className="connector-attention-section"><h2>Available to connect</h2><div className="connector-attention-grid">{attentionConnectors.map((connector) => <article key={`attention:${connector.key}`}><span className="connector-logo"><Wrench size={15} /></span><div><strong>{connector.name}</strong><small>{connector.accountLabel}</small></div>{connector.status === 'needs-auth' ? <button type="button" disabled={busy !== undefined} onClick={() => void authenticateConnector(connector)}>Connect</button> : <button type="button" disabled={connectorLoading || busy !== undefined} onClick={() => void discoverConnectors(connections, claudeStatuses, codexStatuses, true)}>Retry</button>}</article>)}</div></div> : null}
+        <div className="connector-filter-tabs" role="tablist" aria-label="Filter connectors">{([['all', 'All'], ['connected', 'Connected'], ['not-connected', 'Not connected']] as const).map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={connectorFilter === value} className={connectorFilter === value ? 'active' : ''} onClick={() => setConnectorFilter(value)}>{label}</button>)}</div>
+        <div className="connector-table" aria-busy={connectorLoading}><div className="connector-table-head"><span>Connector</span><span>Account</span><span>Type</span><span>Status</span></div>{filteredConnectors.map((connector) => <article className="connector-row" key={connector.key}>
+          <div className="connector-identity"><span className="connector-logo"><Wrench size={15} /></span><span><strong>{connector.name}</strong><small title={connector.target}>{connector.target ?? connector.detail ?? 'Configured by provider'}</small></span></div><span className="connector-account">{connector.accountLabel}</span><span className="connector-kind">{connectorTypeLabel(connector)}</span><div className={`connector-status ${connector.status}`}><span>{connector.status === 'connected' ? <Check size={14} /> : connector.status === 'error' ? <AlertTriangle size={14} /> : connectorStatusLabel(connector.status)}</span>{connector.status === 'needs-auth' ? <button type="button" disabled={busy !== undefined} onClick={() => void authenticateConnector(connector)}>Connect</button> : null}{connector.status === 'error' ? <button type="button" disabled={connectorLoading || busy !== undefined} onClick={() => void discoverConnectors(connections, claudeStatuses, codexStatuses, true)}>Retry</button> : null}{connector.removable ? <button type="button" className="connector-remove" aria-label={`Remove ${connector.name}`} title="Remove connector" disabled={busy !== undefined} onClick={() => requestRemoveConnector(connector)}><Trash2 size={13} /></button> : null}</div>
+        </article>)}{filteredConnectors.length === 0 ? <div className="settings-empty-state connector-empty-state">{connectorLoading ? 'Discovering connectors…' : connectorAccountOptions.length === 0 ? 'Sign in to an account to discover its connectors.' : connectorSearch ? 'No connectors match your search.' : 'No connectors found. Add a remote MCP to get started.'}</div> : null}</div>
+      </section>
+      <aside className="connection-note"><ShieldCheck size={16} /><p><strong>Account-isolated and cached</strong><span>Connector discovery runs once per app session and stays scoped to each provider profile. Refresh only when you need a new health check.</span></p></aside>
+    </> : <>
+      <section className="connection-section connection-runtime-section"><div className="connection-section-heading"><div><h2>Account runtimes</h2><p>Official runtimes used to keep subscription sessions isolated.</p></div><button type="button" className={`connections-refresh-all ${busy === 'refresh' ? 'loading' : ''}`} onClick={() => void load()} disabled={busy !== undefined}><RefreshCw size={14} /></button></div><div className="connections-runtime-grid"><article className="connections-runtime"><span className="connections-runtime-icon"><Server size={16} /></span><div><strong>Claude Code</strong><small>{claudeRuntime?.version ?? claudeRuntime?.error ?? 'Checking installation…'}</small></div><span className={`connection-runtime-state ${claudeRuntime?.usable ? 'ready' : ''}`}>{claudeRuntime?.usable ? 'Ready' : claudeRuntime?.installed === false ? 'Not installed' : 'Unavailable'}</span></article><article className="connections-runtime"><span className="connections-runtime-icon"><Cloud size={16} /></span><div><strong>Codex / ChatGPT</strong><small>{codexRuntime?.version ?? codexRuntime?.error ?? 'Checking installation…'}</small></div><span className={`connection-runtime-state ${codexRuntime?.usable ? 'ready' : ''}`}>{codexRuntime?.usable ? 'Ready' : codexRuntime?.installed === false ? 'Not installed' : 'Unavailable'}</span></article></div></section>
+      <section className="connection-section"><div className="connection-section-heading"><div><h2>Account connections</h2><p>Claude and ChatGPT subscription identities with isolated sign-in sessions.</p></div><span className="connection-count">{accountConnections.length}</span></div><div className="connection-list">{accountConnections.map(renderConnection)}{accountConnections.length === 0 ? <div className="settings-empty-state connection-empty-state">{busy === 'refresh' ? 'Loading account connections…' : 'No subscription accounts yet.'}</div> : null}</div></section>
+      <section className="connection-section"><div className="connection-section-heading"><div><h2>API connections</h2><p>Metered credentials managed securely in Settings → API keys.</p></div><span className="connection-count">{apiConnections.length}</span></div><div className="connection-list">{apiConnections.map(renderConnection)}{apiConnections.length === 0 ? <div className="settings-empty-state connection-empty-state">{busy === 'refresh' ? 'Loading API connections…' : 'No API credentials configured.'}</div> : null}</div></section>
+      <section className="connection-section"><div className="connection-section-heading"><div><h2>Local runtime</h2><p>On-device inference that never inherits cloud credentials.</p></div><span className="connection-count">{localConnections.length}</span></div><div className="connection-list">{localConnections.map(renderConnection)}{localConnections.length === 0 && busy !== 'refresh' ? <div className="settings-empty-state connection-empty-state">No local runtime available.</div> : null}</div></section>
+      <aside className="connection-note"><ShieldCheck size={16} /><p><strong>Credentials stay private</strong><span>OAuth files, browser cookies and Keychain secrets remain opaque to the renderer and isolated by account profile.</span></p></aside>
+    </>}
 
-    {adding ? <form className="connection-create" onSubmit={(event) => void create(event)}>
-      <label><span>Account provider</span><UiSelect ariaLabel="Account provider" value={accountKind} options={accountOptions} onChange={(value) => setAccountKind(value as AccountKind)} /></label>
-      <label><span>Profile ID</span><input required autoFocus value={id} onChange={(event) => setId(event.target.value)} placeholder={accountKind === 'claude' ? 'livenation' : 'chatgpt-personal'} spellCheck={false} /></label>
-      <label><span>Name</span><input required value={name} onChange={(event) => setName(event.target.value)} placeholder={accountKind === 'claude' ? 'Claude LiveNation' : 'ChatGPT Personal'} /></label>
-      <label><span>Organization label <small>optional</small></span><input value={organizationLabel} onChange={(event) => setOrganizationLabel(event.target.value)} placeholder="Personal or company name" /></label>
-      <div className="connection-create-actions"><button type="button" className="btn-secondary" onClick={() => setAdding(false)}>Cancel</button><button className="btn-primary" disabled={busy === 'create'}>{busy === 'create' ? 'Creating…' : 'Create'}</button></div>
-    </form> : null}
-
-    <section className="connection-section"><header><div><h2>Account connections</h2><p>Subscription identities use isolated official runtime homes and can expose their own MCP/connectors.</p></div><small>{accountConnections.length}</small></header><div className="connection-list">{accountConnections.map(renderConnection)}{accountConnections.length === 0 ? <div className="settings-empty-state">No subscription accounts yet.</div> : null}</div></section>
-    <section className="connection-section"><header><div><h2>API connections</h2><p>Each stored key is a separate metered identity. Add or remove keys in Settings → API keys.</p></div><small>{apiConnections.length}</small></header><div className="connection-list">{apiConnections.map(renderConnection)}{apiConnections.length === 0 ? <div className="settings-empty-state">No API credentials configured.</div> : null}</div></section>
-    <section className="connection-section"><header><div><h2>Local</h2><p>Local inference remains an independent connection and never inherits cloud credentials.</p></div></header><div className="connection-list">{localConnections.map(renderConnection)}</div></section>
-
-    <div className="connection-note">Chat selects a connection instance, not merely a provider brand. OAuth/token files, browser cookies and Keychain secrets stay opaque. Account MCP data is accessed only through explicit read-only Work Hub sources; ordinary Chat does not receive a generic tool bridge.</div>
+    {adding ? <div className="nested-settings-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setAdding(false); }}><form className="nested-settings-dialog connection-create-dialog" onSubmit={(event) => void create(event)}><header><div><h2>Add account connection</h2><p>Create an isolated profile, then authenticate with the provider-owned sign-in flow.</p></div></header><label><span>Account provider</span><UiSelect ariaLabel="Account provider" value={accountKind} options={accountOptions} onChange={(value) => setAccountKind(value as AccountKind)} /></label><label><span>Profile ID</span><input required autoFocus value={id} onChange={(event) => setId(event.target.value)} placeholder={accountKind === 'claude' ? 'claude-work' : 'chatgpt-personal'} spellCheck={false} /></label><label><span>Name</span><input required value={name} onChange={(event) => setName(event.target.value)} placeholder={accountKind === 'claude' ? 'Claude Work' : 'ChatGPT Personal'} /></label><label><span>Organization label <small>optional</small></span><input value={organizationLabel} onChange={(event) => setOrganizationLabel(event.target.value)} placeholder="Personal or company name" /></label><div className="nested-settings-dialog-actions"><button type="button" onClick={() => setAdding(false)}>Cancel</button><button className="settings-save-button" disabled={busy === 'create'}>{busy === 'create' ? 'Creating…' : 'Create connection'}</button></div></form></div> : null}
+    {addingMcp ? <div className="nested-settings-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setAddingMcp(false); }}><form className="nested-settings-dialog connection-create-dialog connector-create-dialog" onSubmit={(event) => void addMcp(event)}><header><div><h2>Add custom connector</h2><p>Connect the selected provider account to a trusted remote MCP server.</p></div></header><label><span>Account</span><UiSelect ariaLabel="Connector account" value={mcpConnectionId} options={connectorAccountOptions} onChange={setMcpConnectionId} /></label><label><span>Name</span><input required autoFocus value={mcpName} onChange={(event) => setMcpName(event.target.value)} placeholder="sentry" spellCheck={false} pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" /></label><label><span>Remote MCP server URL</span><input required type="url" value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} placeholder="https://mcp.example.com/mcp" spellCheck={false} /></label><p className="connector-security-copy">Only HTTPS endpoints without embedded credentials or query parameters are accepted. Use connectors from developers you trust; their tools and behavior are controlled by that developer.</p><div className="nested-settings-dialog-actions"><button type="button" onClick={() => setAddingMcp(false)}>Cancel</button><button className="settings-save-button" disabled={busy === 'mcp-add' || !mcpConnectionId}>{busy === 'mcp-add' ? 'Adding…' : 'Add connector'}</button></div></form></div> : null}
+    <ShellDialog request={dialog} onClose={() => setDialog(undefined)} />
   </div>;
 }

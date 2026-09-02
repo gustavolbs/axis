@@ -16,6 +16,8 @@ import type {
   LocalEngineerResult
 } from '../src/local-engineer.js';
 import type { OllamaClient, OllamaGeneration } from '../src/ollama.js';
+import { PricingStore } from '../src/pricing-store.js';
+import { ProjectBudgetSession } from '../src/project-budget.js';
 import {
   ProjectAwareEngineerBackend,
   type ProjectEngineerResult
@@ -34,6 +36,7 @@ import {
 } from '../src/providers/types.js';
 import type { SecretStore } from '../src/secret-store.js';
 import type { RemoteWorkerHealth } from '../src/remote-protocol.js';
+import { UsageLedger } from '../src/usage-ledger.js';
 
 const caps: ProviderCapabilities = {
   modelDiscovery: true,
@@ -204,6 +207,8 @@ test('registered speed-first Project invokes cloud directly from desktop app age
     secret: 'cloud-secret'
   });
   const settings = new ProviderSettingsStore(path.join(root, 'providers.json'));
+  const pricing = new PricingStore(path.join(root, 'pricing.json'));
+  const ledger = new UsageLedger(path.join(root, 'usage-ledger'));
   settings.update('anthropic', {
     unlimitedUsage: true,
     defaultModelId: 'cloud-fast',
@@ -230,6 +235,8 @@ test('registered speed-first Project invokes cloud directly from desktop app age
       credentials: undefined,
       remoteClient,
       agentExecutor: fakeAgent(agentCapture),
+      budgetSessionFactory: (selectedProject, jobId) =>
+        new ProjectBudgetSession(selectedProject, pricing, ledger, { jobId }),
       providerRuntime: {
         credentials,
         settings,

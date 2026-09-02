@@ -68,6 +68,12 @@ function modelId(value: string): string {
   return trimmed;
 }
 
+function builtInPricingAlias(provider: string, model: string): string | undefined {
+  if (provider !== 'anthropic') return undefined;
+  if (model === 'claude-haiku-4-5') return 'claude-haiku-4-5-20251001';
+  return undefined;
+}
+
 function money(value: number | undefined, label: string, required = false): number | undefined {
   if (value === undefined) {
     if (required) throw new Error(`${label} is required.`);
@@ -103,7 +109,14 @@ export class PricingStore {
     const state = this.read();
     const requested = providerId(provider);
     const canonical = pricingProviderId(requested);
-    const value = state.providers[requested]?.[modelId(model)] ?? state.providers[canonical]?.[modelId(model)];
+    const modelKey = modelId(model);
+    const alias = builtInPricingAlias(canonical, modelKey);
+    const requestedModels = state.providers[requested];
+    const canonicalModels = state.providers[canonical];
+    const value = requestedModels?.[modelKey] ??
+      (alias ? requestedModels?.[alias] : undefined) ??
+      canonicalModels?.[modelKey] ??
+      (alias ? canonicalModels?.[alias] : undefined);
     return value ? structuredClone(value) : undefined;
   }
 

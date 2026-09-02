@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { validateMcpName, validateRemoteMcpInput } from './mcp-connectors.js';
+
 export interface ClaudeAccountProfile {
   id: string;
   name: string;
@@ -487,6 +489,49 @@ export class ClaudeAccountRuntime {
       env: this.profileEnv(profile),
       timeoutMs: options.timeoutMs ?? 30_000,
       signal: options.signal
+    });
+  }
+
+  async addRemoteMcp(
+    profileId: string,
+    input: { name: string; url: string },
+    options: { timeoutMs?: number; signal?: AbortSignal } = {}
+  ): Promise<ClaudeCommandResult> {
+    const profile = this.profiles.get(profileId);
+    const connector = validateRemoteMcpInput(input.name, input.url);
+    return await this.run(['mcp', 'add', '--transport', 'http', '--scope', 'user', connector.name, connector.url], {
+      env: this.profileEnv(profile),
+      timeoutMs: options.timeoutMs ?? 30_000,
+      signal: options.signal
+    });
+  }
+
+  async removeMcp(
+    profileId: string,
+    nameValue: string,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {}
+  ): Promise<ClaudeCommandResult> {
+    const profile = this.profiles.get(profileId);
+    const name = validateMcpName(nameValue);
+    return await this.run(['mcp', 'remove', '--scope', 'user', name], {
+      env: this.profileEnv(profile),
+      timeoutMs: options.timeoutMs ?? 30_000,
+      signal: options.signal
+    });
+  }
+
+  async loginMcp(
+    profileId: string,
+    nameValue: string,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {}
+  ): Promise<ClaudeCommandResult> {
+    const profile = this.profiles.get(profileId);
+    const name = validateMcpName(nameValue);
+    return await this.run(['mcp', 'login', name], {
+      env: this.profileEnv(profile),
+      timeoutMs: options.timeoutMs ?? 15 * 60_000,
+      signal: options.signal,
+      stdio: 'inherit'
     });
   }
 

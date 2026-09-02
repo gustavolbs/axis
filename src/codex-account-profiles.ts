@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { validateMcpName, validateRemoteMcpInput } from './mcp-connectors.js';
+
 export interface CodexAccountProfile {
   id: string;
   name: string;
@@ -379,12 +381,55 @@ export class CodexAccountRuntime {
     });
   }
 
-  async listMcp(profileIdValue: string, options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<CodexCommandResult> {
+  async listMcp(profileIdValue: string, options: { timeoutMs?: number; signal?: AbortSignal; json?: boolean } = {}): Promise<CodexCommandResult> {
     const profile = this.profiles.get(profileIdValue);
-    return await this.run(['mcp', 'list'], {
+    return await this.run(['mcp', 'list', ...(options.json ? ['--json'] : [])], {
       env: this.profileEnv(profile),
       timeoutMs: options.timeoutMs ?? 30_000,
       signal: options.signal
+    });
+  }
+
+  async addRemoteMcp(
+    profileIdValue: string,
+    input: { name: string; url: string },
+    options: { timeoutMs?: number; signal?: AbortSignal } = {}
+  ): Promise<CodexCommandResult> {
+    const profile = this.profiles.get(profileIdValue);
+    const connector = validateRemoteMcpInput(input.name, input.url);
+    return await this.run(['mcp', 'add', connector.name, '--url', connector.url], {
+      env: this.profileEnv(profile),
+      timeoutMs: options.timeoutMs ?? 30_000,
+      signal: options.signal
+    });
+  }
+
+  async removeMcp(
+    profileIdValue: string,
+    nameValue: string,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {}
+  ): Promise<CodexCommandResult> {
+    const profile = this.profiles.get(profileIdValue);
+    const name = validateMcpName(nameValue);
+    return await this.run(['mcp', 'remove', name], {
+      env: this.profileEnv(profile),
+      timeoutMs: options.timeoutMs ?? 30_000,
+      signal: options.signal
+    });
+  }
+
+  async loginMcp(
+    profileIdValue: string,
+    nameValue: string,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {}
+  ): Promise<CodexCommandResult> {
+    const profile = this.profiles.get(profileIdValue);
+    const name = validateMcpName(nameValue);
+    return await this.run(['mcp', 'login', name], {
+      env: this.profileEnv(profile),
+      timeoutMs: options.timeoutMs ?? 15 * 60_000,
+      signal: options.signal,
+      stdio: 'inherit'
     });
   }
 

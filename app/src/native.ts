@@ -52,6 +52,22 @@ export interface ProviderConnectionView {
   supportsMcpSources: boolean;
 }
 
+export interface McpConnectorView {
+  name: string;
+  transport: 'http' | 'sse' | 'stdio' | 'websocket' | 'unknown';
+  target?: string;
+  status: 'connected' | 'needs-auth' | 'error' | 'disabled' | 'unknown';
+  detail?: string;
+  managed: boolean;
+  removable: boolean;
+}
+
+export interface McpDiscoveryView {
+  output: string;
+  connectors: McpConnectorView[];
+  durationMs: number;
+}
+
 export type WorkHubSourceKind = 'calendar' | 'tickets' | 'messages';
 export type WorkHubRetention = 'memory' | 'local';
 
@@ -148,14 +164,20 @@ export interface LocalCoderBridge {
   createClaudeAccount(input: { id: string; name: string; organizationLabel?: string }): Promise<ClaudeAccountProfileView>;
   claudeAccountStatus(profileId: string): Promise<ClaudeAccountStatusView>;
   loginClaudeAccount(profileId: string, sso?: boolean): Promise<ClaudeAccountStatusView>;
-  listClaudeAccountMcps(profileId: string): Promise<{ output: string; durationMs: number }>;
+  listClaudeAccountMcps(profileId: string, refresh?: boolean): Promise<McpDiscoveryView>;
+  addClaudeAccountMcp(input: { profileId: string; name: string; url: string }): Promise<unknown>;
+  removeClaudeAccountMcp(profileId: string, name: string): Promise<unknown>;
+  loginClaudeAccountMcp(profileId: string, name: string): Promise<unknown>;
 
   codexDiscover(): Promise<CodexRuntimeDiscoveryView>;
   codexAccounts(): Promise<CodexAccountProfileView[]>;
   createCodexAccount(input: { id: string; name: string; organizationLabel?: string }): Promise<CodexAccountProfileView>;
   codexAccountStatus(profileId: string): Promise<CodexAccountStatusView>;
   loginCodexAccount(profileId: string, deviceAuth?: boolean): Promise<CodexAccountStatusView>;
-  listCodexAccountMcps(profileId: string): Promise<{ output: string; durationMs: number }>;
+  listCodexAccountMcps(profileId: string, refresh?: boolean): Promise<McpDiscoveryView>;
+  addCodexAccountMcp(input: { profileId: string; name: string; url: string }): Promise<unknown>;
+  removeCodexAccountMcp(profileId: string, name: string): Promise<unknown>;
+  loginCodexAccountMcp(profileId: string, name: string): Promise<unknown>;
 
   providerConnections(): Promise<ProviderConnectionView[]>;
   workHubSnapshot(): Promise<WorkHubSnapshotView>;

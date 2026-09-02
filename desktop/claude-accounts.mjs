@@ -7,12 +7,18 @@ const CHANNELS = [
   'local-coder:claude-account-status',
   'local-coder:claude-account-login',
   'local-coder:claude-account-mcps',
+  'local-coder:claude-account-mcp-add',
+  'local-coder:claude-account-mcp-remove',
+  'local-coder:claude-account-mcp-login',
   'local-coder:codex-discover',
   'local-coder:codex-accounts',
   'local-coder:codex-account-create',
   'local-coder:codex-account-status',
   'local-coder:codex-account-login',
   'local-coder:codex-account-mcps',
+  'local-coder:codex-account-mcp-add',
+  'local-coder:codex-account-mcp-remove',
+  'local-coder:codex-account-mcp-login',
   'local-coder:connections',
   'local-coder:work-hub-snapshot',
   'local-coder:work-hub-source-upsert',
@@ -21,6 +27,15 @@ const CHANNELS = [
 ];
 
 let resourcesPromise;
+const mcpDiscoveryCache = new Map();
+
+function mcpCacheKey(provider, profileId) {
+  return `${provider}:${profileId}`;
+}
+
+function invalidateMcpCache(provider, profileId) {
+  mcpDiscoveryCache.delete(mcpCacheKey(provider, profileId));
+}
 
 async function resources() {
   if (!resourcesPromise) {
@@ -28,8 +43,9 @@ async function resources() {
       import('../dist/claude-account-profiles.js'),
       import('../dist/codex-account-profiles.js'),
       import('../dist/provider-connections.js'),
-      import('../dist/work-hub.js')
-    ]).then(([claude, codex, connectionsModule, workHubModule]) => {
+      import('../dist/work-hub.js'),
+      import('../dist/mcp-connectors.js')
+    ]).then(([claude, codex, connectionsModule, workHubModule, mcpConnectors]) => {
       const claudeProfiles = new claude.ClaudeAccountProfileStore();
       const claudeRuntime = new claude.ClaudeAccountRuntime(claudeProfiles);
       const codexProfiles = new codex.CodexAccountProfileStore();
@@ -44,7 +60,7 @@ async function resources() {
         new workHubModule.WorkHubSourceStore(),
         { connections, claudeProfiles, claudeRuntime, codexProfiles, codexRuntime }
       );
-      return { claudeProfiles, claudeRuntime, codexProfiles, codexRuntime, connections, workHub };
+      return { claudeProfiles, claudeRuntime, codexProfiles, codexRuntime, connections, workHub, mcpConnectors };
     });
   }
   return await resourcesPromise;
@@ -98,12 +114,45 @@ export function installClaudeAccountBridge() {
     );
     return await claudeRuntime.status(id);
   });
-  ipcMain.handle('local-coder:claude-account-mcps', async (_event, profileId) => {
+  ipcMain.handle('local-coder:claude-account-mcps', async (_event, profileId, refresh) => {
+    const { claudeRuntime, mcpConnectors } = await resources();
+    const id = requiredString(profileId, 'Profile id');
+    const cacheKey = mcpCacheKey('claude', id);
+    if (refresh !== true && mcpDiscoveryCache.has(cacheKey)) return mcpDiscoveryCache.get(cacheKey);
     const result = assertSuccessful(
-      await (await resources()).claudeRuntime.listMcp(requiredString(profileId, 'Profile id')),
+      await claudeRuntime.listMcp(id),
       'Claude MCP discovery'
     );
-    return { output: result.stdout || result.stderr, durationMs: result.durationMs };
+    const output = result.stdout || result.stderr;
+    const discovery = { output, connectors: mcpConnectors.parseClaudeMcpList(output), durationMs: result.durationMs };
+    mcpDiscoveryCache.set(cacheKey, discovery);
+    return discovery;
+  });
+  ipcMain.handle('local-coder:claude-account-mcp-add', async (_event, raw) => {
+    const input = object(raw, 'Claude MCP input');
+    const id = requiredString(input.profileId, 'Profile id');
+    const result = assertSuccessful(await (await resources()).claudeRuntime.addRemoteMcp(
+      id,
+      { name: requiredString(input.name, 'Connector name'), url: requiredString(input.url, 'Connector URL') }
+    ), 'Add Claude MCP connector');
+    invalidateMcpCache('claude', id);
+    return result;
+  });
+  ipcMain.handle('local-coder:claude-account-mcp-remove', async (_event, profileId, name) => {
+    const id = requiredString(profileId, 'Profile id');
+    const result = assertSuccessful(await (await resources()).claudeRuntime.removeMcp(
+      id, requiredString(name, 'Connector name')
+    ), 'Remove Claude MCP connector');
+    invalidateMcpCache('claude', id);
+    return result;
+  });
+  ipcMain.handle('local-coder:claude-account-mcp-login', async (_event, profileId, name) => {
+    const id = requiredString(profileId, 'Profile id');
+    const result = assertSuccessful(await (await resources()).claudeRuntime.loginMcp(
+      id, requiredString(name, 'Connector name')
+    ), 'Authenticate Claude MCP connector');
+    invalidateMcpCache('claude', id);
+    return result;
   });
 
   ipcMain.handle('local-coder:codex-discover', async () => (await resources()).codexRuntime.discover());
@@ -128,12 +177,44 @@ export function installClaudeAccountBridge() {
     );
     return await codexRuntime.status(id);
   });
-  ipcMain.handle('local-coder:codex-account-mcps', async (_event, profileId) => {
-    const result = assertSuccessful(
-      await (await resources()).codexRuntime.listMcp(requiredString(profileId, 'Profile id')),
-      'Codex MCP discovery'
-    );
-    return { output: result.stdout || result.stderr, durationMs: result.durationMs };
+  ipcMain.handle('local-coder:codex-account-mcps', async (_event, profileId, refresh) => {
+    const { codexRuntime, mcpConnectors } = await resources();
+    const id = requiredString(profileId, 'Profile id');
+    const cacheKey = mcpCacheKey('codex', id);
+    if (refresh !== true && mcpDiscoveryCache.has(cacheKey)) return mcpDiscoveryCache.get(cacheKey);
+    let result = await codexRuntime.listMcp(id, { json: true });
+    if (result.exitCode !== 0 || result.timedOut || result.cancelled) result = await codexRuntime.listMcp(id);
+    assertSuccessful(result, 'Codex MCP discovery');
+    const output = result.stdout || result.stderr;
+    const discovery = { output, connectors: mcpConnectors.parseCodexMcpList(output), durationMs: result.durationMs };
+    mcpDiscoveryCache.set(cacheKey, discovery);
+    return discovery;
+  });
+  ipcMain.handle('local-coder:codex-account-mcp-add', async (_event, raw) => {
+    const input = object(raw, 'Codex MCP input');
+    const id = requiredString(input.profileId, 'Profile id');
+    const result = assertSuccessful(await (await resources()).codexRuntime.addRemoteMcp(
+      id,
+      { name: requiredString(input.name, 'Connector name'), url: requiredString(input.url, 'Connector URL') }
+    ), 'Add Codex MCP connector');
+    invalidateMcpCache('codex', id);
+    return result;
+  });
+  ipcMain.handle('local-coder:codex-account-mcp-remove', async (_event, profileId, name) => {
+    const id = requiredString(profileId, 'Profile id');
+    const result = assertSuccessful(await (await resources()).codexRuntime.removeMcp(
+      id, requiredString(name, 'Connector name')
+    ), 'Remove Codex MCP connector');
+    invalidateMcpCache('codex', id);
+    return result;
+  });
+  ipcMain.handle('local-coder:codex-account-mcp-login', async (_event, profileId, name) => {
+    const id = requiredString(profileId, 'Profile id');
+    const result = assertSuccessful(await (await resources()).codexRuntime.loginMcp(
+      id, requiredString(name, 'Connector name')
+    ), 'Authenticate Codex MCP connector');
+    invalidateMcpCache('codex', id);
+    return result;
   });
 
   ipcMain.handle('local-coder:connections', async () => (await resources()).connections.list());
