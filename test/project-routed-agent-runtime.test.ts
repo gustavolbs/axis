@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { apiCredentialConnectionId } from '../src/connection-identity.js';
 import {
   CredentialManager,
   CredentialProfileStore
@@ -149,6 +150,8 @@ function runtimeFixture() {
   return { root, settings, credentials, local, providerRuntime, cloud: () => cloud };
 }
 
+const cloudConnectionId = apiCredentialConnectionId('anthropic', 'company-a-anthropic');
+
 test('provider settings persist model routing metadata without credentials', () => {
   const root = temp('provider-settings');
   const file = path.join(root, 'providers.json');
@@ -183,18 +186,18 @@ test('Auto catalog never chooses arbitrary discovered cloud models before provid
   });
   assert.deepEqual(
     configured.candidates.map((candidate) => `${candidate.providerId}/${candidate.modelId}`),
-    ['ollama/qwen-fast', 'anthropic/cloud-fast']
+    ['ollama/qwen-fast', `${cloudConnectionId}/cloud-fast`]
   );
 });
 
-test('explicit cloud model is cataloged when discovered even without a provider default', async () => {
+test('explicit cloud model is cataloged under its exact connection even without a provider default', async () => {
   const fixture = runtimeFixture();
   const result = await fixture.providerRuntime.routingCandidates(project(), {
     stage: 'planning',
     localModelHint: 'qwen-fast',
-    modelSelection: { mode: 'explicit', providerId: 'anthropic', modelId: 'cloud-other' }
+    modelSelection: { mode: 'explicit', providerId: cloudConnectionId, modelId: 'cloud-other' }
   });
-  const cloud = result.candidates.find((candidate) => candidate.providerId === 'anthropic');
+  const cloud = result.candidates.find((candidate) => candidate.providerId === cloudConnectionId);
   assert.equal(cloud?.modelId, 'cloud-other');
   assert.equal(cloud?.available, true);
 });
@@ -254,7 +257,7 @@ test('strict Local-only project bypasses the provider layer and preserves legacy
   assert.deepEqual(received, runtime);
 });
 
-test('speed-first agent chat routes directly to configured cloud model without legacy/local inference', async () => {
+test('speed-first agent chat routes directly to configured exact cloud connection without legacy/local inference', async () => {
   const fixture = runtimeFixture();
   fixture.settings.update('anthropic', {
     unlimitedUsage: true,
@@ -294,7 +297,7 @@ test('speed-first agent chat routes directly to configured cloud model without l
   assert.equal(fixture.local.calls.length, 0);
   assert.equal(fixture.cloud()?.calls.length, 1);
   assert.equal(legacyCalls, 0);
-  assert.deepEqual(routes, ['anthropic/cloud-fast']);
+  assert.deepEqual(routes, [`${cloudConnectionId}/cloud-fast`]);
 });
 
 test('Ollama provider receives exact namespaced local tuning when it wins routed inference', async () => {
