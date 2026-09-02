@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Activity, KeyRound, Palette, Route, Settings2, ShieldCheck, X } from 'lucide-react';
+import { Activity, KeyRound, Palette, Route, Settings2, ShieldCheck, UsersRound, X } from 'lucide-react';
 
 import type { AdminProject } from './app-types.js';
+import { ClaudeAccountsSettings } from './ClaudeAccountsSettings.js';
 import { FolderField } from './FolderField.js';
 import { ProviderCapabilitiesSettings } from './ProviderCapabilitiesSettings.js';
 import { ApiKeySettings, ModelRoutingSettings, WorkerConnectionSetting } from './SettingsPanels.js';
 import { UsageSettings } from './UsageSettings.js';
 import type { ThemeMode } from './native.js';
 
-type SettingsTab = 'general' | 'appearance' | 'routing' | 'capabilities' | 'usage' | 'keys';
+type SettingsTab = 'general' | 'appearance' | 'routing' | 'capabilities' | 'usage' | 'accounts' | 'keys';
 
 function applyTheme(mode: ThemeMode) {
   const root = document.documentElement;
@@ -79,6 +80,7 @@ export function SettingsModal({
         <button className={tab === 'routing' ? 'active' : ''} onClick={() => setTab('routing')}><Route size={15} /><span>Model routing</span></button>
         <button className={tab === 'capabilities' ? 'active' : ''} onClick={() => setTab('capabilities')}><ShieldCheck size={15} /><span>Capabilities</span></button>
         <button className={tab === 'usage' ? 'active' : ''} onClick={() => setTab('usage')}><Activity size={15} /><span>Usage</span></button>
+        <button className={tab === 'accounts' ? 'active' : ''} onClick={() => setTab('accounts')}><UsersRound size={15} /><span>Claude accounts</span></button>
         <button className={tab === 'keys' ? 'active' : ''} onClick={() => setTab('keys')}><KeyRound size={15} /><span>API keys</span></button>
       </aside>
 
@@ -115,6 +117,7 @@ export function SettingsModal({
         {tab === 'routing' ? <ModelRoutingSettings /> : null}
         {tab === 'capabilities' ? <ProviderCapabilitiesSettings /> : null}
         {tab === 'usage' ? <UsageSettings /> : null}
+        {tab === 'accounts' ? <ClaudeAccountsSettings /> : null}
         {tab === 'keys' ? <ApiKeySettings /> : null}
       </div>
     </section>

@@ -15,6 +15,8 @@ import {
   shell
 } from 'electron';
 
+import { installClaudeAccountBridge } from './claude-accounts.mjs';
+
 const DEFAULT_WINDOW_WIDTH = 1280;
 const DEFAULT_WINDOW_HEIGHT = 840;
 const MIN_WINDOW_WIDTH = 760;
@@ -417,6 +419,7 @@ async function initializeDesktop() {
   log('Electron ready', { packaged: app.isPackaged, version: process.versions.electron });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
+  installClaudeAccountBridge();
 
   if (process.platform !== 'darwin') {
     const hasSingleInstanceLock = app.requestSingleInstanceLock();

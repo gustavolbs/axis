@@ -3,6 +3,29 @@ import type { RuntimeEvent, RuntimeRequest } from './runtime-client.js';
 export type DesktopCommand = 'new-chat' | 'toggle-sidebar' | 'settings' | 'projects' | 'runs';
 export type ThemeMode = 'system' | 'light' | 'dark';
 
+export interface ClaudeAccountProfileView {
+  id: string;
+  name: string;
+  configDir: string;
+  organizationLabel?: string;
+}
+
+export interface ClaudeRuntimeDiscoveryView {
+  installed: boolean;
+  usable: boolean;
+  version?: string;
+  error?: string;
+}
+
+export interface ClaudeAccountStatusView extends ClaudeRuntimeDiscoveryView {
+  profileId: string;
+  authenticated: boolean;
+  email?: string;
+  authMethod?: string;
+  organization?: string;
+  subscriptionType?: string;
+}
+
 export interface LocalCoderBridge {
   isElectron: true;
   platform: string;
@@ -13,6 +36,12 @@ export interface LocalCoderBridge {
   getProfile(): Promise<{ userName: string; home: string }>;
   getLoginItemSettings(): Promise<{ openAtLogin: boolean }>;
   setOpenAtLogin(enabled: boolean): Promise<{ openAtLogin: boolean }>;
+  claudeDiscover(): Promise<ClaudeRuntimeDiscoveryView>;
+  claudeAccounts(): Promise<ClaudeAccountProfileView[]>;
+  createClaudeAccount(input: { id: string; name: string; organizationLabel?: string }): Promise<ClaudeAccountProfileView>;
+  claudeAccountStatus(profileId: string): Promise<ClaudeAccountStatusView>;
+  loginClaudeAccount(profileId: string, sso?: boolean): Promise<ClaudeAccountStatusView>;
+  listClaudeAccountMcps(profileId: string): Promise<{ output: string; durationMs: number }>;
   onRuntimeEvent(listener: (event: RuntimeEvent) => void): () => void;
   onThemeChanged(listener: (dark: boolean) => void): () => void;
   onCommand(listener: (command: DesktopCommand) => void): () => void;

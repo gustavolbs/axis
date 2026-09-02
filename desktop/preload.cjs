@@ -16,6 +16,12 @@ const bridge = {
   getProfile: () => ipcRenderer.invoke('local-coder:get-profile'),
   getLoginItemSettings: () => ipcRenderer.invoke('local-coder:get-login-item-settings'),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke('local-coder:set-open-at-login', Boolean(enabled)),
+  claudeDiscover: () => ipcRenderer.invoke('local-coder:claude-discover'),
+  claudeAccounts: () => ipcRenderer.invoke('local-coder:claude-accounts'),
+  createClaudeAccount: (input) => ipcRenderer.invoke('local-coder:claude-account-create', input),
+  claudeAccountStatus: (profileId) => ipcRenderer.invoke('local-coder:claude-account-status', String(profileId)),
+  loginClaudeAccount: (profileId, sso = false) => ipcRenderer.invoke('local-coder:claude-account-login', String(profileId), Boolean(sso)),
+  listClaudeAccountMcps: (profileId) => ipcRenderer.invoke('local-coder:claude-account-mcps', String(profileId)),
   onRuntimeEvent: (listener) => {
     const wrapped = (_event, event) => listener(event);
     runtimeListeners.set(listener, wrapped);
