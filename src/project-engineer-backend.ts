@@ -248,14 +248,6 @@ function escalationPrompt(input: ProjectEngineerInput, escalation: LocalEngineer
   }, null, 2);
 }
 
-function isStrictLegacyLocal(project: ProjectDefinition): boolean {
-  const connections = new Set([
-    ...project.connectionPolicy.chat.allowedConnectionIds,
-    ...project.connectionPolicy.inference.allowedConnectionIds
-  ]);
-  return project.privacy.cloudAllowed === false && connections.size === 1 && connections.has('ollama');
-}
-
 class InferenceProviderChatClient implements LegacyAgentChatClient {
   constructor(private readonly provider: InferenceProvider) {}
 
@@ -518,7 +510,10 @@ export class ProjectAwareEngineerBackend {
     return {
       stage,
       recommended: recommendedOption
-        ? { ...recommendedOption, reasoningEffort: recommendedOption.supportsReasoning ? 'high' : 'none' }
+        ? {
+            ...recommendedOption,
+            reasoningEffort: recommendedOption.supportsReasoning ? 'high' : 'none'
+          }
         : undefined,
       options,
       reasons: decision.reasons
@@ -560,7 +555,9 @@ export class ProjectAwareEngineerBackend {
         item.providerId === option.providerId &&
         item.modelId === option.modelId
     );
-    if (!candidate) throw new Error(`Escalation target ${option.providerId}/${option.modelId} became unavailable.`);
+    if (!candidate) {
+      throw new Error(`Escalation target ${option.providerId}/${option.modelId} became unavailable.`);
+    }
     const provider = registry.get(option.providerId);
     const scopedInput = withProjectInstructions(project, input);
     const inference: Omit<InferenceRequest, 'model'> = {
