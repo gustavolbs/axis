@@ -36,6 +36,7 @@ export interface ProjectRoutedChatOptions {
   urgency?: RoutingUrgency;
   complexityScore?: number;
   blastRadius?: RoutingBlastRadius;
+  connectionScope?: 'chat' | 'cowork';
   confirmFallback?: FallbackConfirmation;
   budget?: ProjectBudgetSession;
   onRoute?: (result: ProjectRouteEvent) => void;
@@ -52,8 +53,6 @@ function reasoningEffort(think: OllamaThinkingLevel | undefined): ReasoningEffor
 function localThinkingLevel(effort: ReasoningEffort): OllamaThinkingLevel {
   if (effort === 'none') return false;
   if (effort === 'low' || effort === 'medium' || effort === 'high') return effort;
-  // Current Ollama/Qwen compatibility contract exposes low/medium/high. Higher cloud
-  // effort levels degrade explicitly to the strongest local intent instead of being ignored.
   return 'high';
 }
 
@@ -90,10 +89,14 @@ function safeStreamProgress(
 }
 
 function isStrictLegacyLocal(project: ProjectDefinition): boolean {
+  const exact = new Set([
+    ...project.connectionPolicy.chat.allowedConnectionIds,
+    ...project.connectionPolicy.inference.allowedConnectionIds
+  ]);
   return (
     project.privacy.cloudAllowed === false &&
-    project.privacy.allowedProviderIds.length === 1 &&
-    project.privacy.allowedProviderIds[0] === 'ollama'
+    exact.size === 1 &&
+    exact.has('ollama')
   );
 }
 
@@ -101,12 +104,6 @@ function budgetCandidateKey(candidate: { providerId: string; modelId: string }):
   return `${candidate.providerId}\0${candidate.modelId}`;
 }
 
-/**
- * Structural adapter for the current Agent Runtime. Existing stages can keep calling
- * `.chat(...)` while project-aware jobs route each call independently. A strictly
- * Local-only project bypasses the provider layer while still honoring explicit desktop
- * model/effort choices at the legacy Ollama call boundary.
- */
 export class ProjectRoutedChatClient implements LegacyAgentChatClient {
   constructor(
     private readonly project: ProjectDefinition,
@@ -133,7 +130,7 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
       const localFirst = selection?.mode === 'local-first' ? selection : undefined;
       if (explicit && explicit.providerId !== 'ollama') {
         throw new Error(
-          `Local-only Project ${this.project.id} cannot execute explicit provider ${explicit.providerId}.`
+          `Local-only Project ${this.project.id} cannot execute explicit connection ${explicit.providerId}.`
         );
       }
       const modelId = localFirst?.modelId ?? explicit?.modelId ?? runtime.model ?? 'ollama-local';
@@ -178,7 +175,8 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
     const catalogOptions: RoutingCatalogOptions = {
       stage,
       localModelHint: runtime.model,
-      modelSelection: this.options.modelSelection ?? this.project.defaultModel
+      modelSelection: this.options.modelSelection ?? this.project.defaultModel,
+      connectionScope: this.options.connectionScope ?? 'cowork'
     };
     const { registry, candidates: rawCandidates } = await this.providers.routingCandidates(
       this.project,
@@ -186,7 +184,7 @@ export class ProjectRoutedChatClient implements LegacyAgentChatClient {
     );
     if (rawCandidates.length === 0) {
       throw new Error(
-        `Project ${this.project.id} has no configured/available model candidates for ${stage}.`
+        `Project ${this.project.id} has no configured/available ${catalogOptions.connectionScope} model candidates for ${stage}.`
       );
     }
 
