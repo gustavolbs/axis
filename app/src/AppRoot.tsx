@@ -6,6 +6,7 @@ import {
   Folder,
   FolderOpen,
   History,
+  LayoutDashboard,
   MessageSquare,
   MoreHorizontal,
   PanelLeft,
@@ -22,6 +23,7 @@ import { RunInspector } from './RunInspector.js';
 import { SettingsModal } from './SettingsModal.js';
 import { ShellDialog, type ShellDialogRequest } from './ShellDialog.js';
 import { displayProfileName, type DesktopCommand } from './native.js';
+import { GlobalWorkHubLauncher } from './GlobalWorkHubLauncher.js';
 
 /** Conversations live in the sidebar, under their project or in the
  *  project-less Chats section. Archived holds what has been hidden from it. */
@@ -106,6 +108,7 @@ export function AppRoot() {
   const [agentEpoch, setAgentEpoch] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [workHubOpen, setWorkHubOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [jobMenuId, setJobMenuId] = useState<string>();
   const [projectMenuId, setProjectMenuId] = useState<string>();
@@ -463,6 +466,7 @@ export function AppRoot() {
     data-shell={isElectron ? 'electron' : 'web'}
     data-platform={platform}
   >
+    <GlobalWorkHubLauncher open={workHubOpen} onClose={() => setWorkHubOpen(false)} />
     {/* Window-level row, deliberately outside the sidebar: it has to sit beside
         the traffic lights whatever the sidebar's width, and a 56px rail cannot
         hold 76px of lights plus a button. Toggle and search only — a wordmark
@@ -482,6 +486,7 @@ export function AppRoot() {
         <button className={surface === 'projects' || surface === 'project' ? 'active' : ''} onClick={() => selectSurface('projects')} aria-label="Projects" data-tooltip={tooltip('Projects')}><Folder size={16} aria-hidden="true" /><span>Projects</span></button>
         <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')} aria-label="Runs" data-tooltip={tooltip('Runs')}><History size={16} aria-hidden="true" /><span>Runs</span></button>
         <button className={surface === 'archived' ? 'active' : ''} onClick={() => selectSurface('archived')} aria-label="Archived" data-tooltip={tooltip('Archived')}><Archive size={16} aria-hidden="true" /><span>Archived</span></button>
+        <button className={workHubOpen ? 'active' : ''} onClick={() => setWorkHubOpen(true)} aria-label="Work Hub" data-tooltip={tooltip('Work Hub')}><LayoutDashboard size={16} aria-hidden="true" /><span>Work Hub</span></button>
       </nav>
 
       <div className="lc-shell-sidebar-scroll">

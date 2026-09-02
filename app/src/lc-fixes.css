@@ -1479,6 +1479,324 @@
 }
 
 /* --------------------------------------------------------------------------
+   15. Work Hub. It carried its own <style> tag (CSP blocks that) referencing
+   tokens that don't exist here (--lc-surface-raised, --lc-background,
+   --lc-sidebar-bg), so borders/backgrounds silently fell back to nothing.
+   Moved into the shared cascade on real tokens and the modal/nav patterns
+   used everywhere else.
+   ----------------------------------------------------------------------- */
+
+.work-hub-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, .7);
+  backdrop-filter: blur(7px);
+}
+
+.work-hub-shell {
+  width: min(1120px, 96vw);
+  height: min(780px, 92vh);
+  display: grid;
+  grid-template-columns: 176px 1fr;
+  border: 1px solid var(--lc-border);
+  border-radius: 13px;
+  background: var(--lc-bg);
+  overflow: hidden;
+  box-shadow: var(--lc-shadow-popover);
+}
+
+.work-hub-rail {
+  padding: 18px 10px;
+  border-right: 1px solid var(--lc-border);
+  background: var(--lc-sidebar);
+}
+
+.work-hub-rail h1 {
+  font-size: 13px;
+  margin: 2px 9px 16px;
+  color: var(--lc-text-soft);
+}
+
+.work-hub-rail button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lc-muted);
+  padding: 0 9px;
+  font-size: 13px;
+  text-align: left;
+}
+
+.work-hub-rail button.active {
+  background: var(--lc-surface-2);
+  color: var(--lc-text);
+}
+
+.work-hub-main {
+  min-width: 0;
+  overflow: auto;
+  padding: 22px 26px 36px;
+}
+
+.work-hub-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.work-hub-header h2 {
+  margin: 0;
+  font-family: var(--lc-font-serif);
+  font-size: 20px;
+  font-weight: 400;
+}
+
+.work-hub-header p {
+  margin: 4px 0 0;
+  color: var(--lc-muted);
+  font-size: 12px;
+}
+
+.work-hub-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.work-hub-close {
+  border: 0;
+  background: transparent;
+  color: var(--lc-muted);
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+}
+
+.work-hub-error {
+  margin: 0 0 14px;
+  padding: 9px 10px;
+  border: 1px solid var(--lc-negative);
+  border-radius: 8px;
+  color: var(--lc-negative);
+  font-size: 12px;
+}
+
+.work-hub-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.work-hub-stat {
+  padding: 13px;
+  border: 1px solid var(--lc-border);
+  border-radius: 11px;
+  background: var(--lc-surface);
+}
+
+.work-hub-stat strong {
+  display: block;
+  font-size: 22px;
+}
+
+.work-hub-stat small {
+  color: var(--lc-muted);
+  font-size: 11px;
+}
+
+.work-hub-section {
+  margin-top: 20px;
+}
+
+.work-hub-section > h3 {
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+
+.work-hub-list {
+  display: grid;
+  gap: 7px;
+}
+
+.work-hub-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 11px;
+  border: 1px solid var(--lc-border);
+  border-radius: 10px;
+  background: var(--lc-surface);
+}
+
+.work-hub-item strong,
+.work-hub-item small {
+  display: block;
+}
+
+.work-hub-item strong {
+  font-size: 13px;
+  color: var(--lc-text-soft);
+}
+
+.work-hub-item small {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--lc-muted);
+}
+
+.work-hub-item aside {
+  text-align: right;
+  font-size: 11px;
+  color: var(--lc-muted);
+}
+
+.work-hub-item a {
+  color: var(--lc-text-soft);
+  text-decoration: none;
+}
+
+.work-hub-group {
+  margin-top: 15px;
+}
+
+.work-hub-group > header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  color: var(--lc-muted);
+  font-size: 12px;
+}
+
+.work-hub-source-card {
+  border: 1px solid var(--lc-border);
+  border-radius: 11px;
+  background: var(--lc-surface);
+  overflow: hidden;
+}
+
+.work-hub-source-main {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 12px;
+}
+
+.work-hub-source-main strong,
+.work-hub-source-main small {
+  display: block;
+}
+
+.work-hub-source-main small {
+  margin-top: 3px;
+  color: var(--lc-muted);
+  font-size: 11px;
+}
+
+.work-hub-source-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.work-hub-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--lc-muted);
+}
+
+.work-hub-state.ready {
+  color: var(--lc-positive);
+}
+
+.work-hub-source-error {
+  padding: 8px 12px;
+  border-top: 1px solid var(--lc-border);
+  color: var(--lc-negative);
+  font-size: 11px;
+}
+
+.work-hub-source-form {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  margin-bottom: 15px;
+  border: 1px solid var(--lc-border);
+  border-radius: 11px;
+  background: var(--lc-surface);
+}
+
+.work-hub-source-form label > span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--lc-text-soft);
+  font-size: 12px;
+}
+
+.work-hub-source-form textarea {
+  min-height: 74px;
+  resize: vertical;
+}
+
+.work-hub-source-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.work-hub-empty {
+  padding: 22px;
+  text-align: center;
+  color: var(--lc-muted);
+  font-size: 13px;
+  border: 1px dashed var(--lc-border);
+  border-radius: 10px;
+}
+
+@media (max-width: 760px) {
+  .work-hub-shell {
+    grid-template-columns: 1fr;
+    height: 94vh;
+  }
+  .work-hub-rail {
+    display: flex;
+    gap: 4px;
+    overflow: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--lc-border);
+    padding: 8px;
+  }
+  .work-hub-rail h1 {
+    display: none;
+  }
+  .work-hub-rail button {
+    width: auto;
+    white-space: nowrap;
+  }
+  .work-hub-summary-grid {
+    grid-template-columns: 1fr;
+  }
+  .work-hub-main {
+    padding: 16px;
+  }
+}
+
+/* --------------------------------------------------------------------------
    21. Chat message geometry. The thread used its own horizontal padding on top
        of the 760px row width, so assistant content started noticeably inside
        the composer edge. User bubbles also owned an 88% max-width while their

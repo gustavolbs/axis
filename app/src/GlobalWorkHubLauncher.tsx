@@ -12,6 +12,11 @@ import {
   X
 } from 'lucide-react';
 
+interface GlobalWorkHubLauncherProps {
+  open: boolean;
+  onClose: () => void;
+}
+
 import type {
   ProviderConnectionView,
   WorkHubRetention,
@@ -41,9 +46,8 @@ const retentionOptions: UiSelectOption[] = [
   { value: 'local', label: 'Local cache', description: 'Persist normalized results on this Mac' }
 ];
 
-export function GlobalWorkHubLauncher() {
+export function GlobalWorkHubLauncher({ open, onClose }: GlobalWorkHubLauncherProps) {
   const bridge = window.lc;
-  const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<WorkHubTab>('today');
   const [snapshot, setSnapshot] = useState<WorkHubSnapshotView>();
   const [connections, setConnections] = useState<ProviderConnectionView[]>([]);
@@ -69,10 +73,10 @@ export function GlobalWorkHubLauncher() {
   useEffect(() => { if (open) void load().catch((next) => setError(errorMessage(next))); }, [open]);
   useEffect(() => {
     if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+  }, [open, onClose]);
 
   const connectionOptions = useMemo<UiSelectOption[]>(() => connections.map((connection) => ({
     value: connection.id,
@@ -127,17 +131,13 @@ export function GlobalWorkHubLauncher() {
   const link = (url?: string, labelText = 'Open') => url ? <a href={url} target="_blank" rel="noreferrer">{labelText}</a> : null;
 
   return <>
-    <button className="work-hub-launcher" onClick={() => setOpen(true)} aria-label="Open Work Hub"><LayoutDashboard size={16} /><span>Work Hub</span>{activeTickets.length + attentionMessages.length > 0 ? <b>{activeTickets.length + attentionMessages.length}</b> : null}</button>
-    {open ? <div className="work-hub-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setOpen(false); }}>
+    {open ? <div className="work-hub-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
       <section className="work-hub-shell" role="dialog" aria-modal="true" aria-label="Work Hub">
-        <style>{`
-          .work-hub-launcher{position:fixed;right:18px;bottom:18px;z-index:60;display:flex;align-items:center;gap:7px;height:34px;padding:0 11px;border:1px solid var(--lc-border);border-radius:999px;background:var(--lc-surface-raised);color:var(--lc-text);box-shadow:0 10px 28px rgba(0,0,0,.18);font-size:10px}.work-hub-launcher b{min-width:17px;height:17px;display:grid;place-items:center;border-radius:999px;background:var(--lc-text);color:var(--lc-surface);font-size:8px}.work-hub-backdrop{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.46);display:grid;place-items:center;padding:26px}.work-hub-shell{width:min(1120px,96vw);height:min(780px,92vh);display:grid;grid-template-columns:176px 1fr;border:1px solid var(--lc-border);border-radius:15px;background:var(--lc-background);overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.35)}.work-hub-rail{padding:18px 10px;border-right:1px solid var(--lc-border);background:var(--lc-sidebar-bg,var(--lc-surface))}.work-hub-rail h1{font-size:13px;margin:2px 9px 16px}.work-hub-rail button{width:100%;display:flex;align-items:center;gap:8px;border:0;border-radius:8px;background:transparent;color:var(--lc-muted);padding:8px 9px;font-size:10px;text-align:left}.work-hub-rail button.active{background:var(--lc-surface-raised);color:var(--lc-text)}.work-hub-main{min-width:0;overflow:auto;padding:22px 26px 36px}.work-hub-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px}.work-hub-header h2{margin:0;font-size:20px}.work-hub-header p{margin:4px 0 0;color:var(--lc-muted);font-size:10px}.work-hub-actions{display:flex;gap:7px}.work-hub-close{border:0;background:transparent;color:var(--lc-muted);width:30px;height:30px;display:grid;place-items:center}.work-hub-error{margin:0 0 14px;padding:9px 10px;border:1px solid var(--lc-negative);border-radius:8px;color:var(--lc-negative);font-size:9.5px}.work-hub-summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px}.work-hub-stat{padding:13px;border:1px solid var(--lc-border);border-radius:11px;background:var(--lc-surface)}.work-hub-stat strong{display:block;font-size:22px}.work-hub-stat small{color:var(--lc-muted);font-size:9px}.work-hub-section{margin-top:20px}.work-hub-section>h3{font-size:11px;margin:0 0 8px}.work-hub-list{display:grid;gap:7px}.work-hub-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 11px;border:1px solid var(--lc-border);border-radius:10px;background:var(--lc-surface)}.work-hub-item strong,.work-hub-item small{display:block}.work-hub-item strong{font-size:10.5px;color:var(--lc-text-soft)}.work-hub-item small{margin-top:3px;font-size:9px;color:var(--lc-muted)}.work-hub-item aside{text-align:right;font-size:9px;color:var(--lc-muted)}.work-hub-item a{color:var(--lc-text-soft);text-decoration:none}.work-hub-group{margin-top:15px}.work-hub-group>header{display:flex;justify-content:space-between;margin-bottom:7px;color:var(--lc-muted);font-size:9.5px;text-transform:uppercase;letter-spacing:.04em}.work-hub-source-card{border:1px solid var(--lc-border);border-radius:11px;background:var(--lc-surface);overflow:hidden}.work-hub-source-main{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:11px 12px}.work-hub-source-main strong,.work-hub-source-main small{display:block}.work-hub-source-main small{margin-top:3px;color:var(--lc-muted);font-size:9px}.work-hub-source-actions{display:flex;align-items:center;gap:6px}.work-hub-state{display:inline-flex;align-items:center;gap:4px;font-size:9px;color:var(--lc-muted)}.work-hub-state.ready{color:var(--lc-positive)}.work-hub-source-error{padding:8px 12px;border-top:1px solid var(--lc-border);color:var(--lc-negative);font-size:9px}.work-hub-source-form{display:grid;gap:10px;padding:14px;margin-bottom:15px;border:1px solid var(--lc-border);border-radius:11px;background:var(--lc-surface)}.work-hub-source-form label>span{display:block;margin-bottom:5px;color:var(--lc-text-soft);font-size:9.5px}.work-hub-source-form textarea{min-height:74px;resize:vertical}.work-hub-source-form-actions{display:flex;justify-content:flex-end;gap:7px}.work-hub-empty{padding:22px;text-align:center;color:var(--lc-muted);font-size:10px;border:1px dashed var(--lc-border);border-radius:10px}@media(max-width:760px){.work-hub-shell{grid-template-columns:1fr;height:94vh}.work-hub-rail{display:flex;gap:4px;overflow:auto;border-right:0;border-bottom:1px solid var(--lc-border);padding:8px}.work-hub-rail h1{display:none}.work-hub-rail button{width:auto;white-space:nowrap}.work-hub-summary-grid{grid-template-columns:1fr}.work-hub-main{padding:16px}}
-        `}</style>
         <aside className="work-hub-rail"><h1>Work Hub</h1>{([
           ['today', LayoutDashboard, 'Today'], ['calendar', CalendarDays, 'Calendar'], ['work', BriefcaseBusiness, 'Work'], ['inbox', Inbox, 'Inbox'], ['sources', Settings2, 'Sources']
         ] as const).map(([id, Icon, text]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}><Icon size={14} />{text}</button>)}</aside>
         <main className="work-hub-main">
-          <header className="work-hub-header"><div><h2>{tab === 'today' ? 'Today' : tab === 'calendar' ? 'Calendar' : tab === 'work' ? 'My work' : tab === 'inbox' ? 'Inbox' : 'Sources'}</h2><p>Unified locally across isolated account connections.</p></div><div className="work-hub-actions">{tab !== 'sources' ? <button className="btn-secondary" disabled={busy !== undefined} onClick={() => void refresh()}><RefreshCw size={13} />{busy === 'refresh' ? 'Syncing…' : 'Sync all'}</button> : null}<button className="work-hub-close" onClick={() => setOpen(false)} aria-label="Close Work Hub"><X size={17} /></button></div></header>
+          <header className="work-hub-header"><div><h2>{tab === 'today' ? 'Today' : tab === 'calendar' ? 'Calendar' : tab === 'work' ? 'My work' : tab === 'inbox' ? 'Inbox' : 'Sources'}</h2><p>Unified locally across isolated account connections.</p></div><div className="work-hub-actions">{tab !== 'sources' ? <button className="btn-secondary" disabled={busy !== undefined} onClick={() => void refresh()}><RefreshCw size={13} />{busy === 'refresh' ? 'Syncing…' : 'Sync all'}</button> : null}<button className="work-hub-close" onClick={onClose} aria-label="Close Work Hub"><X size={17} /></button></div></header>
           {error ? <div className="work-hub-error">{error}</div> : null}
 
           {tab === 'today' ? <>
