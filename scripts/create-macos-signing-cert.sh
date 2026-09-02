@@ -83,7 +83,7 @@ echo "Created: $P12"
 echo "Back up this file and its password somewhere durable. Do not commit either."
 echo
 echo "Configure the repository secrets with:"
-echo "  base64 -i '$P12' | gh secret set MAC_CSC_LINK --repo gustavolbs/local-coder-mcp"
-echo "  gh secret set MAC_CSC_KEY_PASSWORD --repo gustavolbs/local-coder-mcp"
+echo "  base64 -i '$P12' | gh secret set MAC_CSC_LINK --repo gustavolbs/axis"
+echo "  gh secret set MAC_CSC_KEY_PASSWORD --repo gustavolbs/axis"
 echo
 echo "Use the same password you entered above for MAC_CSC_KEY_PASSWORD."
