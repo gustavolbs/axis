@@ -7,6 +7,7 @@ import { ProviderConnectionRuntime } from './provider-connections.js';
 import {
   assertProjectCredentialIsolation,
   assertProjectProviderAllowed,
+  effectiveProjectConnectionPolicy,
   type ModelSelection,
   type ProjectDefinition
 } from './project-store.js';
@@ -36,12 +37,7 @@ export interface RoutingMetrics {
 }
 
 export interface RoutingMetricsSource {
-  get(
-    projectId: string,
-    stage: InferenceStage,
-    providerId: string,
-    modelId: string
-  ): RoutingMetrics | undefined | Promise<RoutingMetrics | undefined>;
+  get(projectId: string, stage: InferenceStage, providerId: string, modelId: string): RoutingMetrics | undefined | Promise<RoutingMetrics | undefined>;
 }
 
 export type CloudProviderFactory = (apiKey: string) => InferenceProvider;
@@ -99,17 +95,10 @@ const defaultCloudFactories: Record<string, CloudProviderFactory> = {
 };
 
 function defaultSettings(): ProviderRuntimeSettings {
-  return {
-    enabled: true,
-    capabilities: structuredClone(DEFAULT_PROVIDER_CAPABILITIES),
-    models: {}
-  };
+  return { enabled: true, capabilities: structuredClone(DEFAULT_PROVIDER_CAPABILITIES), models: {} };
 }
 
-function mergeCapabilities(
-  provider: InferenceProvider,
-  model: ModelDefinition | undefined
-): Partial<ProviderCapabilities> {
+function mergeCapabilities(provider: InferenceProvider, model: ModelDefinition | undefined): Partial<ProviderCapabilities> {
   return { ...provider.capabilities, ...(model?.capabilities ?? {}) };
 }
 
@@ -122,11 +111,7 @@ function unique(values: Array<string | undefined>): string[] {
 }
 
 const OPENAI_PERSONAL_CHAT_MODELS = new Set([
-  'gpt-5.6-sol',
-  'gpt-5.6-terra',
-  'gpt-5.6-luna',
-  'gpt-5.4-mini',
-  'gpt-5.5-pro'
+  'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.4-mini', 'gpt-5.5-pro'
 ]);
 
 function isPersonalChatModel(providerId: string, model: ModelDefinition): boolean {
@@ -153,10 +138,7 @@ function curatePersonalChatModels(
   models: ModelDefinition[],
   defaultModelId?: string
 ): ModelDefinition[] {
-  const ordered = orderPersonalChatModels(
-    models.filter((model) => isPersonalChatModel(providerId, model)),
-    defaultModelId
-  );
+  const ordered = orderPersonalChatModels(models.filter((model) => isPersonalChatModel(providerId, model)), defaultModelId);
   if (providerKind === 'local' || providerId === 'anthropic') return ordered;
   return ordered.slice(0, 6);
 }
@@ -204,9 +186,7 @@ export class ProjectProviderRuntime {
     const view = this.connections.view(connectionId);
     if (!view) return;
     if (!project.privacy.allowedProviderIds.includes(view.providerFamily)) {
-      throw new Error(
-        `Connection ${view.label} belongs to provider family ${view.providerFamily}, which Project ${project.id} does not allow.`
-      );
+      throw new Error(`Connection ${view.label} belongs to provider family ${view.providerFamily}, which project ${project.id} does not allow.`);
     }
     if (view.providerFamily !== 'ollama' && !project.privacy.cloudAllowed) {
       throw new Error(`Project ${project.id} does not allow cloud connection ${view.label}.`);
@@ -217,35 +197,30 @@ export class ProjectProviderRuntime {
     const profiles = this.credentials.list();
     assertProjectCredentialIsolation(project, profiles);
     const providers: InferenceProvider[] = [];
-    const legacyCredentialIds = new Set(Object.values(project.credentialProfileIds));
+    const legacyCredentialIds = new Set(Object.values(project.credentialProfileIds ?? {}));
+    const policy = effectiveProjectConnectionPolicy(project);
     const connectionIds = unique([
-      ...project.connectionPolicy.inference.allowedConnectionIds,
-      ...project.connectionPolicy.chat.allowedConnectionIds
+      ...policy.inference.allowedConnectionIds,
+      ...policy.chat.allowedConnectionIds
     ]);
 
     for (const connectionId of connectionIds) {
       this.assertConnectionFamilyAllowed(project, connectionId);
       if (connectionId === (this.localProvider?.id ?? 'ollama') || connectionId === 'ollama') {
-        if (!this.localProvider) continue;
-        if (!project.privacy.allowedProviderIds.includes('ollama')) continue;
+        if (!this.localProvider || !project.privacy.allowedProviderIds.includes('ollama')) continue;
         if (this.settings.get(this.localProvider.id)?.enabled === false) continue;
         providers.push(this.governed(this.localProvider));
         continue;
       }
 
       if (this.connections.handles(connectionId)) {
-        const provider = this.connections.providerForProject(
-          connectionId,
-          project.organizationId,
-          legacyCredentialIds
-        );
-        providers.push(provider);
+        providers.push(this.connections.providerForProject(connectionId, project.organizationId, legacyCredentialIds));
         continue;
       }
 
-      // Compatibility for non-built-in/custom providers that predate connection IDs.
+      // Legacy/custom provider families remain valid until they adopt connection instances.
       const factory = this.factories[connectionId];
-      const credentialId = project.credentialProfileIds[connectionId];
+      const credentialId = project.credentialProfileIds?.[connectionId];
       if (!factory || !credentialId || !project.privacy.cloudAllowed) continue;
       if (this.settings.get(connectionId)?.enabled === false) continue;
       const secret = this.credentials.resolve(credentialId);
@@ -267,12 +242,10 @@ export class ProjectProviderRuntime {
       if (settings?.enabled === false) return { reason: `${this.localProvider.id} is disabled in Model routing settings.` };
       return { provider: this.governed(this.localProvider) };
     }
-
     const factory = this.factories[providerId];
     if (!factory) return { reason: `Provider ${providerId} is not registered.` };
     const settings = this.settings.get(providerId);
     if (settings?.enabled === false) return { reason: `${providerId} is disabled in Model routing settings.` };
-
     const personalProfiles = this.credentials.list().filter(
       (profile) => profile.providerId === providerId && profile.organizationId === undefined
     );
@@ -281,25 +254,18 @@ export class ProjectProviderRuntime {
       try {
         const secret = this.credentials.resolve(profile.id);
         if (secret) available.push({ id: profile.id, secret });
-      } catch { /* safe unavailable */ }
+      } catch { /* unavailable without secret disclosure */ }
     }
-    if (available.length === 0) {
-      return { reason: `Add an available personal ${providerId} credential in Settings → API keys.` };
-    }
-    if (available.length > 1) {
-      return { reason: `Multiple personal ${providerId} credentials are available. Choose an explicit API connection.` };
-    }
+    if (available.length === 0) return { reason: `Add an available personal ${providerId} credential in Settings → API keys.` };
+    if (available.length > 1) return { reason: `Multiple personal ${providerId} credentials are available. Choose an explicit API connection.` };
     const provider = factory(available[0]!.secret);
-    if (provider.id !== providerId || provider.kind !== 'cloud') {
-      throw new Error(`Provider factory ${providerId} returned inconsistent provider identity/kind.`);
-    }
+    if (provider.id !== providerId || provider.kind !== 'cloud') throw new Error(`Provider factory ${providerId} returned inconsistent provider identity/kind.`);
     return { provider: this.governed(provider) };
   }
 
   async personalChatCatalog(): Promise<PersonalChatCatalog> {
     const providerIds = unique([this.localProvider?.id ?? 'ollama', ...Object.keys(this.factories)]);
     const providers: PersonalChatCatalogProvider[] = [];
-
     for (const providerId of providerIds) {
       const resolution = this.personalChatProvider(providerId);
       const provider = resolution.provider;
@@ -332,7 +298,6 @@ export class ProjectProviderRuntime {
         }))
       });
     }
-
     for (const connection of await this.connections.catalogProviders()) {
       providers.push({
         id: connection.id,
@@ -352,38 +317,29 @@ export class ProjectProviderRuntime {
         }))
       });
     }
-
     return { scope: 'personal', projectId: '', defaultModel: { mode: 'auto' }, providers };
   }
 
-  async personalModelDefinition(
-    providerId: string,
-    modelId: string
-  ): Promise<{ provider: InferenceProvider; model: ModelDefinition }> {
+  async personalModelDefinition(providerId: string, modelId: string): Promise<{ provider: InferenceProvider; model: ModelDefinition }> {
     if (this.connections.handles(providerId)) return await this.connections.resolve(providerId, modelId);
     const resolution = this.personalChatProvider(providerId);
     if (!resolution.provider) throw new Error(resolution.reason ?? `Provider ${providerId} is unavailable for personal Chat.`);
     const settings = this.settings.get(providerId) ?? defaultSettings();
-    const models = curatePersonalChatModels(
-      providerId,
-      resolution.provider.kind,
-      await resolution.provider.listModels(),
-      settings.defaultModelId
-    );
+    const models = curatePersonalChatModels(providerId, resolution.provider.kind, await resolution.provider.listModels(), settings.defaultModelId);
     const model = models.find((candidate) => candidate.id === modelId);
     if (!model) throw new Error(`Model ${providerId}/${modelId} is not available for personal Chat.`);
     return { provider: resolution.provider, model };
   }
 
   async projectChatSelection(project: ProjectDefinition): Promise<ModelSelection> {
-    const connectionId = project.connectionPolicy.chat.defaultConnectionId;
+    const policy = effectiveProjectConnectionPolicy(project);
+    const connectionId = policy.chat.defaultConnectionId;
     if (!connectionId) throw new Error(`Project ${project.id} has no default Chat connection.`);
-    if (!project.connectionPolicy.chat.allowedConnectionIds.includes(connectionId)) {
+    if (!policy.chat.allowedConnectionIds.includes(connectionId)) {
       throw new Error(`Project ${project.id} default Chat connection is outside its Chat allowlist.`);
     }
     this.assertConnectionFamilyAllowed(project, connectionId);
-
-    const legacyCredentialIds = new Set(Object.values(project.credentialProfileIds));
+    const legacyCredentialIds = new Set(Object.values(project.credentialProfileIds ?? {}));
     let provider: InferenceProvider;
     if (connectionId === (this.localProvider?.id ?? 'ollama') || connectionId === 'ollama') {
       if (!this.localProvider) throw new Error('Local inference is not configured.');
@@ -395,7 +351,6 @@ export class ProjectProviderRuntime {
       if (!registry.has(connectionId)) throw new Error(`Project Chat connection is unavailable: ${connectionId}`);
       provider = registry.get(connectionId);
     }
-
     const settings = this.settings.get(this.settingsKey(connectionId)) ?? defaultSettings();
     const models = await provider.listModels();
     const inheritedModel = project.defaultModel.mode === 'explicit' && project.defaultModel.providerId === connectionId
@@ -403,23 +358,14 @@ export class ProjectProviderRuntime {
       : project.defaultModel.mode === 'local-first' && connectionId === 'ollama'
         ? project.defaultModel.modelId
         : undefined;
-    const modelId = unique([
-      project.connectionPolicy.chat.defaultModelId,
-      inheritedModel,
-      settings.defaultModelId,
-      models[0]?.id
-    ])[0];
+    const modelId = unique([policy.chat.defaultModelId, inheritedModel, settings.defaultModelId, models[0]?.id])[0];
     if (!modelId || !models.some((model) => model.id === modelId)) {
       throw new Error(`Project ${project.id} default Chat connection ${connectionId} has no available model.`);
     }
     return { mode: 'explicit', providerId: connectionId, modelId };
   }
 
-  async modelDefinition(
-    project: ProjectDefinition,
-    providerId: string,
-    modelId: string
-  ): Promise<{ providerKind: ProviderKind; model: ModelDefinition } | undefined> {
+  async modelDefinition(project: ProjectDefinition, providerId: string, modelId: string): Promise<{ providerKind: ProviderKind; model: ModelDefinition } | undefined> {
     const registry = this.buildRegistry(project);
     const provider = registry.list().find((candidate) => candidate.id === providerId);
     if (!provider) return undefined;
@@ -433,12 +379,11 @@ export class ProjectProviderRuntime {
     options: RoutingCatalogOptions
   ): Promise<{ registry: ProviderRegistry; candidates: RoutingCandidate[] }> {
     const registry = this.buildRegistry(project);
+    const policy = effectiveProjectConnectionPolicy(project);
     const selection = options.modelSelection ?? project.defaultModel;
     const candidates: RoutingCandidate[] = [];
     const allowedConnections = new Set(
-      options.connectionScope === 'chat'
-        ? project.connectionPolicy.chat.allowedConnectionIds
-        : project.connectionPolicy.inference.allowedConnectionIds
+      options.connectionScope === 'chat' ? policy.chat.allowedConnectionIds : policy.inference.allowedConnectionIds
     );
 
     for (const provider of registry.list()) {
@@ -448,11 +393,7 @@ export class ProjectProviderRuntime {
       const connection = this.connections.view(provider.id);
       let discovered: ModelDefinition[] = [];
       let discoveryOk = true;
-      try {
-        discovered = await provider.listModels();
-      } catch {
-        discoveryOk = false;
-      }
+      try { discovered = await provider.listModels(); } catch { discoveryOk = false; }
       const byId = new Map(discovered.map((model) => [model.id, model]));
       const configuredModels = Object.entries(providerSettings.models)
         .filter(([, profile]) => profileEnabled(profile))
@@ -493,11 +434,10 @@ export class ProjectProviderRuntime {
           successRate: metrics?.successRate,
           historicalSamples: metrics?.historicalSamples,
           estimatedCostUsd: provider.kind === 'local' ? 0 : metrics?.estimatedCostUsd,
-          preferredConnection: project.connectionPolicy.inference.preferredConnectionId === provider.id
+          preferredConnection: policy.inference.preferredConnectionId === provider.id
         });
       }
     }
-
     return { registry, candidates };
   }
 }
