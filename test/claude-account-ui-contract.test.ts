@@ -65,16 +65,29 @@ test('desktop account IPC delegates auth and MCP discovery to official runtime a
   assert.doesNotMatch(bridge, /spawn\(|exec\(|setup-token|cookie|credentials\.json/i);
 });
 
-test('Work Hub is mounted globally and does not expose cross-account prompts', () => {
+test('Work Hub is shell-owned, capability-driven and uses the shared stylesheet', () => {
+  const shell = source('app/src/AppRoot.tsx');
   const main = source('app/src/main.tsx');
   const hub = source('app/src/GlobalWorkHubLauncher.tsx');
   const runtime = source('src/work-hub.ts');
-  assert.match(main, /GlobalWorkHubLauncher/);
-  assert.match(hub, /Calendar/);
-  assert.match(hub, /My work/);
-  assert.match(hub, /Inbox/);
-  assert.match(hub, /Exact read-only MCP tools/);
-  assert.match(runtime, /read-only Local Coder Work Hub collector/);
-  assert.match(runtime, /Never write, update, delete, comment, send, acknowledge, transition/);
+  const styles = source('app/src/lc-fixes.css');
+  assert.match(shell, /GlobalWorkHubLauncher/);
+  assert.doesNotMatch(main, /GlobalWorkHubLauncher/);
+  assert.match(hub, /Choose what to sync/);
+  assert.match(hub, /The provider discovers its connected services automatically/);
+  assert.doesNotMatch(hub, /Exact read-only MCP tools|Remote system|Normalized-data retention|<style>/);
+  assert.match(runtime, /does not require a manual tool allowlist/);
+  assert.match(runtime, /Interactive user requests outside Work Hub may use write actions normally/);
+  assert.match(styles, /\.work-hub-shell/);
+  assert.match(styles, /\.work-hub-source-form/);
   assert.doesNotMatch(source('desktop/preload.cjs'), /workHubPrompt|runWorkHubPrompt/);
+});
+
+test('subscription account Chat can use account-scoped MCP tools including requested writes', () => {
+  const connections = source('src/provider-connections.ts');
+  assert.match(connections, /toolUse: true/);
+  assert.match(connections, /allowedTools: \['mcp__\*'\]/);
+  assert.match(connections, /Read or mutate remote data when the user explicitly asks/);
+  assert.match(connections, /creating or updating tickets, calendar events, messages/);
+  assert.doesNotMatch(connections, /does not expose external capabilities/);
 });
