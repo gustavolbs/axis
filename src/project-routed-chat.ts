@@ -9,7 +9,12 @@ import type {
 } from './ollama.js';
 import type { OllamaStreamProgress } from './ollama-stream.js';
 import type { BudgetAdmission, ProjectBudgetSession } from './project-budget.js';
-import type { ModelSelection, ProjectDefinition, RoutingPolicy } from './project-store.js';
+import {
+  effectiveProjectConnectionPolicy,
+  type ModelSelection,
+  type ProjectDefinition,
+  type RoutingPolicy
+} from './project-store.js';
 import {
   ProjectProviderRuntime,
   type RoutingCatalogOptions
@@ -89,9 +94,10 @@ function safeStreamProgress(
 }
 
 function isStrictLegacyLocal(project: ProjectDefinition): boolean {
+  const policy = effectiveProjectConnectionPolicy(project);
   const exact = new Set([
-    ...project.connectionPolicy.chat.allowedConnectionIds,
-    ...project.connectionPolicy.inference.allowedConnectionIds
+    ...policy.chat.allowedConnectionIds,
+    ...policy.inference.allowedConnectionIds
   ]);
   return (
     project.privacy.cloudAllowed === false &&
