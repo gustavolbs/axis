@@ -1,7 +1,8 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { ArrowUp, ChevronDown, Folder, MoreHorizontal, Pencil, Pin, Plus, Search } from 'lucide-react';
 
-import type { AdminProject } from './app-types.js';
+import type { AdminProject, ModelSelection } from './app-types.js';
+import { ProjectConnectionsPanel } from './ProjectConnectionsPanel.js';
 
 export interface ProjectConversation {
   id: string;
@@ -34,6 +35,18 @@ function folderName(workspace: string): string {
   return workspace.split(/[\\/]/).filter(Boolean).at(-1) ?? workspace;
 }
 
+function inheritedChatSelection(project: AdminProject): ModelSelection | undefined {
+  const policy = project.connectionPolicy;
+  const connectionId = policy?.chat.defaultConnectionId;
+  const modelId = policy?.chat.defaultModelId;
+  if (connectionId && modelId) return { mode: 'explicit', providerId: connectionId, modelId };
+  if (project.defaultModel.mode === 'explicit') return project.defaultModel;
+  if (project.defaultModel.mode === 'local-first') {
+    return { mode: 'explicit', providerId: 'ollama', modelId: project.defaultModel.modelId };
+  }
+  return undefined;
+}
+
 export function ProjectDetail(props: {
   project: AdminProject;
   conversations: ProjectConversation[];
@@ -52,6 +65,13 @@ export function ProjectDetail(props: {
     .filter((job) => job.input.projectId === props.project.id)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [props.conversations, props.project.id]);
 
+  const chatSelection = inheritedChatSelection(props.project);
+  const modelLabel = mode === 'chat'
+    ? props.project.connectionPolicy?.chat.defaultConnectionId ?? (chatSelection?.mode === 'explicit' ? chatSelection.providerId : 'Auto')
+    : props.project.defaultModel.mode === 'explicit'
+      ? props.project.defaultModel.providerId
+      : props.project.defaultModel.mode === 'local-first' ? 'Local-first' : 'Auto';
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!goal.trim() || busy) return;
@@ -59,12 +79,23 @@ export function ProjectDetail(props: {
       setError('Choose a folder for this project before starting Cowork.');
       return;
     }
+    if (mode === 'chat' && !chatSelection) {
+      setError('Configure a default Chat connection and model for this Project first.');
+      return;
+    }
     setBusy(true);
     setError(undefined);
     try {
       const { job } = await api<{ job: ProjectConversation }>('/api/jobs', {
         method: 'POST',
-        body: { projectId: props.project.id, goal: goal.trim(), interactionMode: mode, maxRepairRounds: 1, reasoningEffort: 'auto' }
+        body: {
+          projectId: props.project.id,
+          goal: goal.trim(),
+          interactionMode: mode,
+          maxRepairRounds: 1,
+          reasoningEffort: 'auto',
+          modelSelection: mode === 'chat' ? chatSelection : props.project.defaultModel
+        }
       });
       props.onCreated(job);
     } catch (next) {
@@ -105,7 +136,7 @@ export function ProjectDetail(props: {
           <div className="project-detail-composer-bar">
             <button className="project-detail-plus" type="button" aria-label="Add context"><Plus size={18} /></button>
             <div className="project-detail-mode"><button type="button" className={mode === 'chat' ? 'active' : ''} onClick={() => setMode('chat')}>Chat</button><button type="button" className={mode === 'cowork' ? 'active' : ''} onClick={() => setMode('cowork')}>Cowork</button></div>
-            <span className="project-detail-model">Auto <ChevronDown size={13} /></span>
+            <span className="project-detail-model" title={modelLabel}>{modelLabel} <ChevronDown size={13} /></span>
             <button className="project-detail-send" disabled={!goal.trim() || busy} aria-label="Send"><ArrowUp size={17} /></button>
           </div>
         </form>
@@ -124,6 +155,7 @@ export function ProjectDetail(props: {
           <header><h2>Instructions</h2><button aria-label="Edit instructions" onClick={() => setInstructionsOpen(true)}><Pencil size={15} /></button></header>
           {instructionsOpen ? <div className="project-detail-instruction-editor"><textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} autoFocus /><div><button onClick={() => setInstructionsOpen(false)}>Cancel</button><button onClick={() => void saveInstructions()} disabled={busy}>Save</button></div></div> : <p>{props.project.instructions || 'Add instructions that should apply to every conversation in this project.'}</p>}
         </section>
+        <ProjectConnectionsPanel project={props.project} onProjectChanged={props.onProjectChanged} />
         <section className="project-detail-context">
           <header><h2>Context</h2><span><button aria-label="Search context"><Search size={16} /></button><button aria-label="Add context"><Plus size={17} /></button></span></header>
           <div className="project-detail-context-meter"><i /><span>{props.project.workspace ? 'Folder connected' : 'No project context added'}</span></div>
