@@ -25,7 +25,7 @@ test('desktop launcher strips Node-mode variables before spawning Electron GUI',
 
 test('desktop uses the direct Electron main entry without an intermediate bootstrap', () => {
   assert.equal(packageJson.main, 'desktop/main.mjs');
-  assert.equal(packageJson.productName, 'Local Coder');
+  assert.equal(packageJson.productName, 'Axis');
   assert.equal(fs.existsSync('desktop/bootstrap.mjs'), false);
 });
 
@@ -122,7 +122,8 @@ test('macOS package includes runtime app preload and production assets only', ()
   assert.equal(packageJson.devDependencies?.electron, '44.1.0');
   assert.equal(packageJson.devDependencies?.['electron-builder'], '26.15.7');
   assert.match(packageJson.scripts?.['desktop:pack:mac'] ?? '', /electron-builder --mac dmg zip/);
-  assert.match(builder, /appId: dev\.localcoder\.desktop/);
+  assert.match(builder, /appId: dev\.axis\.desktop/);
+  assert.match(builder, /icon: build\/icon\.png/);
   assert.match(builder, /desktop\/\*\*\/\*/);
   assert.match(builder, /dist\/\*\*\/\*/);
   assert.match(builder, /app-dist\/\*\*\/\*/);
