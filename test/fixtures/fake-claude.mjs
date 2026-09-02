@@ -21,7 +21,7 @@ if (args[0] === 'auth' && args[1] === 'status') {
 }
 
 if (args[0] === 'auth' && args[1] === 'login') {
-  process.exit(args.includes('--sso') ? 0 : 0);
+  process.exit(0);
 }
 
 if (args[0] === 'mcp' && args[1] === 'list') {
@@ -38,8 +38,17 @@ if (promptIndex >= 0) {
     process.stdout.write('sk-ant-oat01-example-leaked-token\n');
     process.stderr.write('Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n');
     process.exit(0);
+  } else if (prompt.includes('Work Hub collector')) {
+    if (prompt.includes('calendar events')) {
+      process.stdout.write(JSON.stringify({ events: [{ externalId: 'evt-1', title: 'Daily', start: '2026-09-02T12:00:00Z', end: '2026-09-02T12:30:00Z', allDay: false, calendar: profileName }] }));
+    } else if (prompt.includes('work items/tickets')) {
+      process.stdout.write(JSON.stringify({ tickets: [{ externalId: 'LIV-1', key: 'LIV-1', title: 'Implement feature', status: 'Ready for Code Review', priority: 'P3' }] }));
+    } else {
+      process.stdout.write(JSON.stringify({ messages: [{ externalId: 'msg-1', title: 'Review requested', timestamp: '2026-09-02T10:00:00Z', unread: true, requiresAttention: true }] }));
+    }
+    process.exit(0);
   } else {
-    process.stdout.write(`profile=${configDir}\nprompt=${prompt}\n`);
+    process.stdout.write(`profile=${configDir}\nprompt=${prompt}\nargs=${JSON.stringify(args)}\n`);
     process.exit(0);
   }
 } else {
