@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
+const desktopBootstrap = fs.readFileSync('desktop/bootstrap.mjs', 'utf8');
 const desktopMain = fs.readFileSync('desktop/main.mjs', 'utf8');
 const desktopPreload = fs.readFileSync('desktop/preload.cjs', 'utf8');
 const desktopLauncher = fs.readFileSync('scripts/run-desktop.mjs', 'utf8');
@@ -12,6 +13,7 @@ const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8')) as {
   main?: string;
   productName?: string;
   scripts?: Record<string, string>;
+  dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
 };
 
@@ -23,10 +25,15 @@ test('desktop launcher strips Node-mode variables before spawning Electron GUI',
   assert.match(desktopLauncher, /stdio:\s*'inherit'/);
 });
 
-test('desktop uses the direct Electron main entry without an intermediate bootstrap', () => {
-  assert.equal(packageJson.main, 'desktop/main.mjs');
+test('desktop uses a narrow macOS updater bootstrap before the existing main process', () => {
+  assert.equal(packageJson.main, 'desktop/bootstrap.mjs');
   assert.equal(packageJson.productName, 'Axis');
-  assert.equal(fs.existsSync('desktop/bootstrap.mjs'), false);
+  assert.equal(packageJson.dependencies?.['update-electron-app'], '^3.3.0');
+  assert.match(desktopBootstrap, /from 'update-electron-app'/);
+  assert.match(desktopBootstrap, /process\.platform === 'darwin'/);
+  assert.match(desktopBootstrap, /repo:\s*'gustavolbs\/local-coder-mcp'/);
+  assert.match(desktopBootstrap, /updateInterval:\s*'30 minutes'/);
+  assert.match(desktopBootstrap, /await import\('\.\/main\.mjs'\)/);
 });
 
 test('desktop main finishes ESM evaluation before waiting for Electron readiness', () => {
@@ -117,8 +124,8 @@ test('standalone document has a restrictive CSP', () => {
   assert.match(appHtml, /object-src 'none'/);
 });
 
-test('macOS package includes runtime app preload and production assets only', () => {
-  assert.equal(packageJson.main, 'desktop/main.mjs');
+test('macOS package includes updater bootstrap runtime app preload and production assets only', () => {
+  assert.equal(packageJson.main, 'desktop/bootstrap.mjs');
   assert.equal(packageJson.devDependencies?.electron, '44.1.0');
   assert.equal(packageJson.devDependencies?.['electron-builder'], '26.15.7');
   assert.match(packageJson.scripts?.['desktop:pack:mac'] ?? '', /electron-builder --mac dmg zip/);
