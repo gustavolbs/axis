@@ -4,6 +4,19 @@ export type ModelSelection =
   | { mode: 'explicit'; providerId: string; modelId: string }
   | { mode: 'local-first'; modelId: string };
 
+export interface ProjectConnectionPolicy {
+  chat: {
+    defaultConnectionId?: string;
+    defaultModelId?: string;
+    allowedConnectionIds: string[];
+  };
+  inference: {
+    allowedConnectionIds: string[];
+    preferredConnectionId?: string;
+  };
+  workSourceIds: string[];
+}
+
 export interface AdminProject {
   id: string;
   name: string;
@@ -21,6 +34,7 @@ export interface AdminProject {
   defaultModel: ModelSelection;
   privacy: { cloudAllowed: boolean; allowedProviderIds: string[] };
   credentialProfileIds: Record<string, string>;
+  connectionPolicy?: ProjectConnectionPolicy;
   budgets: {
     monthlyUsd?: number;
     dailyUsd?: number;
@@ -31,4 +45,28 @@ export interface AdminProject {
   concurrency: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProviderConnectionView {
+  id: string;
+  providerFamily: 'ollama' | 'anthropic' | 'openai';
+  label: string;
+  auth: 'local' | 'api-key' | 'claude-account' | 'chatgpt-account';
+  billing: 'local' | 'api' | 'subscription';
+  organizationId: string;
+  organizationLabel?: string;
+  credentialId?: string;
+  accountProfileId?: string;
+  available: boolean;
+  reason?: string;
+  supportsMcpSources: boolean;
+}
+
+export interface WorkHubSourceSummary {
+  id: string;
+  label: string;
+  connectionId: string;
+  kind: 'calendar' | 'tickets' | 'messages';
+  system: string;
+  enabled: boolean;
 }
