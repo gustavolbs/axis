@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { parseModelSelection } from '../src/app-runtime.js';
+import { apiCredentialConnectionId } from '../src/connection-identity.js';
 import { CredentialManager, CredentialProfileStore } from '../src/credential-store.js';
 import type { ExecutionBackend } from '../src/execution-runtime.js';
 import type { LocalEngineerResult } from '../src/local-engineer.js';
@@ -200,25 +201,27 @@ test('local-first candidate catalog is Ollama-only even when stronger cloud mode
   }
 });
 
-test('direct Claude and GPT selections exclude unrelated providers from fallback candidates', async () => {
+test('direct Claude and GPT selections use exact identities and exclude unrelated providers', async () => {
   const { root, runtime } = await providerRuntimeFixture();
   try {
+    const anthropicConnection = apiCredentialConnectionId('anthropic', 'anthropic-test');
+    const openaiConnection = apiCredentialConnectionId('openai', 'openai-test');
     const claude = await runtime.routingCandidates(project(), {
       stage: 'planning',
-      modelSelection: { mode: 'explicit', providerId: 'anthropic', modelId: 'claude-test' }
+      modelSelection: { mode: 'explicit', providerId: anthropicConnection, modelId: 'claude-test' }
     });
     assert.deepEqual(
       claude.candidates.map((candidate) => `${candidate.providerId}/${candidate.modelId}`),
-      ['anthropic/claude-test']
+      [`${anthropicConnection}/claude-test`]
     );
 
     const gpt = await runtime.routingCandidates(project(), {
       stage: 'review',
-      modelSelection: { mode: 'explicit', providerId: 'openai', modelId: 'gpt-test' }
+      modelSelection: { mode: 'explicit', providerId: openaiConnection, modelId: 'gpt-test' }
     });
     assert.deepEqual(
       gpt.candidates.map((candidate) => `${candidate.providerId}/${candidate.modelId}`),
-      ['openai/gpt-test']
+      [`${openaiConnection}/gpt-test`]
     );
   } finally {
     delete process.env.LOCAL_CODER_TEST_ANTHROPIC_KEY;
