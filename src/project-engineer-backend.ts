@@ -72,19 +72,12 @@ export interface ProjectChatModelLimits {
 
 export type ProjectEngineerInput = LocalEngineerInput & {
   projectId?: string;
-  /** Chat is a single inference; only Cowork runs the engineering pipeline. */
   interactionMode?: 'chat' | 'cowork';
-  /** Earlier Chat turns. The current user message remains goal. */
   chatHistory?: ProjectChatHistoryTurn[];
-  /** Runtime-owned limits for the exact Chat provider/model. Never supplied by the UI. */
   chatModelLimits?: ProjectChatModelLimits;
-  /** Internal host correlation id so resumed decision rounds share one per-job budget. */
   budgetJobId?: string;
-  /** Optional standalone override. Undefined preserves the Project default. */
   routingPolicy?: RoutingPolicy;
-  /** Optional standalone override. Auto remains provider/router driven. */
   modelSelection?: ModelSelection;
-  /** Optional standalone override. Auto preserves the Agent Runtime stage policy. */
   reasoningEffort?: 'auto' | ReasoningEffort;
 };
 
@@ -256,14 +249,13 @@ function escalationPrompt(input: ProjectEngineerInput, escalation: LocalEngineer
 }
 
 function isStrictLegacyLocal(project: ProjectDefinition): boolean {
-  return (
-    project.privacy.cloudAllowed === false &&
-    project.privacy.allowedProviderIds.length === 1 &&
-    project.privacy.allowedProviderIds[0] === 'ollama'
-  );
+  const connections = new Set([
+    ...project.connectionPolicy.chat.allowedConnectionIds,
+    ...project.connectionPolicy.inference.allowedConnectionIds
+  ]);
+  return project.privacy.cloudAllowed === false && connections.size === 1 && connections.has('ollama');
 }
 
-/** Adapts one already-selected local provider back to the legacy agent chat contract. */
 class InferenceProviderChatClient implements LegacyAgentChatClient {
   constructor(private readonly provider: InferenceProvider) {}
 
@@ -331,12 +323,6 @@ function trace(event: ProjectRouteEvent): ProjectRoutingTraceEntry {
   };
 }
 
-/**
- * Project-aware engineer wrapper. Projects are explicit conversation scopes, not inferred
- * from folders. A Project may provide a default folder, but only Cowork requires a folder;
- * Chat never resolves one. Project instructions, provider policies and credentials apply
- * only when projectId is explicitly supplied.
- */
 export class ProjectAwareEngineerBackend {
   private readonly projects: ProjectStore;
   private readonly agentExecutor: AgentExecutor;
@@ -380,11 +366,7 @@ export class ProjectAwareEngineerBackend {
     const scopedInput = withProjectInstructions(project, input);
 
     const budget = this.createBudgetSession(project, input.budgetJobId);
-    const localProvider = createLocalInferenceProvider(
-      this.config,
-      this.ollama,
-      this.remoteClient
-    );
+    const localProvider = createLocalInferenceProvider(this.config, this.ollama, this.remoteClient);
     const providerRuntime = this.createProviderRuntime(project, localProvider);
     const localChat: LegacyAgentChatClient =
       this.config.executionMode === 'local'
@@ -399,6 +381,7 @@ export class ProjectAwareEngineerBackend {
         policy: input.routingPolicy,
         modelSelection: input.modelSelection,
         reasoningEffort: input.reasoningEffort === 'auto' ? undefined : input.reasoningEffort,
+        connectionScope: input.interactionMode === 'chat' ? 'chat' : 'cowork',
         budget,
         onRoute: (event) => routingTrace.push(trace(event)),
         onAttemptComplete: (observation) => {
@@ -423,11 +406,7 @@ export class ProjectAwareEngineerBackend {
           ? { providerId: 'ollama', modelId: selection.modelId }
           : undefined;
       if (target) {
-        const definition = await providerRuntime.modelDefinition(
-          project,
-          target.providerId,
-          target.modelId
-        );
+        const definition = await providerRuntime.modelDefinition(project, target.providerId, target.modelId);
         if (definition) {
           chatModelLimits = {
             providerId: target.providerId,
@@ -495,7 +474,8 @@ export class ProjectAwareEngineerBackend {
     const providerRuntime = this.createProviderRuntime(project, localProvider);
     const { candidates } = await providerRuntime.routingCandidates(project, {
       stage,
-      modelSelection: { mode: 'auto' }
+      modelSelection: { mode: 'auto' },
+      connectionScope: 'cowork'
     });
     const cloudCandidates = candidates.filter(
       (candidate) => candidate.providerKind === 'cloud' && candidate.available
@@ -532,18 +512,13 @@ export class ProjectAwareEngineerBackend {
       supportsReasoning: candidate.capabilities?.reasoning === true
     }));
     const recommendedOption = options.find(
-      (option) =>
-        option.providerId === decision.selected.providerId &&
-        option.modelId === decision.selected.modelId
+      (option) => option.providerId === decision.selected.providerId && option.modelId === decision.selected.modelId
     );
 
     return {
       stage,
       recommended: recommendedOption
-        ? {
-            ...recommendedOption,
-            reasoningEffort: recommendedOption.supportsReasoning ? 'high' : 'none'
-          }
+        ? { ...recommendedOption, reasoningEffort: recommendedOption.supportsReasoning ? 'high' : 'none' }
         : undefined,
       options,
       reasons: decision.reasons
@@ -560,9 +535,7 @@ export class ProjectAwareEngineerBackend {
     if (!project) throw new Error('Cloud escalation requires a configured Project.');
     const plan = await this.prepareEscalation(input, escalation);
     const option = plan.options.find(
-      (candidate) =>
-        candidate.providerId === choice.providerId &&
-        candidate.modelId === choice.modelId
+      (candidate) => candidate.providerId === choice.providerId && candidate.modelId === choice.modelId
     );
     if (!option) {
       throw new Error(`Escalation target ${choice.providerId}/${choice.modelId} is not available for this Project.`);
@@ -577,7 +550,8 @@ export class ProjectAwareEngineerBackend {
     const providerRuntime = this.createProviderRuntime(project, localProvider);
     const { registry, candidates } = await providerRuntime.routingCandidates(project, {
       stage: plan.stage,
-      modelSelection: { mode: 'auto' }
+      modelSelection: { mode: 'auto' },
+      connectionScope: 'cowork'
     });
     const candidate = candidates.find(
       (item) =>
@@ -586,9 +560,7 @@ export class ProjectAwareEngineerBackend {
         item.providerId === option.providerId &&
         item.modelId === option.modelId
     );
-    if (!candidate) {
-      throw new Error(`Escalation target ${option.providerId}/${option.modelId} became unavailable.`);
-    }
+    if (!candidate) throw new Error(`Escalation target ${option.providerId}/${option.modelId} became unavailable.`);
     const provider = registry.get(option.providerId);
     const scopedInput = withProjectInstructions(project, input);
     const inference: Omit<InferenceRequest, 'model'> = {
