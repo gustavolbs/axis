@@ -37,13 +37,13 @@ if (execIndex >= 0) {
     process.stdout.write('sk-proj-example-secret-token-1234567890\n');
     process.stderr.write('Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n');
     process.exit(0);
-  } else if (prompt.includes('Work Hub collector')) {
+  } else if (prompt.includes('Work Hub collector') || prompt.includes('Work Hub synchronization task')) {
     if (prompt.includes('calendar events')) {
-      process.stdout.write(JSON.stringify({ events: [{ externalId: 'evt-1', title: 'Planning', start: '2026-09-02T12:00:00Z', end: '2026-09-02T13:00:00Z', allDay: false, calendar: profileName }] }));
+      process.stdout.write(JSON.stringify({ events: [{ externalId: 'evt-1', system: 'Outlook', title: 'Planning', start: '2026-09-02T12:00:00Z', end: '2026-09-02T13:00:00Z', allDay: false, calendar: profileName }] }));
     } else if (prompt.includes('work items/tickets')) {
-      process.stdout.write(JSON.stringify({ tickets: [{ externalId: 'ABC-1', key: 'ABC-1', title: 'Ship feature', status: 'In Progress', priority: 'P2' }] }));
+      process.stdout.write(JSON.stringify({ tickets: [{ externalId: 'ABC-1', system: 'Jira', key: 'ABC-1', title: 'Ship feature', status: 'In Progress', priority: 'P2' }] }));
     } else {
-      process.stdout.write(JSON.stringify({ messages: [{ externalId: 'msg-1', title: 'Please review', timestamp: '2026-09-02T10:00:00Z', unread: true, requiresAttention: true }] }));
+      process.stdout.write(JSON.stringify({ messages: [{ externalId: 'msg-1', system: 'Teams', title: 'Please review', timestamp: '2026-09-02T10:00:00Z', unread: true, requiresAttention: true }] }));
     }
     process.exit(0);
   } else {
