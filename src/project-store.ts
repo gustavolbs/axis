@@ -21,26 +21,20 @@ export type ModelSelection =
   | { mode: 'local-first'; modelId: string };
 
 export interface ProjectPrivacyPolicy {
-  /** Cloud transmission is forbidden unless this is explicitly true. */
   cloudAllowed: boolean;
-  /** Provider-family allowlist retained as a coarse privacy boundary and migration surface. */
   allowedProviderIds: string[];
 }
 
 export interface ProjectConnectionPolicy {
   chat: {
-    /** New Chats inherit this exact identity. Existing Chats persist their own ModelSelection. */
     defaultConnectionId?: string;
-    /** Optional model override for the default Chat identity. */
     defaultModelId?: string;
     allowedConnectionIds: string[];
   };
   inference: {
-    /** Exact identities Cowork/router may consider. No cross-identity fallback is permitted. */
     allowedConnectionIds: string[];
     preferredConnectionId?: string;
   };
-  /** Work Hub sources are bound independently from inference identities. */
   workSourceIds: string[];
 }
 
@@ -58,17 +52,15 @@ export interface ProjectDefinition {
   description?: string;
   workspace: string;
   instructions?: string;
-  /** Stable organization isolation boundary. `personal` and `local` are explicit virtual domains. */
   organizationId: string;
   organizationName?: string;
   defaultRoutingPolicy: RoutingPolicy;
-  /** Cowork default model policy. Explicit providers are exact connection ids after migration. */
   defaultModel: ModelSelection;
   privacy: ProjectPrivacyPolicy;
-  /** Legacy provider id -> credential profile id. Retained for migration/backward compatibility only. */
+  /** Legacy provider-family -> credential binding. New code should use connectionPolicy. */
   credentialProfileIds: Record<string, string>;
-  /** Primary identity policy for Chat, Cowork and Work Hub association. */
-  connectionPolicy: ProjectConnectionPolicy;
+  /** Always persisted by ProjectStore; optional only so legacy in-memory callers migrate safely. */
+  connectionPolicy?: ProjectConnectionPolicy;
   budgets: ProjectBudgetPolicy;
   repoIntelligenceScope: 'project';
   concurrency: number;
@@ -154,10 +146,7 @@ function normalizeBudgets(input: Partial<ProjectBudgetPolicy> = {}): ProjectBudg
   if (
     warningFractions.length === 0 ||
     warningFractions.some((value) => !Number.isFinite(value) || value <= 0 || value >= 1)
-  ) {
-    throw new Error('Budget warning fractions must be between 0 and 1.');
-  }
-  const uniqueWarnings = [...new Set(warningFractions)].sort((a, b) => a - b);
+  ) throw new Error('Budget warning fractions must be between 0 and 1.');
   const hardStopFraction = input.hardStopFraction ?? 1;
   if (!Number.isFinite(hardStopFraction) || hardStopFraction <= 0) {
     throw new Error('Budget hard-stop fraction must be positive.');
@@ -166,7 +155,7 @@ function normalizeBudgets(input: Partial<ProjectBudgetPolicy> = {}): ProjectBudg
     monthlyUsd: positiveMoney(input.monthlyUsd, 'Monthly budget'),
     dailyUsd: positiveMoney(input.dailyUsd, 'Daily budget'),
     perJobUsd: positiveMoney(input.perJobUsd, 'Per-job budget'),
-    warningFractions: uniqueWarnings,
+    warningFractions: [...new Set(warningFractions)].sort((a, b) => a - b),
     hardStopFraction
   };
 }
@@ -202,29 +191,30 @@ function connectionIds(values: string[] | undefined, label: string): string[] {
   return [...new Set((values ?? []).map((value) => safeId(value, label)))];
 }
 
+function legacyConnectionId(providerId: string, credentialId?: string): string {
+  if (credentialId && (providerId === 'openai' || providerId === 'anthropic')) {
+    return apiCredentialConnectionId(providerId, credentialId);
+  }
+  return providerId;
+}
+
 function migrateExplicitModel(
   model: ModelSelection,
   credentials: Record<string, string>
 ): ModelSelection {
   if (model.mode !== 'explicit') return model;
-  const credentialId = credentials[model.providerId];
-  if (!credentialId) return model;
-  return {
-    ...model,
-    providerId: apiCredentialConnectionId(model.providerId, credentialId)
-  };
+  const migrated = legacyConnectionId(model.providerId, credentials[model.providerId]);
+  return migrated === model.providerId ? model : { ...model, providerId: migrated };
 }
 
 export function deriveLegacyConnectionPolicy(
   privacy: ProjectPrivacyPolicy,
-  credentialProfileIds: Record<string, string>,
+  credentialProfileIds: Record<string, string> = {},
   defaultModel: ModelSelection = { mode: 'auto' }
 ): ProjectConnectionPolicy {
-  const allowed = privacy.allowedProviderIds.flatMap((providerId) => {
-    if (providerId === 'ollama') return ['ollama'];
-    const credentialId = credentialProfileIds[providerId];
-    return credentialId ? [apiCredentialConnectionId(providerId, credentialId)] : [];
-  });
+  const allowed = privacy.allowedProviderIds.map((providerId) =>
+    legacyConnectionId(providerId, credentialProfileIds[providerId])
+  );
   const uniqueAllowed = [...new Set(allowed)];
   let defaultConnectionId: string | undefined;
   let defaultModelId: string | undefined;
@@ -232,10 +222,7 @@ export function deriveLegacyConnectionPolicy(
     defaultConnectionId = uniqueAllowed.includes('ollama') ? 'ollama' : undefined;
     defaultModelId = defaultModel.modelId;
   } else if (defaultModel.mode === 'explicit') {
-    const credentialId = credentialProfileIds[defaultModel.providerId];
-    const migrated = credentialId
-      ? apiCredentialConnectionId(defaultModel.providerId, credentialId)
-      : defaultModel.providerId;
+    const migrated = legacyConnectionId(defaultModel.providerId, credentialProfileIds[defaultModel.providerId]);
     if (uniqueAllowed.includes(migrated)) {
       defaultConnectionId = migrated;
       defaultModelId = defaultModel.modelId;
@@ -243,17 +230,20 @@ export function deriveLegacyConnectionPolicy(
   }
   defaultConnectionId ??= uniqueAllowed[0];
   return {
-    chat: {
-      defaultConnectionId,
-      defaultModelId,
-      allowedConnectionIds: [...uniqueAllowed]
-    },
-    inference: {
-      allowedConnectionIds: [...uniqueAllowed],
-      preferredConnectionId: defaultConnectionId
-    },
+    chat: { defaultConnectionId, defaultModelId, allowedConnectionIds: [...uniqueAllowed] },
+    inference: { allowedConnectionIds: [...uniqueAllowed], preferredConnectionId: defaultConnectionId },
     workSourceIds: []
   };
+}
+
+export function effectiveProjectConnectionPolicy(
+  project: Pick<ProjectDefinition, 'privacy' | 'credentialProfileIds' | 'defaultModel' | 'connectionPolicy'>
+): ProjectConnectionPolicy {
+  return project.connectionPolicy ?? deriveLegacyConnectionPolicy(
+    project.privacy,
+    project.credentialProfileIds ?? {},
+    project.defaultModel
+  );
 }
 
 function normalizeConnectionPolicy(
@@ -262,9 +252,7 @@ function normalizeConnectionPolicy(
 ): ProjectConnectionPolicy {
   const candidate = input ?? legacy;
   const inferenceAllowed = connectionIds(candidate.inference?.allowedConnectionIds, 'Inference connection id');
-  if (inferenceAllowed.length === 0) {
-    throw new Error('Project inference connection allowlist cannot be empty.');
-  }
+  if (inferenceAllowed.length === 0) throw new Error('Project inference connection allowlist cannot be empty.');
   const chatAllowed = connectionIds(candidate.chat?.allowedConnectionIds, 'Chat connection id');
   const effectiveChat = chatAllowed.length > 0 ? chatAllowed : [...inferenceAllowed];
   const defaultConnectionId = candidate.chat?.defaultConnectionId
@@ -287,10 +275,7 @@ function normalizeConnectionPolicy(
         : undefined,
       allowedConnectionIds: effectiveChat
     },
-    inference: {
-      allowedConnectionIds: inferenceAllowed,
-      preferredConnectionId
-    },
+    inference: { allowedConnectionIds: inferenceAllowed, preferredConnectionId },
     workSourceIds: connectionIds(candidate.workSourceIds, 'Work Hub source id')
   };
 }
@@ -319,9 +304,7 @@ function normalizeProject(
     !connectionPolicy.inference.allowedConnectionIds.includes(defaultModel.providerId) &&
     !connectionPolicy.chat.allowedConnectionIds.includes(defaultModel.providerId)
   ) {
-    throw new Error(
-      `Explicit model connection ${defaultModel.providerId} is not allowed by the Project connection policy.`
-    );
+    throw new Error(`Explicit model connection ${defaultModel.providerId} is not allowed by the Project connection policy.`);
   }
   if (defaultModel.mode === 'local-first' && !connectionPolicy.inference.allowedConnectionIds.includes('ollama')) {
     throw new Error('Local-first mode requires the Ollama connection in the Project inference allowlist.');
@@ -353,26 +336,19 @@ function parseProject(value: unknown): ProjectDefinition | undefined {
   const item = value as Record<string, unknown>;
   try {
     if (
-      typeof item.id !== 'string' ||
-      typeof item.name !== 'string' ||
+      typeof item.id !== 'string' || typeof item.name !== 'string' ||
       (item.description !== undefined && typeof item.description !== 'string') ||
       (item.workspace !== undefined && typeof item.workspace !== 'string') ||
       (item.instructions !== undefined && typeof item.instructions !== 'string') ||
-      typeof item.organizationId !== 'string' ||
-      typeof item.defaultRoutingPolicy !== 'string' ||
+      typeof item.organizationId !== 'string' || typeof item.defaultRoutingPolicy !== 'string' ||
       !item.defaultModel || typeof item.defaultModel !== 'object' ||
       !item.privacy || typeof item.privacy !== 'object' ||
       !item.credentialProfileIds || typeof item.credentialProfileIds !== 'object' ||
       (item.connectionPolicy !== undefined && (!item.connectionPolicy || typeof item.connectionPolicy !== 'object' || Array.isArray(item.connectionPolicy))) ||
-      !item.budgets || typeof item.budgets !== 'object' ||
-      typeof item.concurrency !== 'number' ||
-      typeof item.createdAt !== 'string' ||
-      typeof item.updatedAt !== 'string'
+      !item.budgets || typeof item.budgets !== 'object' || typeof item.concurrency !== 'number' ||
+      typeof item.createdAt !== 'string' || typeof item.updatedAt !== 'string'
     ) return undefined;
-    const existing = {
-      ...(item as unknown as ProjectDefinition),
-      workspace: typeof item.workspace === 'string' ? item.workspace : ''
-    };
+    const existing = { ...(item as unknown as ProjectDefinition), workspace: typeof item.workspace === 'string' ? item.workspace : '' };
     return normalizeProject({
       id: existing.id,
       name: existing.name,
@@ -401,15 +377,12 @@ function assertWorkspaceOrganizationIsolation(
 ): void {
   if (!candidate.workspace) return;
   const conflict = projects.find((project) =>
-    project.id !== ignoreProjectId &&
-    Boolean(project.workspace) &&
-    project.workspace === candidate.workspace &&
-    project.organizationId !== candidate.organizationId
+    project.id !== ignoreProjectId && Boolean(project.workspace) &&
+    project.workspace === candidate.workspace && project.organizationId !== candidate.organizationId
   );
   if (conflict) {
     throw new Error(
-      `Workspace ${candidate.workspace} is already assigned to organization ${conflict.organizationId}; ` +
-      `it cannot also be assigned to ${candidate.organizationId}.`
+      `Workspace ${candidate.workspace} is already assigned to organization ${conflict.organizationId}; it cannot also be assigned to ${candidate.organizationId}.`
     );
   }
 }
@@ -436,12 +409,13 @@ export function assertProjectProviderAllowed(
   providerId: string,
   providerKind: ProviderKind
 ): void {
+  const policy = effectiveProjectConnectionPolicy(project);
   const exactAllowed = new Set([
-    ...project.connectionPolicy.inference.allowedConnectionIds,
-    ...project.connectionPolicy.chat.allowedConnectionIds
+    ...policy.inference.allowedConnectionIds,
+    ...policy.chat.allowedConnectionIds
   ]);
   if (!exactAllowed.has(providerId) && !project.privacy.allowedProviderIds.includes(providerId)) {
-    throw new Error(`Connection/provider ${providerId} is blocked by Project ${project.id}'s allowlist.`);
+    throw new Error(`Connection/provider ${providerId} is blocked by project ${project.id}'s allowlist.`);
   }
   if (providerKind === 'cloud' && !project.privacy.cloudAllowed) {
     throw new Error(`Project ${project.id} does not allow cloud inference.`);
@@ -453,14 +427,14 @@ export function assertProjectCredentialIsolation(
   credentials: CredentialProfile[]
 ): void {
   const byId = new Map(credentials.map((credential) => [credential.id, credential]));
-  for (const [providerId, credentialId] of Object.entries(project.credentialProfileIds)) {
+  for (const [providerId, credentialId] of Object.entries(project.credentialProfileIds ?? {})) {
     const credential = byId.get(credentialId);
     if (!credential) throw new Error(`Project ${project.id} references missing credential ${credentialId}.`);
     if (credential.providerId !== providerId) {
       throw new Error(`Credential ${credentialId} belongs to ${credential.providerId}, not ${providerId}.`);
     }
     if (credential.organizationId !== undefined && credential.organizationId !== project.organizationId) {
-      throw new Error(`Credential ${credentialId} is outside Project ${project.id}'s organization isolation boundary.`);
+      throw new Error(`Credential ${credentialId} is outside project ${project.id}'s organization isolation boundary.`);
     }
   }
 }
