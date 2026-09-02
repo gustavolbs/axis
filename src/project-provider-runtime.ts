@@ -6,6 +6,7 @@ import { ProviderCapabilityPolicyManager } from './provider-capability-policy.js
 import { ProviderConnectionRuntime } from './provider-connections.js';
 import {
   assertProjectCredentialIsolation,
+  assertProjectProviderAllowed,
   type ModelSelection,
   type ProjectDefinition
 } from './project-store.js';
@@ -53,12 +54,14 @@ export interface ProjectProviderRuntimeOptions {
   capabilityPolicy?: ProviderCapabilityPolicyManager;
   cloudProviderFactories?: Record<string, CloudProviderFactory>;
   metrics?: RoutingMetricsSource;
+  connections?: ProviderConnectionRuntime;
 }
 
 export interface RoutingCatalogOptions {
   stage: InferenceStage;
   localModelHint?: string;
   modelSelection?: ModelSelection;
+  connectionScope?: 'chat' | 'cowork';
 }
 
 export interface PersonalChatCatalogModel {
@@ -101,14 +104,6 @@ function defaultSettings(): ProviderRuntimeSettings {
     capabilities: structuredClone(DEFAULT_PROVIDER_CAPABILITIES),
     models: {}
   };
-}
-
-function allowed(
-  project: ProjectDefinition,
-  provider: { id: string; kind: ProviderKind }
-): boolean {
-  if (!project.privacy.allowedProviderIds.includes(provider.id)) return false;
-  return provider.kind === 'local' || project.privacy.cloudAllowed;
 }
 
 function mergeCapabilities(
@@ -184,12 +179,16 @@ export class ProjectProviderRuntime {
     this.capabilityPolicy = options.capabilityPolicy ?? new ProviderCapabilityPolicyManager(this.settings);
     this.factories = { ...defaultCloudFactories, ...(options.cloudProviderFactories ?? {}) };
     this.metrics = options.metrics;
-    this.connections = new ProviderConnectionRuntime({
+    this.connections = options.connections ?? new ProviderConnectionRuntime({
       localProvider: this.localProvider,
       credentials: this.credentials,
       settings: this.settings,
       budget: this.budget,
-      capabilityPolicy: this.capabilityPolicy
+      capabilityPolicy: this.capabilityPolicy,
+      apiProviderFactories: {
+        anthropic: this.factories.anthropic,
+        openai: this.factories.openai
+      }
     });
   }
 
@@ -197,31 +196,65 @@ export class ProjectProviderRuntime {
     return this.capabilityPolicy.wrap(this.budget.wrap(withSafeModelLimits(provider)));
   }
 
+  private settingsKey(providerId: string): string {
+    return this.connections.view(providerId)?.providerFamily ?? providerId;
+  }
+
+  private assertConnectionFamilyAllowed(project: ProjectDefinition, connectionId: string): void {
+    const view = this.connections.view(connectionId);
+    if (!view) return;
+    if (!project.privacy.allowedProviderIds.includes(view.providerFamily)) {
+      throw new Error(
+        `Connection ${view.label} belongs to provider family ${view.providerFamily}, which Project ${project.id} does not allow.`
+      );
+    }
+    if (view.providerFamily !== 'ollama' && !project.privacy.cloudAllowed) {
+      throw new Error(`Project ${project.id} does not allow cloud connection ${view.label}.`);
+    }
+  }
+
   buildRegistry(project: ProjectDefinition): ProviderRegistry {
     const profiles = this.credentials.list();
     assertProjectCredentialIsolation(project, profiles);
     const providers: InferenceProvider[] = [];
+    const legacyCredentialIds = new Set(Object.values(project.credentialProfileIds));
+    const connectionIds = unique([
+      ...project.connectionPolicy.inference.allowedConnectionIds,
+      ...project.connectionPolicy.chat.allowedConnectionIds
+    ]);
 
-    if (this.localProvider && allowed(project, this.localProvider)) {
-      const settings = this.settings.get(this.localProvider.id);
-      if (settings?.enabled !== false) providers.push(this.governed(this.localProvider));
-    }
+    for (const connectionId of connectionIds) {
+      this.assertConnectionFamilyAllowed(project, connectionId);
+      if (connectionId === (this.localProvider?.id ?? 'ollama') || connectionId === 'ollama') {
+        if (!this.localProvider) continue;
+        if (!project.privacy.allowedProviderIds.includes('ollama')) continue;
+        if (this.settings.get(this.localProvider.id)?.enabled === false) continue;
+        providers.push(this.governed(this.localProvider));
+        continue;
+      }
 
-    for (const providerId of project.privacy.allowedProviderIds) {
-      if (providerId === this.localProvider?.id) continue;
-      const factory = this.factories[providerId];
-      if (!factory || !project.privacy.cloudAllowed) continue;
-      const settings = this.settings.get(providerId);
-      if (settings?.enabled === false) continue;
-      const credentialId = project.credentialProfileIds[providerId];
-      if (!credentialId) continue;
+      if (this.connections.handles(connectionId)) {
+        const provider = this.connections.providerForProject(
+          connectionId,
+          project.organizationId,
+          legacyCredentialIds
+        );
+        providers.push(provider);
+        continue;
+      }
+
+      // Compatibility for non-built-in/custom providers that predate connection IDs.
+      const factory = this.factories[connectionId];
+      const credentialId = project.credentialProfileIds[connectionId];
+      if (!factory || !credentialId || !project.privacy.cloudAllowed) continue;
+      if (this.settings.get(connectionId)?.enabled === false) continue;
       const secret = this.credentials.resolve(credentialId);
       if (!secret) continue;
       const provider = factory(secret);
-      if (provider.id !== providerId || provider.kind !== 'cloud') {
-        throw new Error(`Provider factory ${providerId} returned inconsistent provider identity/kind.`);
+      if (provider.id !== connectionId || provider.kind !== 'cloud') {
+        throw new Error(`Provider factory ${connectionId} returned inconsistent provider identity/kind.`);
       }
-      if (allowed(project, provider)) providers.push(this.governed(provider));
+      providers.push(this.governed(provider));
     }
 
     return new ProviderRegistry(providers);
@@ -248,15 +281,13 @@ export class ProjectProviderRuntime {
       try {
         const secret = this.credentials.resolve(profile.id);
         if (secret) available.push({ id: profile.id, secret });
-      } catch {
-        // Availability is represented by a safe reason below.
-      }
+      } catch { /* safe unavailable */ }
     }
     if (available.length === 0) {
       return { reason: `Add an available personal ${providerId} credential in Settings → API keys.` };
     }
     if (available.length > 1) {
-      return { reason: `Multiple personal ${providerId} credentials are available. Choose one of the explicit API connections instead.` };
+      return { reason: `Multiple personal ${providerId} credentials are available. Choose an explicit API connection.` };
     }
     const provider = factory(available[0]!.secret);
     if (provider.id !== providerId || provider.kind !== 'cloud') {
@@ -302,9 +333,6 @@ export class ProjectProviderRuntime {
       });
     }
 
-    // First-class connection instances are additive. Legacy base provider ids remain in
-    // the catalog so old conversations keep working, while new chats can disambiguate
-    // GPT/Claude subscription accounts from individual API credentials.
     for (const connection of await this.connections.catalogProviders()) {
       providers.push({
         id: connection.id,
@@ -333,11 +361,8 @@ export class ProjectProviderRuntime {
     modelId: string
   ): Promise<{ provider: InferenceProvider; model: ModelDefinition }> {
     if (this.connections.handles(providerId)) return await this.connections.resolve(providerId, modelId);
-
     const resolution = this.personalChatProvider(providerId);
-    if (!resolution.provider) {
-      throw new Error(resolution.reason ?? `Provider ${providerId} is unavailable for personal Chat.`);
-    }
+    if (!resolution.provider) throw new Error(resolution.reason ?? `Provider ${providerId} is unavailable for personal Chat.`);
     const settings = this.settings.get(providerId) ?? defaultSettings();
     const models = curatePersonalChatModels(
       providerId,
@@ -350,6 +375,46 @@ export class ProjectProviderRuntime {
     return { provider: resolution.provider, model };
   }
 
+  async projectChatSelection(project: ProjectDefinition): Promise<ModelSelection> {
+    const connectionId = project.connectionPolicy.chat.defaultConnectionId;
+    if (!connectionId) throw new Error(`Project ${project.id} has no default Chat connection.`);
+    if (!project.connectionPolicy.chat.allowedConnectionIds.includes(connectionId)) {
+      throw new Error(`Project ${project.id} default Chat connection is outside its Chat allowlist.`);
+    }
+    this.assertConnectionFamilyAllowed(project, connectionId);
+
+    const legacyCredentialIds = new Set(Object.values(project.credentialProfileIds));
+    let provider: InferenceProvider;
+    if (connectionId === (this.localProvider?.id ?? 'ollama') || connectionId === 'ollama') {
+      if (!this.localProvider) throw new Error('Local inference is not configured.');
+      provider = this.governed(this.localProvider);
+    } else if (this.connections.handles(connectionId)) {
+      provider = this.connections.providerForProject(connectionId, project.organizationId, legacyCredentialIds);
+    } else {
+      const registry = this.buildRegistry(project);
+      if (!registry.has(connectionId)) throw new Error(`Project Chat connection is unavailable: ${connectionId}`);
+      provider = registry.get(connectionId);
+    }
+
+    const settings = this.settings.get(this.settingsKey(connectionId)) ?? defaultSettings();
+    const models = await provider.listModels();
+    const inheritedModel = project.defaultModel.mode === 'explicit' && project.defaultModel.providerId === connectionId
+      ? project.defaultModel.modelId
+      : project.defaultModel.mode === 'local-first' && connectionId === 'ollama'
+        ? project.defaultModel.modelId
+        : undefined;
+    const modelId = unique([
+      project.connectionPolicy.chat.defaultModelId,
+      inheritedModel,
+      settings.defaultModelId,
+      models[0]?.id
+    ])[0];
+    if (!modelId || !models.some((model) => model.id === modelId)) {
+      throw new Error(`Project ${project.id} default Chat connection ${connectionId} has no available model.`);
+    }
+    return { mode: 'explicit', providerId: connectionId, modelId };
+  }
+
   async modelDefinition(
     project: ProjectDefinition,
     providerId: string,
@@ -357,9 +422,9 @@ export class ProjectProviderRuntime {
   ): Promise<{ providerKind: ProviderKind; model: ModelDefinition } | undefined> {
     const registry = this.buildRegistry(project);
     const provider = registry.list().find((candidate) => candidate.id === providerId);
-    if (!provider || !allowed(project, provider)) return undefined;
-    const models = await provider.listModels();
-    const model = models.find((candidate) => candidate.id === modelId);
+    if (!provider) return undefined;
+    assertProjectProviderAllowed(project, providerId, provider.kind);
+    const model = (await provider.listModels()).find((candidate) => candidate.id === modelId);
     return model ? { providerKind: provider.kind, model } : undefined;
   }
 
@@ -370,9 +435,17 @@ export class ProjectProviderRuntime {
     const registry = this.buildRegistry(project);
     const selection = options.modelSelection ?? project.defaultModel;
     const candidates: RoutingCandidate[] = [];
+    const allowedConnections = new Set(
+      options.connectionScope === 'chat'
+        ? project.connectionPolicy.chat.allowedConnectionIds
+        : project.connectionPolicy.inference.allowedConnectionIds
+    );
 
     for (const provider of registry.list()) {
-      const providerSettings = this.settings.get(provider.id) ?? defaultSettings();
+      if (!allowedConnections.has(provider.id)) continue;
+      const settingsKey = this.settingsKey(provider.id);
+      const providerSettings = this.settings.get(settingsKey) ?? defaultSettings();
+      const connection = this.connections.view(provider.id);
       let discovered: ModelDefinition[] = [];
       let discoveryOk = true;
       try {
@@ -397,6 +470,8 @@ export class ProjectProviderRuntime {
         requestedIds = options.localModelHint
           ? [options.localModelHint]
           : unique([providerSettings.defaultModelId, configuredFast, ...configuredModels]);
+      } else if (connection?.billing === 'subscription') {
+        requestedIds = unique([providerSettings.defaultModelId, ...configuredModels, ...discovered.map((model) => model.id)]);
       } else {
         requestedIds = unique([providerSettings.defaultModelId, ...configuredModels]);
       }
@@ -417,7 +492,8 @@ export class ProjectProviderRuntime {
           p50LatencyMs: metrics?.p50LatencyMs,
           successRate: metrics?.successRate,
           historicalSamples: metrics?.historicalSamples,
-          estimatedCostUsd: provider.kind === 'local' ? 0 : metrics?.estimatedCostUsd
+          estimatedCostUsd: provider.kind === 'local' ? 0 : metrics?.estimatedCostUsd,
+          preferredConnection: project.connectionPolicy.inference.preferredConnectionId === provider.id
         });
       }
     }
