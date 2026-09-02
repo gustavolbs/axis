@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { apiCredentialConnectionId } from '../src/connection-identity.js';
 import {
   CredentialManager,
   CredentialProfileStore
@@ -159,7 +160,7 @@ test('admin credential views never expose secrets and enforce organization isola
   assert.equal(f.admin.listProjects().length, 0);
 });
 
-test('referenced credentials cannot be deleted until the Project binding is removed', () => {
+test('referenced credentials cannot be deleted until every exact Project connection binding is removed', () => {
   const f = fixture();
   f.admin.createCredential({
     backend: 'macos-keychain',
@@ -182,12 +183,19 @@ test('referenced credentials cannot be deleted until the Project binding is remo
     () => f.admin.removeCredential('company-a-anthropic'),
     /still referenced by Project\(s\): company-a-project/
   );
-  f.admin.updateProject('company-a-project', { credentialProfileIds: {} });
+  f.admin.updateProject('company-a-project', {
+    credentialProfileIds: {},
+    connectionPolicy: {
+      chat: { defaultConnectionId: 'ollama', allowedConnectionIds: ['ollama'] },
+      inference: { allowedConnectionIds: ['ollama'], preferredConnectionId: 'ollama' },
+      workSourceIds: []
+    }
+  });
   assert.equal(f.admin.removeCredential('company-a-anthropic'), true);
   assert.equal(f.keychain.values.size, 0);
 });
 
-test('project catalog combines actual provider discovery, routing settings and pricing', async () => {
+test('project catalog combines exact connection discovery, routing settings and family pricing', async () => {
   const f = fixture();
   f.admin.createCredential({
     backend: 'macos-keychain',
@@ -227,8 +235,10 @@ test('project catalog combines actual provider discovery, routing settings and p
   assert.equal(local?.models[0]?.id, 'qwen-local');
   assert.equal(local?.models[0]?.available, true);
 
-  const cloud = catalog.providers.find((provider) => provider.id === 'anthropic');
+  const connectionId = apiCredentialConnectionId('anthropic', 'company-a-anthropic');
+  const cloud = catalog.providers.find((provider) => provider.id === connectionId);
   assert.equal(cloud?.kind, 'cloud');
+  assert.equal(cloud?.providerFamily, 'anthropic');
   assert.equal(cloud?.ready, true);
   assert.equal(cloud?.credentialAvailable, true);
   const cloudModel = cloud?.models.find((model) => model.id === 'claude-cloud');
