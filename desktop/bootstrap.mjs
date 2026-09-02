@@ -1,12 +1,15 @@
 import updaterPackage from 'update-electron-app';
+import { installDesktopExecutablePath } from './user-executable-path.mjs';
 
 const { updateElectronApp } = updaterPackage;
 
-// Axis currently publishes an automatic-update channel only for macOS.
-// update-electron-app itself is a no-op for unpackaged development builds.
+// Finder/Dock-launched macOS apps do not inherit the user's interactive-shell
+// PATH. Enrich it before the desktop runtime creates Claude/Codex subprocesses.
 if (process.platform === 'darwin') {
+  installDesktopExecutablePath(process.env);
+
   updateElectronApp({
-    repo: 'gustavolbs/local-coder-mcp',
+    repo: 'gustavolbs/axis',
     updateInterval: '30 minutes',
     notifyUser: true,
     logger: console
