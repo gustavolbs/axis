@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { apiCredentialConnectionId } from '../src/connection-identity.js';
 import { loadConfig, type LocalCoderConfig } from '../src/config.js';
 import { CredentialManager, CredentialProfileStore } from '../src/credential-store.js';
 import type { LocalEngineerExecution, LocalEngineerInput, LocalEngineerResult } from '../src/local-engineer.js';
@@ -71,7 +72,6 @@ class CloudProvider implements InferenceProvider {
     this.calls += 1;
     return {
       providerId: this.id,
-      // Providers may resolve a stable configured alias to a dated concrete model.
       model: 'cloud-model-20260831',
       content: '{"ok":true}',
       latencyMs: 25,
@@ -200,8 +200,9 @@ test('Project agent returns the same priced usage persisted in its ledger', asyn
     workspace,
     goal: 'use cloud safely'
   }) as ProjectEngineerResult;
+  const connectionId = apiCredentialConnectionId('anthropic', 'company-a-anthropic');
   assert.equal(cloud.calls, 1);
-  assert.equal(result.projectExecution?.routingTrace[0]?.providerId, 'anthropic');
+  assert.equal(result.projectExecution?.routingTrace[0]?.providerId, connectionId);
   assert.equal(result.projectExecution?.routingTrace[0]?.modelId, 'cloud-model');
   assert.equal(result.modelCalls[0]?.model, 'cloud-model-20260831');
 
@@ -217,6 +218,7 @@ test('Project agent returns the same priced usage persisted in its ledger', asyn
   const events = ledger.list(project.id);
   assert.equal(events.length, 1);
   assert.equal(events[0]?.jobId, budget.jobId);
+  assert.equal(events[0]?.providerId, connectionId);
   assert.equal(events[0]?.modelId, 'cloud-model');
   assert.equal(events[0]?.costUsd, budget.jobKnownCostUsd);
   assert.equal(events[0]?.pricingSource, 'integration-price-sheet');
