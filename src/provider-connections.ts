@@ -66,7 +66,7 @@ const ACCOUNT_CAPABILITIES: ProviderCapabilities = {
   structuredOutput: true,
   reasoning: true,
   promptCaching: false,
-  toolUse: false
+  toolUse: true
 };
 
 const DEFAULT_API_FACTORIES: Record<'anthropic' | 'openai', ApiConnectionProviderFactory> = {
@@ -82,8 +82,8 @@ function accountPrompt(request: InferenceRequest): string {
     '# USER MESSAGE',
     request.userPrompt.trim(),
     '',
-    '# EXECUTION BOUNDARY',
-    'This Local Coder inference turn may not call MCP servers, connectors, plugins, shell commands, files, or other external tools. Answer only from the supplied model context. Work Hub data collection is a separate explicitly-bound capability.'
+    '# ACCOUNT CONNECTION',
+    'You are running through the exact provider account selected for this Local Coder conversation. Use MCP servers and connectors configured for this account whenever they help fulfill the user request. Read or mutate remote data when the user explicitly asks for that action, including creating or updating tickets, calendar events, messages, or other connector-backed resources. Never switch to another account identity or use credentials from another connection.'
   ].join('\n');
 }
 
@@ -153,12 +153,10 @@ class ClaudeAccountInferenceProvider implements InferenceProvider {
   }
 
   async invoke(request: InferenceRequest): Promise<InferenceResult> {
-    if (request.capabilityRequests?.length) {
-      throw new Error('Claude account inference does not expose external capabilities. Configure an explicit Work Hub source instead.');
-    }
     const startedAt = Date.now();
     const result = await this.runtime.invoke(this.profileId, accountPrompt(request), {
       timeoutMs: request.timeoutMs,
+      allowedTools: ['mcp__*'],
       jsonSchema: request.output?.type === 'json_schema' ? request.output.schema : undefined
     });
     if (result.cancelled) throw new Error('Claude account invocation was cancelled.');
@@ -204,9 +202,6 @@ class ChatGptAccountInferenceProvider implements InferenceProvider {
   }
 
   async invoke(request: InferenceRequest): Promise<InferenceResult> {
-    if (request.capabilityRequests?.length) {
-      throw new Error('ChatGPT account inference does not expose external capabilities. Configure an explicit Work Hub source instead.');
-    }
     const startedAt = Date.now();
     const result = await this.runtime.invoke(this.profileId, accountPrompt(request), {
       timeoutMs: request.timeoutMs,
@@ -458,14 +453,14 @@ export class ProviderConnectionRuntime {
       return this.capabilities.wrap(aliasProvider(view.id, view.label, guarded));
     }
     if (view.auth === 'claude-account' && view.accountProfileId) {
-      return this.capabilities.wrap(withSafeModelLimits(
+      return withSafeModelLimits(
         new ClaudeAccountInferenceProvider(view.id, view.accountProfileId, view.label, this.claudeRuntime)
-      ));
+      );
     }
     if (view.auth === 'chatgpt-account' && view.accountProfileId) {
-      return this.capabilities.wrap(withSafeModelLimits(
+      return withSafeModelLimits(
         new ChatGptAccountInferenceProvider(view.id, view.accountProfileId, view.label, this.codexRuntime)
-      ));
+      );
     }
     throw new Error(`Connection ${view.id} cannot be used for inference.`);
   }
