@@ -46,7 +46,9 @@ test('a follow-up unarchives the conversation it continues', () => {
   // The two features meet here: an archived chat can be opened from the
   // Archived surface, so a follow-up must restart it through the shared Chat
   // reset path rather than duplicating reset state in every turn action.
-  const followUp = jobManager.slice(jobManager.indexOf('async followUp(id: string'));
+  const followUpStart = jobManager.search(/async followUp\(\s*id: string/);
+  assert.notEqual(followUpStart, -1, 'followUp method must remain present');
+  const followUp = jobManager.slice(followUpStart);
   const body = followUp.slice(0, followUp.indexOf('\n  }\n'));
   assert.match(body, /this\.restartChat\(job, 'Chat follow-up queued'\)/);
 
@@ -142,7 +144,7 @@ test('archiving no longer destroys history, and the list pages', () => {
 });
 
 test('Archived is a navigation surface', () => {
-  assert.match(appRoot, /type Surface = 'agent' \| 'projects' \| 'runs' \| 'archived'/);
+  assert.match(appRoot, /type Surface = 'agent' \| 'projects' \| 'project' \| 'runs' \| 'archived'/);
   assert.match(appRoot, /aria-label="Archived"/);
   assert.match(appRoot, /surface === 'archived' \? <ArchivedView/);
   assert.match(appRoot, /value === 'archived'/, 'the choice must survive a restart');

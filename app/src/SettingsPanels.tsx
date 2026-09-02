@@ -350,8 +350,18 @@ export function ModelRoutingSettings() {
         </section>
 
         {draft.privacy.allowedProviderIds.filter((id) => providers.find((provider) => provider.id === id)?.kind === 'cloud').map((providerId) => {
-          const matching = credentials.filter((credential) => credential.providerId === providerId && credential.organizationId === draft.organizationId);
-          const options: UiSelectOption[] = [{ value: '', label: 'Not bound', description: 'Cloud calls will remain unavailable for this provider' }, ...matching.map((credential) => ({ value: credential.id, label: credential.label, description: credential.available ? 'Available' : 'Unavailable', disabled: !credential.available }))];
+          const matching = credentials.filter((credential) =>
+            credential.providerId === providerId &&
+            (credential.organizationId === undefined || credential.organizationId === draft.organizationId)
+          );
+          const options: UiSelectOption[] = [{ value: '', label: 'Not bound', description: 'Cloud calls will remain unavailable for this provider' }, ...matching.map((credential) => ({
+            value: credential.id,
+            label: credential.label,
+            description: credential.available
+              ? credential.organizationId === undefined ? 'Available · personal key' : 'Available · organization key'
+              : 'Unavailable',
+            disabled: !credential.available
+          }))];
           return <section className="settings-form-section" key={providerId}>
             <div className="settings-section-copy"><strong>{providerId} credential</strong><p>Credential binding stays inside this project’s organization boundary.</p></div>
             <UiSelect ariaLabel={`${providerId} credential`} value={draft.credentialProfileIds[providerId] ?? ''} options={options} onChange={(value) => setDraft({ ...draft, credentialProfileIds: { ...draft.credentialProfileIds, [providerId]: value } })} />

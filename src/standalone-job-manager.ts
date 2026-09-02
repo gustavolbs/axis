@@ -9,6 +9,7 @@ import {
 } from './cancellation.js';
 import type { ExecutionBackend } from './execution-runtime.js';
 import type { LocalEngineerResult } from './local-engineer.js';
+import type { EngineeringProgress } from './engineering-progress.js';
 import type { PremiumDecisionRequest, PremiumEngineerResult } from './premium-agent.js';
 import type {
   ProjectEngineerInput,
@@ -18,6 +19,7 @@ import type {
 } from './project-engineer-backend.js';
 import type { ModelSelection } from './project-store.js';
 import type { ReasoningEffort } from './providers/types.js';
+import { withProgressReporter } from './progress-context.js';
 
 export type StandaloneJobStatus =
   | 'queued'
@@ -63,6 +65,18 @@ export interface StandaloneJobTurn {
   createdAt: string;
 }
 
+export interface StandaloneJobActivity {
+  action: string;
+  detail?: string;
+  reasoningSummary?: string;
+  updatedAt: string;
+}
+
+export interface ChatTurnOverrides {
+  modelSelection?: ModelSelection;
+  reasoningEffort?: StandaloneReasoningEffort;
+}
+
 export interface StandaloneJobSnapshot {
   id: string;
   status: StandaloneJobStatus;
@@ -74,6 +88,8 @@ export interface StandaloneJobSnapshot {
   archivedAt?: string;
   input: StandaloneJobInput;
   turns: StandaloneJobTurn[];
+  /** Ephemeral safe progress metadata. Hidden reasoning text is never stored here. */
+  activity?: StandaloneJobActivity;
   decisionRequest?: PremiumDecisionRequest;
   escalationPlan?: ProjectEscalationPlan;
   result?: LocalEngineerResult;
@@ -172,6 +188,7 @@ function snapshot(job: JobInternal): StandaloneJobSnapshot {
     archivedAt: job.archivedAt,
     input: job.input,
     turns: [...job.turns],
+    activity: job.activity,
     decisionRequest: job.decisionRequest,
     escalationPlan: job.escalationPlan,
     result: job.result,
@@ -214,6 +231,7 @@ export class StandaloneJobManager {
   private readonly jobs = new Map<string, JobInternal>();
   private readonly listeners = new Set<JobListener>();
   private persistTail: Promise<void> = Promise.resolve();
+  private readonly lastActivityPublish = new Map<string, { action: string; at: number }>();
 
   constructor(
     private readonly execution: Pick<
@@ -349,11 +367,18 @@ export class StandaloneJobManager {
     return true;
   }
 
-  async followUp(id: string, message: string): Promise<StandaloneJobSnapshot> {
+  async followUp(
+    id: string,
+    message: string,
+    overrides: ChatTurnOverrides = {}
+  ): Promise<StandaloneJobSnapshot> {
     const job = this.requireJob(id);
     this.assertChatCanRun(job);
     const content = message.trim();
     if (!content) throw new Error('message is required.');
+
+    if (overrides.modelSelection !== undefined) job.input.modelSelection = overrides.modelSelection;
+    if (overrides.reasoningEffort !== undefined) job.input.reasoningEffort = overrides.reasoningEffort;
 
     job.turns = boundTurns([
       ...job.turns,
@@ -376,7 +401,8 @@ export class StandaloneJobManager {
   async retryTurn(
     id: string,
     turnId: string,
-    message?: string
+    message?: string,
+    overrides: ChatTurnOverrides = {}
   ): Promise<StandaloneJobSnapshot> {
     const job = this.requireJob(id);
     this.assertChatCanRun(job);
@@ -387,6 +413,8 @@ export class StandaloneJobManager {
     const content = message === undefined ? turn.content : message.trim();
     if (!content) throw new Error('message is required.');
     const edited = content !== turn.content;
+    if (overrides.modelSelection !== undefined) job.input.modelSelection = overrides.modelSelection;
+    if (overrides.reasoningEffort !== undefined) job.input.reasoningEffort = overrides.reasoningEffort;
     job.turns = boundTurns([
       ...job.turns.slice(0, index),
       {
@@ -413,6 +441,7 @@ export class StandaloneJobManager {
     job.error = undefined;
     job.decisionRequest = undefined;
     job.escalationPlan = undefined;
+    job.activity = undefined;
     job.controller?.abort();
     const waiting = job.waiting;
     job.waiting = undefined;
@@ -534,6 +563,7 @@ export class StandaloneJobManager {
     job.result = undefined;
     job.decisionRequest = undefined;
     job.escalationPlan = undefined;
+    job.activity = undefined;
     job.archivedAt = undefined;
     job.rounds = 0;
     job.controller = new AbortController();
@@ -602,6 +632,31 @@ export class StandaloneJobManager {
     for (const listener of this.listeners) listener(event, publicJob);
   }
 
+  private publishActivity(job: JobInternal, progress: Partial<EngineeringProgress>): void {
+    const action = progress.action?.trim();
+    if (!action) return;
+    const now = Date.now();
+    const previous = this.lastActivityPublish.get(job.id);
+    job.activity = {
+      action,
+      detail: progress.detail?.trim() || undefined,
+      reasoningSummary: progress.reasoningSummary?.trim() || undefined,
+      updatedAt: new Date(now).toISOString()
+    };
+    if (previous?.action === action && now - previous.at < 350) return;
+    this.lastActivityPublish.set(job.id, { action, at: now });
+    const event: StandaloneJobEvent = {
+      id: randomUUID(),
+      jobId: job.id,
+      type: 'status',
+      timestamp: job.activity.updatedAt,
+      title: action,
+      data: { detail: job.activity.detail, reasoningSummary: job.activity.reasoningSummary }
+    };
+    const publicJob = snapshot(job);
+    for (const listener of this.listeners) listener(event, publicJob);
+  }
+
   private wait(job: JobInternal, kind: WaitingInput['kind']): Promise<string> {
     return new Promise((resolve) => {
       job.waiting = { kind, resolve };
@@ -640,7 +695,11 @@ export class StandaloneJobManager {
             }))
           };
           this.emit(job, 'status', 'Generating chat response');
-          const result = await this.execution.executeEngineer(input);
+          const result = await withProgressReporter(
+            (progress) => this.publishActivity(job, progress),
+            () => this.execution.executeEngineer(input),
+            job.id
+          );
           throwIfCancelled();
           job.result = result;
 
@@ -658,6 +717,7 @@ export class StandaloneJobManager {
             }
           ]);
           job.status = 'success';
+          job.activity = undefined;
           job.escalationPlan = undefined;
           this.emit(job, 'result', 'Chat response completed', {
             changedFiles: result.changedFiles.length,
@@ -675,12 +735,17 @@ export class StandaloneJobManager {
             budgetJobId: job.id
           };
           this.emit(job, 'status', `Agent round ${round} running`);
-          const result = await this.execution.executeEngineer(input);
+          const result = await withProgressReporter(
+            (progress) => this.publishActivity(job, progress),
+            () => this.execution.executeEngineer(input),
+            job.id
+          );
           throwIfCancelled();
           job.result = result;
 
           if (result.status === 'success') {
             job.status = 'success';
+            job.activity = undefined;
             job.escalationPlan = undefined;
             this.emit(job, 'result', 'Local agent completed', {
               changedFiles: result.changedFiles.length,
@@ -754,6 +819,7 @@ export class StandaloneJobManager {
         return;
       }
       job.status = 'error';
+      job.activity = undefined;
       job.error = error instanceof Error ? error.message : String(error);
       this.emit(job, 'error', isChat ? 'Chat failed' : 'Local agent failed', { error: job.error });
     } finally {

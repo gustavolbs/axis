@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   PricingStore,
+  backfillKnownUsagePricing,
   calculateUsageCostUsd,
   type ModelPricing
 } from './pricing-store.js';
@@ -46,6 +47,7 @@ export interface ProviderBudgetManagerOptions {
 }
 
 export const PROVIDER_BUDGET_PROJECT_ID = 'provider-budget';
+export const DEFAULT_BUDGETED_MAX_OUTPUT_TOKENS = 8_192;
 const PROVIDER_BUDGET_ORGANIZATION_ID = 'global';
 const RECONCILE_DELAYS_MS = [250, 2_500];
 
@@ -172,6 +174,7 @@ export class ProviderBudgetManager {
       }
 
       const now = this.now();
+      backfillKnownUsagePricing(this.ledger, this.pricing, provider.id);
       this.reconcileLocked(provider.id, now);
       const month = completeMonthSpend(this.ledger, provider.id, now);
       if (month.unknownCostEvents > 0) {
@@ -240,6 +243,43 @@ export class ProviderBudgetManager {
     }
   }
 
+  private async ensureOutputBound(
+    provider: InferenceProvider,
+    request: InferenceRequest
+  ): Promise<InferenceRequest> {
+    if (
+      request.maxOutputTokens !== undefined &&
+      Number.isFinite(request.maxOutputTokens) &&
+      request.maxOutputTokens > 0
+    ) return request;
+
+    const settings = this.settings.get(provider.id);
+    if (settings?.unlimitedUsage === true || settings?.monthlyBudgetUsd === undefined) {
+      return request;
+    }
+
+    let publishedMaximum: number | undefined;
+    try {
+      const model = (await provider.listModels()).find((candidate) => candidate.id === request.model);
+      if (
+        model?.maxOutputTokens !== undefined &&
+        Number.isFinite(model.maxOutputTokens) &&
+        model.maxOutputTokens > 0
+      ) publishedMaximum = Math.floor(model.maxOutputTokens);
+    } catch {
+      // Model discovery is advisory here. The conservative default still gives
+      // budget admission a finite upper bound if discovery is unavailable.
+    }
+
+    return {
+      ...request,
+      maxOutputTokens: Math.min(
+        DEFAULT_BUDGETED_MAX_OUTPUT_TOKENS,
+        publishedMaximum ?? DEFAULT_BUDGETED_MAX_OUTPUT_TOKENS
+      )
+    };
+  }
+
   wrap(provider: InferenceProvider): InferenceProvider {
     if (provider.kind === 'local') return provider;
     const budget = this;
@@ -250,9 +290,10 @@ export class ProviderBudgetManager {
       listModels: () => provider.listModels(),
       health: () => provider.health(),
       async invoke(request: InferenceRequest): Promise<InferenceResult> {
-        const admission = await budget.authorize(provider, request);
+        const boundedRequest = await budget.ensureOutputBound(provider, request);
+        const admission = await budget.authorize(provider, boundedRequest);
         try {
-          const result = await provider.invoke(request);
+          const result = await provider.invoke(boundedRequest);
           if (!admission) return result;
           const correlated: InferenceResult = {
             ...result,

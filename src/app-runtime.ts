@@ -303,16 +303,35 @@ export class DesktopAppRuntime {
     const followUpMatch = /^\/jobs\/([A-Za-z0-9-]+)\/follow-up$/.exec(pathname);
     if (method === 'POST' && followUpMatch) {
       const body = objectBody(request.body);
-      return { job: await this.jobs.followUp(followUpMatch[1], requiredString(body, 'message')) };
+      const modelSelection = parseModelSelection(body.modelSelection);
+      const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
+      if (!this.jobs.get(followUpMatch[1])?.input.projectId && modelSelection?.mode === 'local-first') {
+        throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+      }
+      return {
+        job: await this.jobs.followUp(followUpMatch[1], requiredString(body, 'message'), {
+          modelSelection,
+          reasoningEffort
+        })
+      };
     }
     const turnRetryMatch = /^\/jobs\/([A-Za-z0-9-]+)\/turns\/([A-Za-z0-9-]+)\/retry$/.exec(pathname);
     if (method === 'POST' && turnRetryMatch) {
       const body = objectBody(request.body ?? {});
+      const modelSelection = parseModelSelection(body.modelSelection);
+      const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
+      if (!this.jobs.get(turnRetryMatch[1])?.input.projectId && modelSelection?.mode === 'local-first') {
+        throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+      }
       return {
         job: await this.jobs.retryTurn(
           turnRetryMatch[1],
           turnRetryMatch[2],
-          optionalString(body, 'message')
+          optionalString(body, 'message'),
+          {
+            modelSelection,
+            reasoningEffort
+          }
         )
       };
     }

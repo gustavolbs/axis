@@ -240,6 +240,10 @@ test('corporate projects enforce provider and credential organization isolation'
     updatedAt: new Date(0).toISOString()
   };
   assert.doesNotThrow(() => assertProjectCredentialIsolation(project, [validCredential]));
+  assert.doesNotThrow(() => assertProjectCredentialIsolation(project, [{
+    ...validCredential,
+    organizationId: undefined
+  }]), 'an explicitly bound personal key is reusable by a Project');
   assert.doesNotThrow(() => assertProjectProviderAllowed(project, 'anthropic', 'cloud'));
   assert.throws(
     () => assertProjectProviderAllowed(project, 'openai', 'cloud'),

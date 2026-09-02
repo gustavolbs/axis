@@ -85,7 +85,7 @@ const openAiModels: ModelDefinition[] = [
     displayName: 'GPT-5.6 Sol',
     createdAt: '2026-08-30T00:00:00.000Z',
     contextWindow: 1_050_000,
-    maxOutputTokens: 131_072
+    maxOutputTokens: 128_000
   },
   {
     providerId: 'openai',
@@ -125,10 +125,24 @@ const openAiModels: ModelDefinition[] = [
 const anthropicModels: ModelDefinition[] = [
   {
     providerId: 'anthropic',
-    id: 'claude-opus-4-1',
-    displayName: 'Claude Opus 4.1',
-    contextWindow: 200_000,
-    maxOutputTokens: 32_000
+    id: 'claude-fable-5', displayName: 'Claude Fable 5',
+    createdAt: '2026-06-09T00:00:00.000Z', contextWindow: 1_000_000, maxOutputTokens: 128_000
+  },
+  {
+    providerId: 'anthropic', id: 'claude-opus-5', displayName: 'Claude Opus 5',
+    createdAt: '2026-07-24T00:00:00.000Z', contextWindow: 1_000_000, maxOutputTokens: 128_000
+  },
+  {
+    providerId: 'anthropic', id: 'claude-sonnet-5', displayName: 'Claude Sonnet 5',
+    createdAt: '2026-06-30T00:00:00.000Z', contextWindow: 1_000_000, maxOutputTokens: 128_000
+  },
+  {
+    providerId: 'anthropic', id: 'claude-haiku-4-5-20251001', displayName: 'Claude Haiku 4.5',
+    createdAt: '2025-10-01T00:00:00.000Z', contextWindow: 200_000, maxOutputTokens: 64_000
+  },
+  {
+    providerId: 'anthropic', id: 'claude-opus-4-1', displayName: 'Claude Opus 4.1',
+    createdAt: '2025-08-01T00:00:00.000Z', contextWindow: 200_000, maxOutputTokens: 32_000
   }
 ];
 
@@ -177,7 +191,7 @@ test('personal Chat discovers an available personal OpenAI credential and only c
   const resolved = await runtime.personalModelDefinition('openai', 'gpt-5.6-sol');
   assert.equal(resolved.provider.id, 'openai');
   assert.equal(resolved.model.id, 'gpt-5.6-sol');
-  assert.equal(resolved.model.maxOutputTokens, 131_072);
+  assert.equal(resolved.model.maxOutputTokens, 128_000);
 });
 
 test('Anthropic uses the same personal credential path as OpenAI', async () => {
@@ -193,13 +207,19 @@ test('Anthropic uses the same personal credential path as OpenAI', async () => {
   const anthropic = catalog.providers.find((provider) => provider.id === 'anthropic');
   assert.ok(anthropic);
   assert.equal(anthropic.ready, true);
-  assert.deepEqual(anthropic.models.map((model) => model.id), ['claude-opus-4-1']);
+  assert.deepEqual(anthropic.models.map((model) => model.id), [
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-fable-5',
+    'claude-haiku-4-5-20251001',
+    'claude-opus-4-1'
+  ]);
   assert.equal(anthropicSecrets.includes('sk-ant-personal-test-value'), true);
 
-  const resolved = await runtime.personalModelDefinition('anthropic', 'claude-opus-4-1');
+  const resolved = await runtime.personalModelDefinition('anthropic', 'claude-sonnet-5');
   assert.equal(resolved.provider.id, 'anthropic');
-  assert.equal(resolved.model.id, 'claude-opus-4-1');
-  assert.equal(resolved.model.contextWindow, 200_000);
+  assert.equal(resolved.model.id, 'claude-sonnet-5');
+  assert.equal(resolved.model.contextWindow, 1_000_000);
 });
 
 test('personal Chat never uses organization-scoped credentials for any provider', async () => {
@@ -228,7 +248,7 @@ test('personal Chat never uses organization-scoped credentials for any provider'
     await assert.rejects(
       runtime.personalModelDefinition(
         providerId,
-        providerId === 'openai' ? 'gpt-5.6-sol' : 'claude-opus-4-1'
+        providerId === 'openai' ? 'gpt-5.6-sol' : 'claude-sonnet-5'
       ),
       new RegExp(`personal ${providerId} credential`)
     );
@@ -264,9 +284,7 @@ test('a future registered cloud provider automatically inherits personal Chat cr
   const futureModels: ModelDefinition[] = [{
     providerId: 'future-ai',
     id: 'future-chat-1',
-    displayName: 'Future Chat 1',
-    contextWindow: 512_000,
-    maxOutputTokens: 64_000
+    displayName: 'Future Chat 1'
   }];
   const { credentials, runtime } = runtimeFixture({
     'future-ai': cloudFactory('future-ai', futureModels, futureSecrets)
@@ -302,6 +320,8 @@ test('a future registered cloud provider automatically inherits personal Chat cr
   assert.ok(future);
   assert.equal(future.ready, true);
   assert.deepEqual(future.models.map((model) => model.id), ['future-chat-1']);
+  assert.equal(future.models[0]?.contextWindow, 128_000);
+  assert.equal(future.models[0]?.maxOutputTokens, 8_192);
   assert.equal(futureSecrets.includes('future-company-secret'), false);
   assert.equal(futureSecrets.includes('future-personal-secret'), true);
 

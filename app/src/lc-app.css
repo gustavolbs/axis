@@ -3653,13 +3653,13 @@ select {
 
 .usage-tooltip-title,
 .usage-tooltip-spend {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 620;
 }
 
 .usage-tooltip-value {
   fill: var(--lc-text-soft);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .usage-tooltip-input-dot {
@@ -3676,10 +3676,19 @@ select {
 
 .usage-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, .92fr) 58px;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, .75fr) minmax(110px, .45fr) 58px;
   min-height: 34px;
   align-items: center;
   gap: 14px;
+}
+
+.usage-row-cost {
+  overflow: hidden;
+  color: var(--lc-text-soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .usage-row-main {
@@ -3970,13 +3979,18 @@ select {
   }
 
   .usage-row {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
   .usage-row-numbers {
     grid-column: 1 / -1;
     grid-row: 2;
     text-align: left;
+  }
+
+  .usage-row-cost,
+  .usage-share {
+    text-align: right;
   }
 
   .usage-budget-row {
@@ -4640,14 +4654,35 @@ select {
 
 .lc-shell-project-actions {
   display: flex !important;
-  flex-wrap: wrap !important;
+  flex-wrap: nowrap !important;
   gap: 10px !important;
   margin-left: auto !important;
 }
 
 .lc-shell-project-search {
-  flex: 1 1 240px !important;
-  min-width: 0 !important;
+  width: 36px !important;
+  min-width: 36px !important;
+  flex: 0 0 36px !important;
+}
+
+.lc-shell-project-search > svg {
+  flex: 0 0 auto;
+}
+
+.lc-shell-project-search:focus-within {
+  width: 190px !important;
+  flex-basis: 190px !important;
+}
+
+.lc-shell-projects-page .lc-shell-primary-button,
+.lc-shell-project-modal .lc-shell-primary-button {
+  background: var(--lc-text) !important;
+  color: var(--lc-bg) !important;
+}
+
+.lc-shell-projects-page .lc-shell-primary-button:hover:not(:disabled),
+.lc-shell-project-modal .lc-shell-primary-button:hover:not(:disabled) {
+  background: var(--lc-text-soft) !important;
 }
 
 .lc-shell-primary-button,
@@ -5199,5 +5234,6 @@ select {
 
   .lc-shell-project-search {
   flex: 1 1 220px !important;
+  width: auto !important;
 }
 }

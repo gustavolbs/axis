@@ -125,8 +125,8 @@ function UsageChart({ points }: { points: UsageTimelinePoint[] }) {
   const ticks = [1, 0.75, 0.5, 0.25, 0];
   const hoveredIndex = points.findIndex((point) => point.key === hoveredKey);
   const hoveredPoint = hoveredIndex >= 0 ? points[hoveredIndex] : undefined;
-  const tooltipWidth = 210;
-  const tooltipHeight = 104;
+  const tooltipWidth = 246;
+  const tooltipHeight = 126;
   const tooltipGeometry = hoveredPoint ? (() => {
     const center = left + hoveredIndex * slot + slot / 2;
     const totalHeight = ((hoveredPoint.inputTokens + hoveredPoint.outputTokens) / roundedMax) * plotHeight;
@@ -158,13 +158,13 @@ function UsageChart({ points }: { points: UsageTimelinePoint[] }) {
     {hoveredPoint && tooltipGeometry ? <g className="usage-chart-tooltip" transform={`translate(${tooltipGeometry.x} ${tooltipGeometry.y})`} aria-hidden="true">
       <rect width={tooltipWidth} height={tooltipHeight} rx="9" className="usage-tooltip-surface" />
       <path d={`M ${tooltipGeometry.pointerX - 6} ${tooltipHeight} L ${tooltipGeometry.pointerX + 6} ${tooltipHeight} L ${tooltipGeometry.pointerX} ${tooltipHeight + 6} Z`} className="usage-tooltip-surface" />
-      <text x="13" y="19" className="usage-tooltip-title">{hoveredPoint.label} (UTC)</text>
-      <circle cx="16" cy="37" r="3.5" className="usage-tooltip-input-dot" />
-      <text x="26" y="41" className="usage-tooltip-value">Input: {tokens(hoveredPoint.inputTokens)}</text>
-      <circle cx="16" cy="55" r="3.5" className="usage-tooltip-output-dot" />
-      <text x="26" y="59" className="usage-tooltip-value">Output: {tokens(hoveredPoint.outputTokens)}</text>
-      <text x="13" y="77" className="usage-tooltip-value">Total tokens: {tokens(hoveredPoint.totalTokens)}</text>
-      <text x="13" y="95" className="usage-tooltip-spend">Spend: {costLabel(hoveredPoint)}</text>
+      <text x="15" y="23" className="usage-tooltip-title">{hoveredPoint.label} (UTC)</text>
+      <circle cx="18" cy="45" r="4" className="usage-tooltip-input-dot" />
+      <text x="31" y="50" className="usage-tooltip-value">Input: {tokens(hoveredPoint.inputTokens)}</text>
+      <circle cx="18" cy="68" r="4" className="usage-tooltip-output-dot" />
+      <text x="31" y="73" className="usage-tooltip-value">Output: {tokens(hoveredPoint.outputTokens)}</text>
+      <text x="15" y="96" className="usage-tooltip-value">Total tokens: {tokens(hoveredPoint.totalTokens)}</text>
+      <text x="15" y="117" className="usage-tooltip-spend">Spend: {costLabel(hoveredPoint)}</text>
     </g> : null}
   </svg>;
 }
@@ -278,7 +278,7 @@ export function UsageSettings() {
         const share = totalTokens === 0 ? 0 : row.totalTokens / totalTokens;
         const key = 'modelId' in row ? `${row.providerId}:${row.modelId}` : `${row.providerId}:${row.providerKind}`;
         const label = 'modelId' in row ? row.modelId : providerLabel(row.providerId);
-        return <div className={`usage-row usage-color-${index % 6}`} key={key}><div className="usage-row-main"><span className="usage-dot" /><strong>{label}</strong></div><div className="usage-row-numbers">{tokens(row.inputTokens)} in · {tokens(row.outputTokens)} out</div><Share value={share} /></div>;
+        return <div className={`usage-row usage-color-${index % 6}`} key={key}><div className="usage-row-main"><span className="usage-dot" /><strong>{label}</strong></div><div className="usage-row-numbers">{tokens(row.inputTokens)} in · {tokens(row.outputTokens)} out</div><div className="usage-row-cost">{costLabel(row)}</div><Share value={share} /></div>;
       })}{hiddenRows > 0 ? <button className="usage-show-more" onClick={() => setShowAllRows(true)}>Show {hiddenRows} more</button> : null}{showAllRows && activeRows.length > 6 ? <button className="usage-show-more" onClick={() => setShowAllRows(false)}>Show less</button> : null}{tab === 'models' && modelRows.length === 0 ? <div className="usage-empty">No model usage in this period.</div> : null}{tab === 'overview' && providerRows.length === 0 ? <div className="usage-empty">No provider usage in this period.</div> : null}</div> : null}
     </section>
 

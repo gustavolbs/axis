@@ -134,7 +134,10 @@ test('capability settings can enable a class and optionally restrict exact ids',
 test('the provider runtime applies budget and capability gates to current and future providers', () => {
   const runtime = fs.readFileSync(path.join(process.cwd(), 'src/project-provider-runtime.ts'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(runtime, /private governed\(provider: InferenceProvider\)/);
-  assert.match(runtime, /this\.capabilityPolicy\.wrap\(this\.budget\.wrap\(provider\)\)/);
+  assert.match(
+    runtime,
+    /this\.capabilityPolicy\.wrap\(this\.budget\.wrap\(withSafeModelLimits\(provider\)\)\)/
+  );
   assert.match(runtime, /\.\.\.Object\.keys\(this\.factories\)/);
   assert.match(runtime, /return \{ provider: this\.governed\(provider\) \}/);
 });

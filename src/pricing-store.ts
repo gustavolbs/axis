@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { InferenceRequest, InferenceUsage } from './providers/types.js';
+import { UsageLedger } from './usage-ledger.js';
 
 export interface ModelPricing {
   inputPerMillionUsd: number;
@@ -53,6 +54,40 @@ const BUILT_IN_PRICING: PricingFile['providers'] = {
       inputPerMillionUsd: 30,
       outputPerMillionUsd: 180,
       source: 'https://developers.openai.com/api/docs/models/gpt-5.5-pro',
+      verifiedAt: '2026-09-01'
+    }
+  },
+  anthropic: {
+    'claude-fable-5': {
+      inputPerMillionUsd: 10,
+      outputPerMillionUsd: 50,
+      cacheReadPerMillionUsd: 1,
+      cacheWritePerMillionUsd: 12.5,
+      source: 'https://platform.claude.com/docs/en/about-claude/pricing',
+      verifiedAt: '2026-09-01'
+    },
+    'claude-opus-5': {
+      inputPerMillionUsd: 5,
+      outputPerMillionUsd: 25,
+      cacheReadPerMillionUsd: 0.5,
+      cacheWritePerMillionUsd: 6.25,
+      source: 'https://platform.claude.com/docs/en/about-claude/pricing',
+      verifiedAt: '2026-09-01'
+    },
+    'claude-sonnet-5': {
+      inputPerMillionUsd: 2,
+      outputPerMillionUsd: 10,
+      cacheReadPerMillionUsd: 0.2,
+      cacheWritePerMillionUsd: 2.5,
+      source: 'https://platform.claude.com/docs/en/about-claude/pricing',
+      verifiedAt: '2026-09-01'
+    },
+    'claude-haiku-4-5-20251001': {
+      inputPerMillionUsd: 1,
+      outputPerMillionUsd: 5,
+      cacheReadPerMillionUsd: 0.1,
+      cacheWritePerMillionUsd: 1.25,
+      source: 'https://platform.claude.com/docs/en/about-claude/pricing',
       verifiedAt: '2026-09-01'
     }
   }
@@ -196,6 +231,23 @@ export class PricingStore {
       throw error;
     }
   }
+}
+
+export function backfillKnownUsagePricing(
+  ledger: UsageLedger,
+  pricing: PricingStore,
+  onlyProviderId?: string
+): number {
+  return ledger.backfillUnpriced((event) => {
+    if (onlyProviderId && event.providerId !== onlyProviderId) return undefined;
+    const modelPricing = pricing.get(event.providerId, event.modelId);
+    if (!modelPricing) return undefined;
+    return {
+      costUsd: calculateUsageCostUsd(event.usage, modelPricing),
+      pricingSource: modelPricing.source,
+      pricingVerifiedAt: modelPricing.verifiedAt
+    };
+  });
 }
 
 function tokenCost(tokens: number | undefined, perMillionUsd: number | undefined): number {

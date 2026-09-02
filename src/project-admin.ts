@@ -78,6 +78,7 @@ export interface ProviderAdminView {
 export interface ProjectCatalogModel {
   id: string;
   displayName: string;
+  createdAt?: string;
   available: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
@@ -407,6 +408,7 @@ export class ProjectAdminService {
           return {
             id: modelId,
             displayName: model?.displayName ?? modelId,
+            createdAt: model?.createdAt,
             available: Boolean(model),
             contextWindow: model?.contextWindow,
             maxOutputTokens: model?.maxOutputTokens,
@@ -459,7 +461,10 @@ export class ProjectAdminService {
             `Credential ${input.id} is bound to provider ${providerId} by Project ${project.id}; it cannot be reassigned to ${input.providerId}.`
           );
         }
-        if (input.organizationId !== project.organizationId) {
+        if (
+          input.organizationId !== undefined &&
+          input.organizationId !== project.organizationId
+        ) {
           throw new Error(
             `Credential ${input.id} is referenced by Project ${project.id} in organization ${project.organizationId}; it cannot be moved outside that organization.`
           );
@@ -485,7 +490,10 @@ export class ProjectAdminService {
       if (profile.providerId !== providerId) {
         throw new Error(`Credential ${credentialId} belongs to ${profile.providerId}, not ${providerId}.`);
       }
-      if (profile.organizationId !== organizationId) {
+      if (
+        profile.organizationId !== undefined &&
+        profile.organizationId !== organizationId
+      ) {
         throw new Error(
           `Credential ${credentialId} is outside project ${projectId}'s organization isolation boundary.`
         );

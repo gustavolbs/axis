@@ -40,6 +40,12 @@ export interface UsageBudgetReservation {
   upperBoundCostUsd: number;
 }
 
+export interface UsagePricingPatch {
+  costUsd: number;
+  pricingSource?: string;
+  pricingVerifiedAt?: string;
+}
+
 export interface UsagePeriodSummary {
   projectId: string;
   from: string;
@@ -168,6 +174,42 @@ export class UsageLedger {
     const target = path.join(this.root, filename);
     this.atomicWrite(target, event);
     return structuredClone(event);
+  }
+
+  backfillUnpriced(
+    resolve: (event: Readonly<UsageLedgerEvent>) => UsagePricingPatch | undefined
+  ): number {
+    if (!fs.existsSync(this.root)) return 0;
+    let updated = 0;
+    for (const file of fs.readdirSync(this.root)
+      .filter((name) => name.endsWith('.json') && !name.startsWith(RESERVATION_PREFIX))
+      .sort()) {
+      const full = path.join(this.root, file);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(fs.readFileSync(full, 'utf8')) as unknown;
+      } catch (error) {
+        throw new Error(`Could not read usage ledger event ${file}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`Usage ledger event ${file} is invalid.`);
+      }
+      const raw = parsed as UsageLedgerEvent;
+      if (raw.version !== 1) throw new Error(`Unsupported usage ledger event version in ${file}.`);
+      const event = normalizeEvent(raw);
+      if (event.providerKind !== 'cloud' || event.costUsd !== undefined) continue;
+      const pricing = resolve(structuredClone(event));
+      if (!pricing) continue;
+      const repriced = normalizeEvent({
+        ...event,
+        costUsd: pricing.costUsd,
+        pricingSource: pricing.pricingSource,
+        pricingVerifiedAt: pricing.pricingVerifiedAt
+      });
+      this.atomicWrite(full, repriced);
+      updated += 1;
+    }
+    return updated;
   }
 
   reserve(input: Omit<UsageBudgetReservation, 'version' | 'id' | 'timestamp'> & {

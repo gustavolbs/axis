@@ -15,6 +15,7 @@ import {
   type ProviderRuntimeSettings
 } from './provider-settings.js';
 import { AnthropicInferenceProvider } from './providers/anthropic-provider.js';
+import { withSafeModelLimits } from './providers/model-limits.js';
 import { OpenAIInferenceProvider } from './providers/openai-provider.js';
 import { ProviderRegistry } from './providers/registry.js';
 import type {
@@ -63,6 +64,7 @@ export interface RoutingCatalogOptions {
 export interface PersonalChatCatalogModel {
   id: string;
   displayName: string;
+  createdAt?: string;
   available: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
@@ -139,6 +141,7 @@ const OPENAI_PERSONAL_CHAT_MODELS = new Set([
 
 function isPersonalChatModel(providerId: string, model: ModelDefinition): boolean {
   if (providerId === 'openai') return OPENAI_PERSONAL_CHAT_MODELS.has(model.id.toLowerCase());
+  if (providerId === 'anthropic') return /^claude-/i.test(model.id);
   return !/(?:image|audio|realtime|transcrib|tts|embedding|moderation|whisper)/.test(model.id.toLowerCase());
 }
 
@@ -169,7 +172,8 @@ function curatePersonalChatModels(
   );
   // Installed local models are an intentional user choice. Remote catalogs are not:
   // keep their menu concise and current even when an API returns years of snapshots.
-  return providerKind === 'local' ? ordered : ordered.slice(0, 6);
+  if (providerKind === 'local' || providerId === 'anthropic') return ordered;
+  return ordered.slice(0, 6);
 }
 
 /**
@@ -197,7 +201,7 @@ export class ProjectProviderRuntime {
   }
 
   private governed(provider: InferenceProvider): InferenceProvider {
-    return this.capabilityPolicy.wrap(this.budget.wrap(provider));
+    return this.capabilityPolicy.wrap(this.budget.wrap(withSafeModelLimits(provider)));
   }
 
   buildRegistry(project: ProjectDefinition): ProviderRegistry {
@@ -319,6 +323,7 @@ export class ProjectProviderRuntime {
         models: models.map((model) => ({
           id: model.id,
           displayName: model.displayName,
+          createdAt: model.createdAt,
           available: true,
           contextWindow: model.contextWindow,
           maxOutputTokens: model.maxOutputTokens,

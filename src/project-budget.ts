@@ -4,6 +4,7 @@ import type { RoutingCandidate } from './cognitive-router.js';
 import type { InferenceStage } from './inference-status.js';
 import {
   PricingStore,
+  backfillKnownUsagePricing,
   calculateUsageCostUsd,
   estimateRequestCostUsd,
   type ModelPricing,
@@ -167,6 +168,7 @@ export class ProjectBudgetSession {
   ) {
     this.jobId = options.jobId ?? randomUUID();
     this.now = options.now ?? (() => new Date());
+    backfillKnownUsagePricing(this.ledger, this.pricing);
     for (const event of this.ledger.list(this.project.id)) {
       if (event.jobId !== this.jobId) continue;
       if (event.providerKind === 'cloud' && event.costUsd === undefined) {

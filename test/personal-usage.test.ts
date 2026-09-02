@@ -79,6 +79,29 @@ test('ships verified pricing for the curated OpenAI chat models', () => {
   }
 });
 
+test('ships verified pricing for the curated Anthropic chat models', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-coder-anthropic-pricing-'));
+  try {
+    const pricing = new PricingStore(path.join(root, 'pricing.json'));
+    assert.deepEqual(pricing.get('anthropic', 'claude-sonnet-5'), {
+      inputPerMillionUsd: 2,
+      outputPerMillionUsd: 10,
+      cacheReadPerMillionUsd: 0.2,
+      cacheWritePerMillionUsd: 2.5,
+      source: 'https://platform.claude.com/docs/en/about-claude/pricing',
+      verifiedAt: '2026-09-01'
+    });
+    for (const modelId of [
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-haiku-4-5-20251001'
+    ]) assert.ok(pricing.get('anthropic', modelId), `missing built-in pricing for ${modelId}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('unpriced personal cloud usage stays explicit instead of pretending to cost zero', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-coder-personal-unpriced-'));
   try {

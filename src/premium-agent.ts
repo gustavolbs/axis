@@ -232,6 +232,7 @@ function directChatHistoryBudget(input: PremiumAgentInput): DirectChatHistoryBud
   const contextWindow = Math.max(16_384, limits.contextWindow ?? CLOUD_FALLBACK_CONTEXT_TOKENS);
   const outputReserve = Math.min(
     Math.max(1, limits.maxOutputTokens ?? CLOUD_FALLBACK_OUTPUT_RESERVE),
+    CLOUD_FALLBACK_OUTPUT_RESERVE,
     Math.floor(contextWindow * 0.4)
   );
   const safetyReserve = Math.max(4_096, Math.floor(contextWindow * 0.08));
@@ -279,9 +280,13 @@ function renderDirectChatHistory(
 
 function directChatOutputLimit(input: PremiumAgentInput, config: LocalCoderConfig): number | undefined {
   if (input.chatModelLimits?.providerKind === 'cloud') {
-    // Cloud providers enforce their own model maximum. When metadata publishes
-    // that limit, pass the real limit rather than the old 2k local ceiling.
-    return input.chatModelLimits.maxOutputTokens;
+    // This is the per-chat generation ceiling used by budget admission, not the
+    // model's total output capacity. Clamp it to a practical default while still
+    // respecting models that publish a smaller maximum.
+    return Math.min(
+      input.chatModelLimits.maxOutputTokens ?? CLOUD_FALLBACK_OUTPUT_RESERVE,
+      CLOUD_FALLBACK_OUTPUT_RESERVE
+    );
   }
   return Math.min(config.reportMaxTokens ?? 3_072, 2_048);
 }

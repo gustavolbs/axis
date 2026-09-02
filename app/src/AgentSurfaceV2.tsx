@@ -35,10 +35,11 @@ import type { AdminProject, ModelSelection } from './app-types.js';
 import { FolderField } from './FolderField.js';
 import { MarkdownMessage, stripMarkdownForSpeech } from './MarkdownMessage.js';
 import { displayProfileName } from './native.js';
+import { ShellDialog } from './ShellDialog.js';
 
 type ReasoningEffortSelection = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 type JobReasoningEffort = ReasoningEffortSelection | 'none';
-type ModelMenuView = 'closed' | 'providers' | 'models' | 'effort';
+type ModelMenuView = 'closed' | 'providers' | 'models' | 'legacy-models' | 'effort';
 
 const NEW_TASK_ID = '__new__';
 type ComposerMode = 'chat' | 'cowork';
@@ -131,6 +132,12 @@ interface Job {
     reasoningEffort?: JobReasoningEffort;
   };
   turns: JobTurn[];
+  activity?: {
+    action: string;
+    detail?: string;
+    reasoningSummary?: string;
+    updatedAt: string;
+  };
   decisionRequest?: DecisionRequest;
   escalationPlan?: EscalationPlan;
   result?: EngineerResult;
@@ -152,6 +159,7 @@ interface WorkerStatus {
 interface CatalogModel {
   id: string;
   displayName: string;
+  createdAt?: string;
   available: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
@@ -175,6 +183,7 @@ interface ModelOption {
   providerId: string;
   modelId: string;
   label: string;
+  createdAt?: string;
   description: string;
   available: boolean;
   contextWindow?: number;
@@ -285,6 +294,43 @@ function defaultComposerSelection(catalog: ProjectCatalog): string {
   }
   return 'auto';
 }
+
+const CLAUDE_FAMILY_ORDER = ['fable', 'opus', 'sonnet', 'haiku'] as const;
+
+function claudeFamily(modelId: string): typeof CLAUDE_FAMILY_ORDER[number] | undefined {
+  const id = modelId.toLowerCase();
+  return CLAUDE_FAMILY_ORDER.find((family) => id.includes(`-${family}-`));
+}
+
+function claudeDisplayLabel(model: ModelOption): string {
+  const family = claudeFamily(model.modelId);
+  if (!family) return model.label;
+  const version = model.modelId
+    .toLowerCase()
+    .replace(/^claude-/, '')
+    .replace(new RegExp(`^${family}-`), '')
+    .replace(/-\d{8}$/, '')
+    .replace(/-/g, '.');
+  return `${family.charAt(0).toUpperCase()}${family.slice(1)}${version ? ` ${version}` : ''}`;
+}
+
+function claudeMenuModels(models: ModelOption[]): { recent: ModelOption[]; legacy: ModelOption[] } {
+  const recent: ModelOption[] = [];
+  const legacy: ModelOption[] = [];
+  for (const family of CLAUDE_FAMILY_ORDER) {
+    const familyModels = models
+      .filter((model) => claudeFamily(model.modelId) === family)
+      .sort((left, right) => {
+        const created = Date.parse(right.createdAt ?? '') - Date.parse(left.createdAt ?? '');
+        if (Number.isFinite(created) && created !== 0) return created;
+        return right.modelId.localeCompare(left.modelId, undefined, { numeric: true });
+      });
+    if (familyModels[0]) recent.push(familyModels[0]);
+    legacy.push(...familyModels.slice(1));
+  }
+  legacy.push(...models.filter((model) => !claudeFamily(model.modelId)));
+  return { recent, legacy };
+}
 function isWorking(status?: string) {
   return status === 'queued' || status === 'running';
 }
@@ -332,6 +378,7 @@ export function AgentSurfaceV2() {
   const [guidance, setGuidance] = useState('');
   const [profileName, setProfileName] = useState<string>();
   const [editingTurnId, setEditingTurnId] = useState<string>();
+  const [modelSwitch, setModelSwitch] = useState<{ value: string; label: string }>();
 
   const active = activeId === NEW_TASK_ID ? undefined : jobs.find((job) => job.id === activeId);
   const pendingDecision = mockDecision
@@ -416,7 +463,7 @@ export function AgentSurfaceV2() {
         setError(next instanceof Error ? next.message : String(next));
       });
     return () => { cancelled = true; };
-  }, [selectedProjectId, modelMenu]);
+  }, [selectedProjectId, activeId]);
 
   useEffect(() => {
     if (!active?.decisionRequest) return;
@@ -447,6 +494,7 @@ export function AgentSurfaceV2() {
           providerId: provider.id,
           modelId: model.id,
           label: model.displayName,
+          createdAt: model.createdAt,
           description: provider.kind === 'local' ? 'Local model' : `Cloud · ${providerLabel(provider.id)}`,
           available: provider.ready && model.available,
           contextWindow: model.contextWindow,
@@ -569,6 +617,27 @@ export function AgentSurfaceV2() {
     }
   }
 
+  function chooseModelSelection(value: string) {
+    if (value === modelSelection) return;
+    const activeValue = active?.input.modelSelection ? modelValue(active.input.modelSelection) : undefined;
+    const nextSelection = parseModelValue(value);
+    const providerId = nextSelection.mode === 'explicit'
+      ? nextSelection.providerId
+      : nextSelection.mode === 'local-first' ? 'ollama' : '';
+    const nextModel = nextSelection.mode === 'auto'
+      ? undefined
+      : modelOptions.find((model) => model.providerId === providerId && model.modelId === nextSelection.modelId);
+    const label = nextModel
+      ? `${providerLabel(providerId)} · ${providerId === 'anthropic' ? claudeDisplayLabel(nextModel) : nextModel.label}`
+      : providerLabel(providerId);
+    if (active?.input.interactionMode === 'chat' && activeValue && value !== activeValue) {
+      setModelMenu('closed');
+      setModelSwitch({ value, label });
+      return;
+    }
+    setModelSelection(value);
+  }
+
   async function createJob() {
     if (!goal.trim()) return;
 
@@ -631,7 +700,11 @@ export function AgentSurfaceV2() {
     try {
       const { job } = await api<{ job: Job }>(`/api/jobs/${active.id}/follow-up`, {
         method: 'POST',
-        body: JSON.stringify({ message: goal.trim() })
+        body: JSON.stringify({
+          message: goal.trim(),
+          modelSelection: parseModelValue(modelSelection),
+          reasoningEffort: thinkingEnabled ? effort : 'none'
+        })
       });
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
       setGoal('');
@@ -652,7 +725,11 @@ export function AgentSurfaceV2() {
     try {
       const { job } = await api<{ job: Job }>(`/api/jobs/${active.id}/turns/${turnId}/retry`, {
         method: 'POST',
-        body: JSON.stringify(message === undefined ? {} : { message })
+        body: JSON.stringify({
+          ...(message === undefined ? {} : { message }),
+          modelSelection: parseModelValue(modelSelection),
+          reasoningEffort: thinkingEnabled ? effort : 'none'
+        })
       });
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
       setEditingTurnId(undefined);
@@ -815,7 +892,7 @@ export function AgentSurfaceV2() {
         modelOptions={modelOptions}
         providerModes={providerModes}
         modelSelection={modelSelection}
-        setModelSelection={setModelSelection}
+        setModelSelection={chooseModelSelection}
         modelLabel={modelLabel}
         selectedModelLabel={selectedModel?.label}
         contextInfo={conversationContext}
@@ -836,6 +913,17 @@ export function AgentSurfaceV2() {
         editingMessage={Boolean(editingTurnId)}
         cancelEditing={cancelEditTurn}
         placeholder={pendingDecision ? 'Or answer directly…' : undefined}
+      />
+
+      <ShellDialog
+        request={modelSwitch ? {
+          kind: 'confirm',
+          title: 'Switch model?',
+          message: `Your next response will use ${modelSwitch.label}. It may take longer and use more tokens because the new model must read this conversation’s history.`,
+          confirmLabel: `Switch to ${modelSwitch.label}`,
+          onConfirm: () => setModelSelection(modelSwitch.value)
+        } : undefined}
+        onClose={() => setModelSwitch(undefined)}
       />
 
       {pendingDecision ? <DecisionHint request={pendingDecision} /> : null}
@@ -1051,6 +1139,8 @@ function ModelMenu(props: {
   thinkingEnabled: boolean;
   setThinkingEnabled: (value: boolean) => void;
 }) {
+  const [browsingMode, setBrowsingMode] = useState<string>();
+
   if (props.modelMenu === 'effort') {
     return <div className="lc-agent-popover model-popover effort-popover" role="menu">
       <button className="popover-back" onClick={() => props.setModelMenu('providers')}><ChevronLeft size={16} /><strong>Effort</strong></button>
@@ -1062,7 +1152,8 @@ function ModelMenu(props: {
     </div>;
   }
 
-  const currentMode = providerMode(props.modelSelection);
+  const selectedMode = providerMode(props.modelSelection);
+  const currentMode = browsingMode ?? selectedMode;
   const currentModeConfig = props.providerModes.find((mode) => mode.id === currentMode)
     ?? props.providerModes.find((mode) => mode.ready)
     ?? {
@@ -1073,6 +1164,9 @@ function ModelMenu(props: {
       ready: false
     };
   const currentModels = props.modelOptions.filter((model) => model.providerId === currentModeConfig.providerId);
+  const claudeGroups = currentModeConfig.providerId === 'anthropic'
+    ? claudeMenuModels(currentModels)
+    : { recent: currentModels, legacy: [] };
   const selectedModelId = props.modelSelection.includes('\0')
     ? props.modelSelection.slice(props.modelSelection.indexOf('\0') + 1)
     : '';
@@ -1084,24 +1178,22 @@ function ModelMenu(props: {
 
   function chooseProviderMode(mode: ProviderModeConfig) {
     if (mode.id === 'local-first' && !props.allowLocalFirst) return;
-    const candidates = props.modelOptions.filter(
-      (option) => option.providerId === mode.providerId && option.available
-    );
-    const model = candidates.find((option) => option.providerDefault) ?? candidates[0];
-    if (!model) return;
-    props.setModelSelection(modeValue(mode.id, model.modelId));
+    setBrowsingMode(mode.id);
     props.setModelMenu('models');
   }
 
-  if (props.modelMenu === 'models') {
+  if (props.modelMenu === 'models' || props.modelMenu === 'legacy-models') {
+    const legacy = props.modelMenu === 'legacy-models';
+    const visibleModels = legacy ? claudeGroups.legacy : claudeGroups.recent;
     return <div className="lc-agent-popover model-popover model-list-popover" role="menu">
-      <button className="popover-back" onClick={() => props.setModelMenu('providers')}><ChevronLeft size={16} /><strong>{currentModeConfig.label} models</strong></button>
+      <button className="popover-back" onClick={() => props.setModelMenu(legacy ? 'models' : 'providers')}><ChevronLeft size={16} /><strong>{legacy ? 'More Claude models' : `${currentModeConfig.label} models`}</strong></button>
       <div className="popover-separator" />
-      {currentModels.map((model) => <button key={`${currentMode}-${model.modelId}`} className={selectedModelId === model.modelId ? 'selected' : ''} disabled={!model.available} title={!model.available ? model.reason ?? 'Provider unavailable' : undefined} onClick={() => { props.setModelSelection(modeValue(currentMode, model.modelId)); props.setModelMenu('closed'); }}>
-        <span><strong>{model.label}</strong><small>{model.description}{model.available ? '' : ` · ${model.reason ?? 'unavailable'}`}</small></span>
+      {visibleModels.map((model) => <button key={`${currentMode}-${model.modelId}`} className={selectedModelId === model.modelId ? 'selected' : ''} disabled={!model.available} title={!model.available ? model.reason ?? 'Provider unavailable' : undefined} onClick={() => { props.setModelSelection(modeValue(currentMode, model.modelId)); props.setModelMenu('closed'); }}>
+        <span><strong>{currentModeConfig.providerId === 'anthropic' ? claudeDisplayLabel(model) : model.label}</strong><small>{model.description}{model.available ? '' : ` · ${model.reason ?? 'unavailable'}`}</small></span>
         {selectedModelId === model.modelId ? <Check size={16} /> : null}
       </button>)}
-      {currentModels.length === 0 ? <div className="model-menu-note">{currentModeConfig.reason ?? 'No Chat models are available for this provider. Check its connection and API key.'}</div> : null}
+      {!legacy && claudeGroups.legacy.length > 0 ? <><div className="popover-separator" /><button className="popover-row-link" onClick={() => props.setModelMenu('legacy-models')}><span><strong>More models</strong><small>Older Claude versions and dated snapshots</small></span><ChevronRight size={16} /></button></> : null}
+      {visibleModels.length === 0 ? <div className="model-menu-note">{legacy ? 'No older Claude models are available.' : currentModeConfig.reason ?? 'No Chat models are available for this provider. Check its connection and API key.'}</div> : null}
     </div>;
   }
 
@@ -1112,7 +1204,7 @@ function ModelMenu(props: {
       const unavailable = mode.id === 'local-first' && !props.allowLocalFirst
         ? ' · requires a project'
         : ready ? '' : ` · ${mode.reason ?? 'unavailable'}`;
-      return <button key={mode.id} className={currentMode === mode.id ? 'selected' : ''} disabled={!ready} title={!ready ? mode.reason : undefined} onClick={() => chooseProviderMode(mode)}>
+      return <button key={mode.id} className={selectedMode === mode.id ? 'selected' : ''} disabled={!ready} title={!ready ? mode.reason : undefined} onClick={() => chooseProviderMode(mode)}>
         <span><strong>{mode.label}</strong><small>{mode.description}{unavailable}</small></span>
         {ready ? <ChevronRight size={16} /> : null}
       </button>;
@@ -1179,8 +1271,26 @@ function MessageActions(props: {
   </div>;
 }
 
-function chatProgress(state?: string, model?: string): { title: string; detail: string } {
+function chatProgress(
+  state?: string,
+  model?: string,
+  activity?: Job['activity'],
+  latestEvent?: JobEvent
+): { title: string; detail: string } {
   const name = model ?? 'Local Coder';
+  const activityText = `${activity?.action ?? ''} ${latestEvent?.title ?? ''}`.toLowerCase();
+  if (activityText.includes('reasoning') || activityText.includes('thinking')) {
+    return {
+      title: 'Thinking',
+      detail: activity?.reasoningSummary ?? activity?.detail ?? `${name} is analyzing the request and deciding how to answer.`
+    };
+  }
+  if (activityText.includes('drafting') || activityText.includes('writing')) {
+    return {
+      title: 'Writing',
+      detail: activity?.reasoningSummary ?? activity?.detail ?? `${name} is turning the result into a response.`
+    };
+  }
   if (state === 'thinking') {
     return {
       title: 'Thinking',
@@ -1194,8 +1304,8 @@ function chatProgress(state?: string, model?: string): { title: string; detail: 
     };
   }
   return {
-    title: 'Preparing',
-    detail: `${name} is preparing the response…`
+    title: activity?.action ?? 'Analyzing',
+    detail: activity?.reasoningSummary ?? activity?.detail ?? `${name} is reading the conversation and preparing its approach.`
   };
 }
 
@@ -1229,7 +1339,12 @@ function TaskThread(props: {
     ? job.input.modelSelection.modelId
     : undefined;
   const progress = job.input.interactionMode === 'chat'
-    ? chatProgress(currentInference?.streamState, selectedChatModel ?? currentInference?.model)
+    ? chatProgress(
+        currentInference?.streamState,
+        selectedChatModel ?? currentInference?.model,
+        job.activity,
+        latestEvent
+      )
     : undefined;
 
   return <div className="lc-agent-thread" aria-live="polite">

@@ -385,9 +385,10 @@ test('workspace entry has native Browse and browser recent-folder fallback', () 
 
 test('model menu is catalog-driven, keeps branded built-ins, and exposes Effort and Thinking', () => {
   assert.match(agentSurface, /className="model-effort-trigger"/);
-  assert.match(agentSurface, /type ModelMenuView = 'closed' \| 'providers' \| 'models' \| 'effort'/);
+  assert.match(agentSurface, /type ModelMenuView = 'closed' \| 'providers' \| 'models' \| 'legacy-models' \| 'effort'/);
   assert.match(agentSurface, /modelMenu === 'closed' \? 'providers' : 'closed'/);
-  assert.match(agentSurface, /if \(props\.modelMenu === 'models'\)/);
+  assert.match(agentSurface, /props\.modelMenu === 'models' \|\| props\.modelMenu === 'legacy-models'/);
+  assert.match(agentSurface, /Older Claude versions and dated snapshots/);
   assert.match(agentSurface, /setModelMenu\('providers'\).*models<\/strong>/s, 'the model list must have a back path to providers');
   assert.match(agentSurface, /setModelMenu\('models'\)/, 'choosing a provider must open its model list');
   assert.match(agentSurface, /\(catalog\?\.providers \?\? \[\]\)\.map\(\(provider\)/);

@@ -8,6 +8,7 @@ import type { LocalCoderConfig } from '../src/config.js';
 import type { LocalEngineerResult } from '../src/local-engineer.js';
 import type { OllamaClient, OllamaGeneration } from '../src/ollama.js';
 import { executePremiumLocalAgent } from '../src/premium-agent.js';
+import { reportProgress } from '../src/progress-context.js';
 import type { ProjectEngineerInput } from '../src/project-engineer-backend.js';
 import { StandaloneJobManager } from '../src/standalone-job-manager.js';
 
@@ -92,6 +93,69 @@ test('a follow-up appends turns to the same chat job and creates no second job',
     { role: 'assistant', content: 'Prazer, Gustavo.' }
   ]);
   assert.equal(calls[1].goal, 'Qual é meu nome?');
+});
+
+test('a follow-up can switch the model and effort for the existing conversation', async () => {
+  const calls: ProjectEngineerInput[] = [];
+  const manager = new StandaloneJobManager({
+    executeEngineer: async (input) => {
+      calls.push(input);
+      return success(input.goal, 'ok');
+    }
+  });
+  const created = manager.create({
+    workspace: '',
+    goal: 'first',
+    interactionMode: 'chat',
+    modelSelection: { mode: 'explicit', providerId: 'ollama', modelId: 'qwen-local' },
+    reasoningEffort: 'low'
+  });
+  await waitForTerminal(manager, created.id);
+
+  await manager.followUp(created.id, 'second', {
+    modelSelection: { mode: 'explicit', providerId: 'anthropic', modelId: 'claude-sonnet-5' },
+    reasoningEffort: 'high'
+  });
+  const finished = await waitForTerminal(manager, created.id);
+
+  assert.deepEqual(finished.input.modelSelection, {
+    mode: 'explicit', providerId: 'anthropic', modelId: 'claude-sonnet-5'
+  });
+  assert.equal(finished.input.reasoningEffort, 'high');
+  assert.deepEqual(calls.at(-1)?.modelSelection, finished.input.modelSelection);
+  assert.equal(calls.at(-1)?.reasoningEffort, 'high');
+  assert.equal(calls.at(-1)?.chatHistory?.length, 2);
+});
+
+test('chat publishes safe live activity from the provider progress stream', async () => {
+  const activity: Array<{ action: string; reasoningSummary?: string }> = [];
+  const manager = new StandaloneJobManager({
+    executeEngineer: async (input) => {
+      reportProgress({
+        action: 'Model is reasoning about the conversation',
+        reasoningSummary: 'The model is processing the request; hidden reasoning stays private.'
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      reportProgress({
+        action: 'Model is drafting the response',
+        reasoningSummary: 'The model is composing the user-visible answer.'
+      });
+      return success(input.goal, 'ok');
+    }
+  });
+  manager.subscribe((_event, job) => {
+    if (job.activity) activity.push(job.activity);
+  });
+
+  const created = manager.create({ workspace: '', goal: 'hello', interactionMode: 'chat' });
+  const finished = await waitForTerminal(manager, created.id);
+
+  assert.equal(finished.activity, undefined, 'ephemeral activity is cleared when the answer completes');
+  assert.deepEqual(activity.map((entry) => entry.action), [
+    'Model is reasoning about the conversation',
+    'Model is drafting the response'
+  ]);
+  assert.match(activity[0]?.reasoningSummary ?? '', /hidden reasoning stays private/);
 });
 
 test('edit and resend replay a prior user turn in the same linear chat job', async () => {
@@ -207,6 +271,27 @@ test('direct chat receives the earlier conversation turns in its bounded prompt'
   assert.match(prompt, /USER:\nMeu nome é Gustavo\./);
   assert.match(prompt, /ASSISTANT:\nPrazer, Gustavo\./);
   assert.match(prompt, /# CURRENT USER MESSAGE\nQual é meu nome\?/);
+});
+
+test('cloud direct chat always sends a practical finite output limit', async () => {
+  let maxTokens: number | undefined;
+  const model: Pick<OllamaClient, 'chat'> = {
+    async chat(_systemPrompt, _userPrompt, _format, runtime): Promise<OllamaGeneration> {
+      maxTokens = runtime?.maxTokens;
+      return { model: 'gpt-5.4-mini', content: 'ok' } as OllamaGeneration;
+    }
+  };
+  await executePremiumLocalAgent(model, { model: 'gpt-5.4-mini' } as LocalCoderConfig, {
+    interactionMode: 'chat',
+    workspace: '',
+    goal: 'Olá',
+    chatModelLimits: {
+      providerId: 'openai',
+      providerKind: 'cloud',
+      contextWindow: 400_000
+    }
+  });
+  assert.equal(maxTokens, 8_192);
 });
 
 test('jobs persisted before turns existed migrate Chat without changing Cowork rendering', async () => {

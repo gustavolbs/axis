@@ -74,7 +74,13 @@ const providerCapabilities: ProviderCapabilities = {
  */
 function knownModelLimits(modelId: string): Pick<ModelDefinition, 'contextWindow' | 'maxOutputTokens'> {
   if (/^gpt-5\.6(?:-|$)/i.test(modelId)) {
-    return { contextWindow: 1_050_000, maxOutputTokens: 131_072 };
+    return { contextWindow: 1_050_000, maxOutputTokens: 128_000 };
+  }
+  if (modelId.toLowerCase() === 'gpt-5.4-mini') {
+    return { contextWindow: 400_000, maxOutputTokens: 128_000 };
+  }
+  if (/^gpt-5\.5-pro(?:-|$)/i.test(modelId)) {
+    return { contextWindow: 1_050_000, maxOutputTokens: 128_000 };
   }
   return {};
 }

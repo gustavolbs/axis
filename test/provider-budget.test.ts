@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { PricingStore } from '../src/pricing-store.js';
 import {
+  DEFAULT_BUDGETED_MAX_OUTPUT_TOKENS,
   PROVIDER_BUDGET_PROJECT_ID,
   ProviderBudgetError,
   ProviderBudgetManager
@@ -42,7 +43,8 @@ function request(maxOutputTokens?: number): InferenceRequest {
 
 function provider(
   kind: 'local' | 'cloud' = 'cloud',
-  invoke?: InferenceProvider['invoke']
+  invoke?: InferenceProvider['invoke'],
+  maxOutputTokens?: number
 ): InferenceProvider {
   const providerId = kind === 'local' ? 'ollama' : 'future-ai';
   return {
@@ -50,7 +52,12 @@ function provider(
     kind,
     capabilities,
     async listModels() {
-      return [{ providerId: this.id, id: 'future-chat-1', displayName: 'Future Chat 1' }];
+      return [{
+        providerId: this.id,
+        id: 'future-chat-1',
+        displayName: 'Future Chat 1',
+        maxOutputTokens
+      }];
     },
     async health() {
       return { providerId: this.id, ok: true, checkedAt: new Date(0).toISOString(), latencyMs: 1 };
@@ -74,7 +81,13 @@ function fixture(name: string, now = new Date('2026-09-12T12:00:00.000Z')) {
   return { root, settings, pricing, ledger, budget, now };
 }
 
-function appendSpend(ledger: UsageLedger, timestamp: string, costUsd?: number, billingId?: string): void {
+function appendSpend(
+  ledger: UsageLedger,
+  timestamp: string,
+  costUsd?: number,
+  billingId?: string,
+  modelId = 'future-chat-1'
+): void {
   ledger.append({
     jobId: `job-${Math.random().toString(36).slice(2)}`,
     timestamp,
@@ -83,7 +96,7 @@ function appendSpend(ledger: UsageLedger, timestamp: string, costUsd?: number, b
     stage: 'other',
     providerId: 'future-ai',
     providerKind: 'cloud',
-    modelId: 'future-chat-1',
+    modelId,
     usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     latencyMs: 1,
     costUsd,
@@ -149,7 +162,7 @@ test('explicit Unlimited cloud provider does not require pricing or an output bo
   assert.equal(calls, 1);
 });
 
-test('finite provider budget requires pricing and an output bound before inference', async () => {
+test('finite provider budget requires pricing and supplies a safe output bound before inference', async () => {
   const missingPricing = fixture('missing-pricing');
   missingPricing.settings.update('future-ai', { unlimitedUsage: false, monthlyBudgetUsd: 1 });
   await assert.rejects(
@@ -158,10 +171,35 @@ test('finite provider budget requires pricing and an output bound before inferen
   );
   const missingBound = fixture('missing-bound');
   configureFiniteBudget(missingBound);
+  let receivedMaxOutputTokens: number | undefined;
+  const result = await missingBound.budget.wrap(provider('cloud', async (input) => {
+    receivedMaxOutputTokens = input.maxOutputTokens;
+    return {
+      providerId: 'future-ai', model: input.model, content: 'ok', latencyMs: 1,
+      usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 }
+    };
+  })).invoke(request());
+  assert.equal(result.content, 'ok');
+  assert.equal(receivedMaxOutputTokens, DEFAULT_BUDGETED_MAX_OUTPUT_TOKENS);
+
   await assert.rejects(
-    missingBound.budget.wrap(provider()).invoke(request()),
+    missingBound.budget.authorize(provider(), request()),
     (error: unknown) => error instanceof ProviderBudgetError && error.code === 'output-bound-required'
   );
+});
+
+test('automatic budget output bound respects a smaller published model maximum', async () => {
+  const input = fixture('published-output-bound');
+  configureFiniteBudget(input);
+  let receivedMaxOutputTokens: number | undefined;
+  await input.budget.wrap(provider('cloud', async (requestInput) => {
+    receivedMaxOutputTokens = requestInput.maxOutputTokens;
+    return {
+      providerId: 'future-ai', model: requestInput.model, content: 'ok', latencyMs: 1,
+      usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 }
+    };
+  }, 4_096)).invoke(request());
+  assert.equal(receivedMaxOutputTokens, 4_096);
 });
 
 test('finite provider budget permits a call whose pessimistic upper bound fits', async () => {
@@ -197,10 +235,20 @@ test('finite provider budget blocks before inference when projected monthly spen
   assert.equal(calls, 0);
 });
 
-test('finite provider budget fails closed when current-month cloud usage is unpriced', async () => {
-  const input = fixture('unpriced');
+test('finite provider budget backfills current-month usage after pricing becomes available', async () => {
+  const input = fixture('repriced');
   configureFiniteBudget(input, 5);
   appendSpend(input.ledger, input.now.toISOString());
+  const result = await input.budget.wrap(provider()).invoke(request(100));
+  assert.equal(result.content, 'ok');
+  const historical = input.ledger.list().find((event) => event.billingId === undefined);
+  assert.equal(historical?.costUsd, 0.00006);
+});
+
+test('finite provider budget still fails closed when historical model pricing is genuinely unknown', async () => {
+  const input = fixture('still-unpriced');
+  configureFiniteBudget(input, 5);
+  appendSpend(input.ledger, input.now.toISOString(), undefined, undefined, 'unknown-model');
   await assert.rejects(
     input.budget.wrap(provider()).invoke(request(100)),
     (error: unknown) => error instanceof ProviderBudgetError && error.code === 'historical-cost-unknown'
@@ -270,7 +318,10 @@ test('local providers bypass monetary budget enforcement because API cost is zer
 test('provider budgets are wired generically into every provider runtime and Usage settings', () => {
   const runtime = fs.readFileSync(path.join(process.cwd(), 'src/project-provider-runtime.ts'), 'utf8').replace(/\r\n/g, '\n');
   const surface = fs.readFileSync(path.join(process.cwd(), 'app/src/UsageSettings.tsx'), 'utf8').replace(/\r\n/g, '\n');
-  assert.match(runtime, /this\.capabilityPolicy\.wrap\(this\.budget\.wrap\(provider\)\)/);
+  assert.match(
+    runtime,
+    /this\.capabilityPolicy\.wrap\(this\.budget\.wrap\(withSafeModelLimits\(provider\)\)\)/
+  );
   assert.match(runtime, /\.\.\.Object\.keys\(this\.factories\)/);
   assert.match(surface, /Provider budgets/);
   assert.match(surface, /monthlyBudgetUsd/);

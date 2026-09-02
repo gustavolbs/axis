@@ -345,7 +345,12 @@ export function assertProjectCredentialIsolation(
     if (credential.providerId !== providerId) {
       throw new Error(`Credential ${credentialId} belongs to ${credential.providerId}, not ${providerId}.`);
     }
-    if (credential.organizationId !== project.organizationId) {
+    // An unscoped credential is a personal key the user may explicitly bind to
+    // a Project. Keys scoped to another organization remain a hard boundary.
+    if (
+      credential.organizationId !== undefined &&
+      credential.organizationId !== project.organizationId
+    ) {
       throw new Error(
         `Credential ${credentialId} is outside project ${project.id}'s organization isolation boundary.`
       );

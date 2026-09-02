@@ -140,6 +140,19 @@ function modelCapabilities(info: AnthropicModelInfo): Partial<ProviderCapabiliti
   };
 }
 
+function knownModelLimits(modelId: string): Pick<ModelDefinition, 'contextWindow' | 'maxOutputTokens'> {
+  switch (modelId.toLowerCase()) {
+    case 'claude-fable-5':
+    case 'claude-opus-5':
+    case 'claude-sonnet-5':
+      return { contextWindow: 1_000_000, maxOutputTokens: 128_000 };
+    case 'claude-haiku-4-5-20251001':
+      return { contextWindow: 200_000, maxOutputTokens: 64_000 };
+    default:
+      return {};
+  }
+}
+
 function manualThinkingBudget(effort: ReasoningEffort, maxTokens: number): number {
   const target =
     effort === 'low' ? 1_024
@@ -214,18 +227,23 @@ export class AnthropicInferenceProvider implements InferenceProvider {
       if (!payload.has_more || !payload.last_id) break;
       afterId = payload.last_id;
     }
-    return models.map((model) => ({
-      providerId: this.id,
-      id: model.id,
-      displayName: model.display_name ?? model.id,
-      createdAt: model.created_at,
-      contextWindow: model.max_input_tokens && model.max_input_tokens > 0
-        ? model.max_input_tokens
-        : undefined,
-      maxOutputTokens: model.max_tokens && model.max_tokens > 0 ? model.max_tokens : undefined,
-      capabilities: modelCapabilities(model),
-      metadata: model.capabilities ? { anthropicCapabilities: model.capabilities } : undefined
-    }));
+    return models.map((model) => {
+      const known = knownModelLimits(model.id);
+      return {
+        providerId: this.id,
+        id: model.id,
+        displayName: model.display_name ?? model.id,
+        createdAt: model.created_at,
+        contextWindow: model.max_input_tokens && model.max_input_tokens > 0
+          ? model.max_input_tokens
+          : known.contextWindow,
+        maxOutputTokens: model.max_tokens && model.max_tokens > 0
+          ? model.max_tokens
+          : known.maxOutputTokens,
+        capabilities: modelCapabilities(model),
+        metadata: model.capabilities ? { anthropicCapabilities: model.capabilities } : undefined
+      };
+    });
   }
 
   async health(): Promise<ProviderHealth> {

@@ -266,7 +266,10 @@ test('OpenAI uses Responses API with store disabled and normalizes detailed usag
     calls.push({ url, init });
     if (url.endsWith('/models')) {
       return response({
-        data: [{ id: 'gpt-5.6-sol', created: 1780000000, owned_by: 'openai' }]
+        data: [
+          { id: 'gpt-5.6-sol', created: 1780000000, owned_by: 'openai' },
+          { id: 'gpt-5.4-mini', created: 1770000000, owned_by: 'openai' }
+        ]
       });
     }
     if (url.endsWith('/responses')) {
@@ -308,7 +311,9 @@ test('OpenAI uses Responses API with store disabled and normalizes detailed usag
     }
   });
 
-  assert.deepEqual(models.map((model) => model.id), ['gpt-5.6-sol']);
+  assert.deepEqual(models.map((model) => model.id), ['gpt-5.6-sol', 'gpt-5.4-mini']);
+  assert.equal(models[1]?.contextWindow, 400_000);
+  assert.equal(models[1]?.maxOutputTokens, 128_000);
   assert.equal(result.content, '{"answer":"ok"}');
   assert.equal(result.usage.cacheReadInputTokens, 40);
   assert.equal(result.usage.cacheWriteInputTokens, 10);
