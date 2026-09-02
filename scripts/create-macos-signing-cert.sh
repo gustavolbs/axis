@@ -69,10 +69,14 @@ fi
 
 chmod 600 "$KEY" "$P12"
 
-# Verify that macOS can parse the generated PKCS#12 before the user stores it.
-security import "$P12" -k "$HOME/Library/Keychains/login.keychain-db" \
-  -P "$P12_PASS" -T /usr/bin/codesign >/dev/null
-security delete-identity -c "$CN" "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1 || true
+# Verify that macOS can parse the generated PKCS#12 without touching the user's
+# login keychain. The release runner performs the actual code-signing check.
+VERIFY_KEYCHAIN="$OUT_DIR/.axis-signing-verify.keychain-db"
+security delete-keychain "$VERIFY_KEYCHAIN" >/dev/null 2>&1 || true
+security create-keychain -p verify "$VERIFY_KEYCHAIN" >/dev/null
+security unlock-keychain -p verify "$VERIFY_KEYCHAIN" >/dev/null
+security import "$P12" -k "$VERIFY_KEYCHAIN" -P "$P12_PASS" -T /usr/bin/codesign >/dev/null
+security delete-keychain "$VERIFY_KEYCHAIN" >/dev/null
 
 echo
 echo "Created: $P12"
