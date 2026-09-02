@@ -102,6 +102,11 @@
   -webkit-app-region: drag;
 }
 
+[data-shell='electron'] .lc-shell-window-chrome {
+  right: 0;
+  width: auto;
+}
+
 .lc-shell-window-chrome button {
   -webkit-app-region: no-drag;
 }
@@ -373,6 +378,64 @@
 .lc-shell-sidebar-row-wrap:hover .lc-shell-row-menu-button,
 .lc-shell-row-menu-button:focus-visible {
   opacity: 1;
+}
+
+/* The action menu follows the same quiet, raised treatment as the reference
+   app: roomier rows, a dedicated icon column and a clear destructive group. */
+.lc-shell-row-menu {
+  top: calc(100% + 7px);
+  right: 2px;
+  width: min(224px, calc(100vw - 24px));
+  padding: 7px;
+  border-color: var(--lc-border-strong);
+  border-radius: 14px;
+  background: var(--lc-surface);
+  box-shadow: var(--lc-shadow-popover);
+}
+
+.lc-shell-row-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--lc-text);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+/* Icons are written after the label to preserve the existing source contract;
+   flex ordering keeps them in the leading column for the rendered menu. */
+.lc-shell-row-menu button svg {
+  order: -1;
+  flex: 0 0 auto;
+  color: var(--lc-muted);
+  stroke-width: 1.75;
+}
+
+.lc-shell-row-menu button:hover,
+.lc-shell-row-menu button:focus-visible {
+  background: var(--lc-hover);
+  color: var(--lc-text);
+  outline: none;
+}
+
+.lc-shell-row-menu button:hover svg,
+.lc-shell-row-menu button:focus-visible svg {
+  color: var(--lc-text-soft);
+}
+
+.lc-shell-row-menu-separator {
+  height: 1px;
+  margin: 6px 7px;
+  background: var(--lc-border);
+}
+
+.lc-shell-row-menu button.danger,
+.lc-shell-row-menu button.danger svg {
+  color: var(--lc-negative);
 }
 
 .sidebar-collapsed .lc-shell-chat-dot,
@@ -1492,48 +1555,63 @@
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, .7);
-  backdrop-filter: blur(7px);
+  padding: 28px;
+  background: rgba(0, 0, 0, .68);
+  backdrop-filter: blur(9px);
 }
 
 .work-hub-shell {
-  width: min(1120px, 96vw);
-  height: min(780px, 92vh);
+  width: min(1180px, 96vw);
+  height: min(800px, 92vh);
   display: grid;
-  grid-template-columns: 176px 1fr;
+  grid-template-columns: 196px minmax(0, 1fr);
   border: 1px solid var(--lc-border);
-  border-radius: 13px;
+  border-radius: 14px;
   background: var(--lc-bg);
   overflow: hidden;
   box-shadow: var(--lc-shadow-popover);
 }
 
+.work-hub-shell button,
+.work-hub-shell a {
+  font: inherit;
+}
+
 .work-hub-rail {
-  padding: 18px 10px;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 20px 12px 14px;
   border-right: 1px solid var(--lc-border);
   background: var(--lc-sidebar);
 }
 
-.work-hub-rail h1 {
-  font-size: 13px;
-  margin: 2px 9px 16px;
+.work-hub-rail-title {
+  margin: 1px 9px 17px;
   color: var(--lc-text-soft);
+  font-size: 13px;
+  font-weight: 620;
 }
 
 .work-hub-rail button {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 32px;
+  gap: 9px;
+  min-height: 34px;
+  margin-bottom: 2px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: var(--lc-muted);
-  padding: 0 9px;
-  font-size: 13px;
+  padding: 0 10px;
+  font-size: 12px;
   text-align: left;
+}
+
+.work-hub-rail button:hover {
+  background: var(--lc-surface);
+  color: var(--lc-text-soft);
 }
 
 .work-hub-rail button.active {
@@ -1541,10 +1619,34 @@
   color: var(--lc-text);
 }
 
+.work-hub-rail-footer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: auto;
+  padding: 12px 9px 0;
+  border-top: 1px solid var(--lc-border-soft);
+  color: var(--lc-faint);
+  font-size: 10px;
+}
+
+.work-hub-rail-footer > span {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--lc-positive);
+}
+
+.work-hub-rail-footer > span.syncing {
+  background: var(--lc-warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lc-warning) 16%, transparent);
+}
+
 .work-hub-main {
   min-width: 0;
   overflow: auto;
-  padding: 22px 26px 36px;
+  padding: 24px 28px 38px;
 }
 
 .work-hub-header {
@@ -1552,25 +1654,42 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 22px;
 }
 
 .work-hub-header h2 {
   margin: 0;
   font-family: var(--lc-font-serif);
-  font-size: 20px;
+  color: var(--lc-text);
+  font-size: 22px;
   font-weight: 400;
 }
 
 .work-hub-header p {
   margin: 4px 0 0;
   color: var(--lc-muted);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .work-hub-actions {
   display: flex;
+  align-items: center;
   gap: 7px;
+}
+
+.work-hub-actions .btn-primary,
+.work-hub-actions .btn-secondary,
+.work-hub-source-form-actions .btn-primary,
+.work-hub-source-form-actions .btn-secondary {
+  display: inline-flex;
+  min-height: 31px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px !important;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .work-hub-close {
@@ -1581,48 +1700,236 @@
   height: 30px;
   display: grid;
   place-items: center;
+  border-radius: 7px;
+}
+
+.work-hub-close:hover,
+.work-hub-icon-button:hover:not(:disabled),
+.work-hub-form-heading > button:hover {
+  background: var(--lc-surface-2);
+  color: var(--lc-text-soft);
 }
 
 .work-hub-error {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   margin: 0 0 14px;
-  padding: 9px 10px;
-  border: 1px solid var(--lc-negative);
-  border-radius: 8px;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--lc-negative) 45%, var(--lc-border));
+  border-radius: 9px;
+  background: var(--lc-negative-soft);
   color: var(--lc-negative);
-  font-size: 12px;
+  font-size: 11px;
+}
+
+.work-hub-error button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: currentColor;
+}
+
+.work-hub-sync-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin: -5px 0 18px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--lc-blue) 34%, var(--lc-border));
+  border-radius: 9px;
+  background: var(--lc-blue-soft);
+  color: var(--lc-blue);
+}
+
+.work-hub-sync-banner strong,
+.work-hub-sync-banner small {
+  display: block;
+}
+
+.work-hub-sync-banner strong {
+  color: var(--lc-text-soft);
+  font-size: 11px;
+  font-weight: 570;
+}
+
+.work-hub-sync-banner small {
+  margin-top: 2px;
+  font-size: 10px;
+}
+
+.work-hub-sync-banner.background {
+  border-color: var(--lc-border);
+  background: var(--lc-surface);
+  color: var(--lc-muted);
+}
+
+.work-hub-account-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -7px 0 18px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--lc-border-soft);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.work-hub-account-filter-label {
+  flex: 0 0 auto;
+  margin-right: 2px;
+  color: var(--lc-faint);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.work-hub-account-toggle {
+  display: inline-flex;
+  min-height: 23px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  border: 1px solid var(--lc-border-soft);
+  border-radius: 999px;
+  background: var(--lc-surface);
+  color: var(--work-hub-account-color, var(--lc-muted));
+  font-family: var(--lc-font-sans);
+  font-size: 8.5px;
+  font-weight: 520;
+  white-space: nowrap;
+  transition: border-color 120ms ease, background 120ms ease, opacity 120ms ease;
+}
+
+/* The shell's generic button reset is intentionally specific; keep account
+   filters on the compact metadata scale instead of inheriting app controls. */
+.work-hub-shell .work-hub-account-toggle {
+  font: 520 8.5px/1.2 var(--lc-font-sans);
+}
+
+.work-hub-account-toggle:hover,
+.work-hub-account-toggle:focus-visible {
+  border-color: color-mix(in srgb, var(--work-hub-account-color, var(--lc-border-strong)) 58%, var(--lc-border));
+  background: var(--lc-surface-2);
+  outline: none;
+}
+
+.work-hub-account-toggle:not(.active) {
+  opacity: .43;
+}
+
+.work-hub-account-toggle.active {
+  border-color: color-mix(in srgb, var(--work-hub-account-color, var(--lc-border-strong)) 58%, var(--lc-border));
+  background: color-mix(in srgb, var(--work-hub-account-color, var(--lc-surface)) 11%, var(--lc-surface));
+}
+
+.work-hub-account-swatch {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.account-tone-0 { --work-hub-account-color: var(--lc-blue); }
+.account-tone-1 { --work-hub-account-color: var(--lc-accent); }
+.account-tone-2 { --work-hub-account-color: var(--lc-positive); }
+.account-tone-3 { --work-hub-account-color: #a78bfa; }
+.account-tone-4 { --work-hub-account-color: var(--lc-warning); }
+.account-tone-5 { --work-hub-account-color: #22d3ee; }
+
+.work-hub-item[class*='account-tone-'] {
+  border-left: 3px solid var(--work-hub-account-color);
 }
 
 .work-hub-summary-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-bottom: 18px;
+  gap: 9px;
+  margin-bottom: 24px;
 }
 
 .work-hub-stat {
-  padding: 13px;
-  border: 1px solid var(--lc-border);
-  border-radius: 11px;
+  position: relative;
+  min-height: 92px;
+  padding: 14px;
+  border: 1px solid var(--lc-border-soft);
+  border-radius: 10px;
   background: var(--lc-surface);
+  color: var(--lc-muted);
+  text-align: left;
+}
+
+.work-hub-stat:hover {
+  border-color: var(--lc-border-strong);
+  background: var(--lc-surface-1);
+}
+
+.work-hub-stat > svg {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  color: var(--lc-faint);
 }
 
 .work-hub-stat strong {
   display: block;
-  font-size: 22px;
+  color: var(--lc-text);
+  font-size: 25px;
+  font-weight: 560;
+  line-height: 1;
 }
 
 .work-hub-stat small {
   color: var(--lc-muted);
-  font-size: 11px;
+  display: block;
+  margin-top: 9px;
+  font-size: 10px;
 }
 
 .work-hub-section {
-  margin-top: 20px;
+  margin-top: 24px;
 }
 
-.work-hub-section > h3 {
-  font-size: 13px;
-  margin: 0 0 8px;
+.work-hub-section-heading,
+.work-hub-day > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.work-hub-section-heading h3,
+.work-hub-day h3 {
+  margin: 0;
+  color: var(--lc-text-soft);
+  font-size: 12px;
+  font-weight: 590;
+}
+
+.work-hub-section-heading button,
+.work-hub-empty > button:not(.btn-primary),
+.work-hub-board-empty button {
+  border: 0;
+  background: transparent;
+  color: var(--lc-muted);
+  font-size: 10px;
+}
+
+.work-hub-section-heading button:hover,
+.work-hub-empty > button:not(.btn-primary):hover,
+.work-hub-board-empty button:hover {
+  color: var(--lc-text-soft);
 }
 
 .work-hub-list {
@@ -1632,78 +1939,704 @@
 
 .work-hub-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
   align-items: center;
-  padding: 10px 11px;
-  border: 1px solid var(--lc-border);
-  border-radius: 10px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid var(--lc-border-soft);
+  border-radius: 9px;
   background: var(--lc-surface);
 }
 
-.work-hub-item strong,
-.work-hub-item small {
+.work-hub-item:hover {
+  border-color: var(--lc-border);
+}
+
+.work-hub-item-copy {
+  min-width: 0;
+}
+
+.work-hub-item-copy strong,
+.work-hub-item-copy small {
   display: block;
 }
 
-.work-hub-item strong {
-  font-size: 13px;
+.work-hub-item-copy strong {
+  overflow: hidden;
   color: var(--lc-text-soft);
+  font-size: 12px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.work-hub-item small {
+.work-hub-item-copy small {
   margin-top: 3px;
-  font-size: 11px;
+  overflow: hidden;
   color: var(--lc-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-hub-item-copy p {
+  margin: 5px 0 0;
+  color: var(--lc-muted);
+  font-size: 10.5px;
+  line-height: 1.45;
 }
 
 .work-hub-item aside {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
   text-align: right;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--lc-muted);
 }
 
-.work-hub-item a {
+.work-hub-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--lc-text-soft);
+  font-size: 10px;
   text-decoration: none;
 }
 
-.work-hub-group {
-  margin-top: 15px;
+.work-hub-link:hover {
+  color: var(--lc-accent);
 }
 
-.work-hub-group > header {
+.work-hub-message-actions {
   display: flex;
-  justify-content: space-between;
-  margin-bottom: 7px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.work-hub-message-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--lc-muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.work-hub-message-action:hover {
+  color: var(--lc-accent);
+}
+
+.work-hub-message-action:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+.work-hub-message-read {
+  color: var(--lc-muted);
+  font-size: 10px;
+}
+
+.work-hub-time {
+  width: 54px;
+  color: var(--lc-muted);
+  font-size: 10px;
+}
+
+.work-hub-time strong,
+.work-hub-time small {
+  display: block;
+}
+
+.work-hub-time strong {
+  color: var(--lc-text-soft);
+  font-weight: 540;
+}
+
+.work-hub-time small {
+  margin-top: 2px;
+  color: var(--lc-faint);
+}
+
+.work-hub-location {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  color: var(--lc-faint);
+  font-size: 10px;
+}
+
+.work-hub-calendar {
+  display: grid;
+  gap: 12px;
+}
+
+.work-hub-calendar-toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.work-hub-calendar-toolbar > strong {
+  color: var(--lc-text-soft);
   font-size: 12px;
+  font-weight: 590;
+}
+
+.work-hub-calendar-toolbar > span {
+  justify-self: end;
+  color: var(--lc-faint);
+  font-size: 10px;
+}
+
+.work-hub-calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.work-hub-calendar-today {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--lc-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lc-text-soft);
+  font-size: 10px;
+}
+
+/* Match the compact sans typography used by Work Hub metadata and account
+   filters; the shell reset otherwise makes this control inherit app-sized
+   button text. */
+.work-hub-shell .work-hub-calendar-today {
+  font: 520 10px/1.1 var(--lc-font-sans);
+  letter-spacing: 0;
+}
+
+.work-hub-calendar-today:hover {
+  background: var(--lc-surface-2);
+}
+
+.work-hub-week-scroll {
+  height: calc(92vh - 174px);
+  max-height: 610px;
+  overflow: auto;
+  border: 1px solid var(--lc-border);
+  border-radius: 11px;
+  background: var(--lc-surface);
+}
+
+.work-hub-week {
+  min-width: 1228px;
+}
+
+.work-hub-week-header,
+.work-hub-all-day {
+  display: grid;
+  grid-template-columns: 52px repeat(7, 168px);
+}
+
+.work-hub-week-header {
+  position: sticky;
+  z-index: 5;
+  top: 0;
+  height: 54px;
+  border-bottom: 1px solid var(--lc-border);
+  background: color-mix(in srgb, var(--lc-surface) 94%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.work-hub-week-header > div {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-left: 1px solid var(--lc-border-soft);
+  color: var(--lc-muted);
+}
+
+.work-hub-week-header > div span {
+  font-size: 9.5px;
+  text-transform: uppercase;
+}
+
+.work-hub-week-header > div strong {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--lc-text-soft);
+  font-size: 13px;
+  font-weight: 570;
+}
+
+.work-hub-week-header > div.today strong {
+  background: var(--lc-accent);
+  color: #fff;
+}
+
+.work-hub-week-zone {
+  align-self: end;
+  padding: 0 8px 8px 0;
+  color: var(--lc-faint);
+  font-size: 8px;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.work-hub-all-day {
+  min-height: 33px;
+  border-bottom: 1px solid var(--lc-border);
+}
+
+.work-hub-all-day > span {
+  padding: 9px 8px 0 0;
+  color: var(--lc-faint);
+  font-size: 8px;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.work-hub-all-day > div {
+  min-width: 0;
+  padding: 4px 3px;
+  border-left: 1px solid var(--lc-border-soft);
+}
+
+.work-hub-all-day-event {
+  display: block;
+  overflow: hidden;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--lc-text-soft);
+  font-size: 8px;
+  line-height: 1.25;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-hub-week-grid {
+  display: block;
+  width: 1228px;
+  height: 928px;
+}
+
+.work-hub-week-grid foreignObject {
+  overflow: visible;
+}
+
+.work-hub-week-grid-bg {
+  fill: var(--lc-surface);
+}
+
+.work-hub-hour-line,
+.work-hub-day-line {
+  stroke: var(--lc-border-soft);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.work-hub-day-line.today {
+  stroke: color-mix(in srgb, var(--lc-accent) 32%, var(--lc-border-soft));
+}
+
+.work-hub-hour-label {
+  fill: var(--lc-faint);
+  font-family: var(--lc-font-sans);
+  font-size: 8.5px;
+  text-anchor: end;
+}
+
+.work-hub-calendar-event {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 28px;
+  overflow: hidden;
+  padding: 5px 6px;
+  border: 1px solid color-mix(in srgb, var(--lc-blue) 30%, var(--lc-border));
+  border-left: 3px solid var(--lc-blue);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--lc-blue-soft) 78%, var(--lc-surface));
+  color: var(--lc-text-soft);
+}
+
+.work-hub-calendar-event[class*='account-tone-'] {
+  border-color: color-mix(in srgb, var(--work-hub-account-color) 42%, var(--lc-border));
+  border-left-color: var(--work-hub-account-color);
+  background: color-mix(in srgb, var(--work-hub-account-color) 13%, var(--lc-surface));
+}
+
+.work-hub-all-day-event[class*='account-tone-'] {
+  border-left: 3px solid var(--work-hub-account-color);
+  background: color-mix(in srgb, var(--work-hub-account-color) 13%, var(--lc-surface));
+}
+
+.work-hub-calendar-event[class*='account-tone-']:hover,
+.work-hub-calendar-event[class*='account-tone-']:focus-within,
+.work-hub-calendar-event[class*='account-tone-']:focus {
+  border-color: var(--lc-border-strong);
+  border-left-color: var(--work-hub-account-color);
+}
+
+.work-hub-calendar-event.tone-1,
+.work-hub-all-day-event.tone-1 {
+  border-color: color-mix(in srgb, var(--lc-positive) 42%, var(--lc-border));
+  background: color-mix(in srgb, var(--lc-positive) 14%, var(--lc-surface));
+}
+
+.work-hub-calendar-event.tone-2,
+.work-hub-all-day-event.tone-2 {
+  border-color: color-mix(in srgb, var(--lc-warning) 42%, var(--lc-border));
+  background: color-mix(in srgb, var(--lc-warning) 12%, var(--lc-surface));
+}
+
+.work-hub-calendar-event.tone-3,
+.work-hub-all-day-event.tone-3 {
+  border-color: color-mix(in srgb, var(--lc-accent) 42%, var(--lc-border));
+  background: color-mix(in srgb, var(--lc-accent) 12%, var(--lc-surface));
+}
+
+.work-hub-calendar-event:hover,
+.work-hub-calendar-event:focus-within,
+.work-hub-calendar-event:focus {
+  z-index: 3;
+  overflow: visible;
+  border-color: var(--lc-border-strong);
+  box-shadow: 0 7px 20px rgba(0, 0, 0, .28);
+  outline: none;
+}
+
+.work-hub-calendar-event strong,
+.work-hub-calendar-event small,
+.work-hub-calendar-event > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-hub-calendar-event strong {
+  font-size: 10px;
+  font-weight: 620;
+  line-height: 1.25;
+}
+
+.work-hub-calendar-tooltip {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 7px);
+  left: -1px;
+  display: grid;
+  width: max-content;
+  max-width: 260px;
+  gap: 4px;
+  padding: 8px 9px;
+  border: 1px solid var(--lc-border-strong);
+  border-radius: 7px;
+  background: var(--lc-bg);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .34);
+  color: var(--lc-text-soft);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.work-hub-calendar-tooltip strong {
+  overflow: hidden;
+  color: var(--lc-text);
+  font-size: 10px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-hub-calendar-tooltip span {
+  color: var(--lc-muted);
+  font-size: 9px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.work-hub-calendar-event:hover .work-hub-calendar-tooltip,
+.work-hub-calendar-event:focus .work-hub-calendar-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.work-hub-calendar-event small,
+.work-hub-calendar-event > span {
+  margin-top: 2px;
+  color: var(--lc-muted);
+  font-size: 7.5px;
+}
+
+.work-hub-calendar-event > span {
+  align-items: center;
+  gap: 2px;
+}
+
+.work-hub-calendar-join {
+  position: absolute;
+  z-index: 4;
+  right: 4px;
+  bottom: 4px;
+  display: inline-flex;
+  min-height: 18px;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--lc-accent) 55%, var(--lc-border));
+  border-radius: 5px;
+  background: var(--lc-bg);
+  color: var(--lc-text-soft);
+  font-size: 8px;
+  opacity: 0;
+  text-decoration: none;
+  transform: translateY(2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  pointer-events: none;
+}
+
+/* Keep the event action compact even though the Work Hub shell resets
+   button/link typography globally. */
+.work-hub-shell .work-hub-calendar-join {
+  font: 520 8px/1.1 var(--lc-font-sans);
+  letter-spacing: 0;
+}
+
+.work-hub-calendar-event:hover .work-hub-calendar-join,
+.work-hub-calendar-event:focus-within .work-hub-calendar-join,
+.work-hub-calendar-event:focus .work-hub-calendar-join {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.work-hub-now line {
+  stroke: var(--lc-negative);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.work-hub-now circle {
+  fill: var(--lc-negative);
+}
+
+.work-hub-ticket-status {
+  min-width: 65px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: var(--lc-surface-3);
+  color: var(--lc-muted);
+  font-size: 9px;
+  text-align: center;
+}
+
+.work-hub-ticket-status.status-in-progress,
+.work-hub-ticket-status.status-review,
+.work-hub-ticket-status.status-qa {
+  background: var(--lc-blue-soft);
+  color: var(--lc-blue);
+}
+
+.work-hub-ticket-status.status-blocked {
+  background: var(--lc-negative-soft);
+  color: var(--lc-negative);
+}
+
+.work-hub-board {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(220px, 1fr));
+  gap: 9px;
+  min-height: 500px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+}
+
+.work-hub-board-column {
+  min-width: 220px;
+  padding: 9px;
+  border: 1px solid var(--lc-border-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--lc-sidebar) 68%, transparent);
+}
+
+.work-hub-board-column > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 27px;
+  padding: 0 2px 8px;
+  color: var(--lc-text-soft);
+  font-size: 10.5px;
+  font-weight: 560;
+}
+
+.work-hub-board-column > header small {
+  display: grid;
+  min-width: 19px;
+  height: 19px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--lc-surface-2);
+  color: var(--lc-muted);
+  font-size: 9px;
+}
+
+.work-hub-board-column > div {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+
+.work-hub-ticket-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--lc-border-soft);
+  border-radius: 8px;
+  background: var(--lc-surface);
+}
+
+.work-hub-ticket-card[class*='account-tone-'] {
+  border-top: 3px solid var(--work-hub-account-color);
+  padding-top: 8px;
+}
+
+.work-hub-ticket-card:hover {
+  border-color: var(--lc-border-strong);
+}
+
+.work-hub-ticket-card > strong,
+.work-hub-ticket-card > small {
+  display: block;
+}
+
+.work-hub-ticket-card > strong {
+  margin-top: 8px;
+  color: var(--lc-text-soft);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1.4;
+}
+
+.work-hub-ticket-card > small {
+  margin-top: 5px;
+  color: var(--lc-muted);
+  font-size: 9.5px;
+}
+
+.work-hub-ticket-meta,
+.work-hub-ticket-card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  color: var(--lc-faint);
+  font-size: 9px;
+}
+
+.work-hub-ticket-card footer {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--lc-border-soft);
+}
+
+.work-hub-column-empty {
+  padding: 18px 4px;
+  color: var(--lc-faint);
+  font-size: 9.5px;
+  text-align: center;
+}
+
+.work-hub-board-empty {
+  grid-column: 1 / -1;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 7px;
+  min-height: 220px;
+  color: var(--lc-muted);
+  font-size: 10px;
+  text-align: center;
 }
 
 .work-hub-source-card {
-  border: 1px solid var(--lc-border);
-  border-radius: 11px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 12px;
+  border: 1px solid var(--lc-border-soft);
+  border-radius: 10px;
   background: var(--lc-surface);
   overflow: hidden;
 }
 
-.work-hub-source-main {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  align-items: center;
-  padding: 11px 12px;
+.work-hub-source-card[class*='account-tone-'] {
+  border-left: 3px solid var(--work-hub-account-color);
+  padding-left: 10px;
 }
 
-.work-hub-source-main strong,
-.work-hub-source-main small {
+.work-hub-source-card.status-syncing {
+  border-color: color-mix(in srgb, var(--lc-blue) 38%, var(--lc-border));
+}
+
+.work-hub-source-card.status-error {
+  border-color: color-mix(in srgb, var(--lc-negative) 38%, var(--lc-border));
+}
+
+.work-hub-source-card[class*='account-tone-'] {
+  border-left-color: var(--work-hub-account-color);
+}
+
+.work-hub-source-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--lc-surface-2);
+  color: var(--lc-muted);
+}
+
+.work-hub-source-copy {
+  min-width: 0;
+}
+
+.work-hub-source-copy strong,
+.work-hub-source-copy small {
   display: block;
 }
 
-.work-hub-source-main small {
+.work-hub-source-copy strong {
+  color: var(--lc-text-soft);
+  font-size: 12px;
+  font-weight: 570;
+}
+
+.work-hub-source-copy small {
   margin-top: 3px;
+  overflow: hidden;
   color: var(--lc-muted);
-  font-size: 11px;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .work-hub-source-actions {
@@ -1712,45 +2645,192 @@
   gap: 6px;
 }
 
+.work-hub-source-actions .btn-secondary {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px !important;
+  font-size: 10px;
+}
+
+.work-hub-icon-button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--lc-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lc-muted);
+}
+
+.work-hub-shell .work-hub-icon-button {
+  font: 520 10px/1 var(--lc-font-sans);
+}
+
+.work-hub-icon-button:disabled {
+  opacity: .45;
+}
+
 .work-hub-state {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  margin-top: 6px;
   font-size: 11px;
   color: var(--lc-muted);
 }
 
-.work-hub-state.ready {
+.work-hub-source-card.status-ready .work-hub-state {
   color: var(--lc-positive);
 }
 
-.work-hub-source-error {
-  padding: 8px 12px;
-  border-top: 1px solid var(--lc-border);
+.work-hub-source-card.status-syncing .work-hub-state {
+  color: var(--lc-blue);
+}
+
+.work-hub-source-card.status-error .work-hub-state {
   color: var(--lc-negative);
+}
+
+.work-hub-source-error {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px;
+  margin: 0 -12px -12px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--lc-border);
+  background: var(--lc-negative-soft);
+  color: var(--lc-negative);
+  font-size: 10px;
+  line-height: 1.45;
+  max-height: 76px;
+  overflow: auto;
+}
+
+.work-hub-source-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--lc-border-soft);
+}
+
+.work-hub-source-toolbar > div:first-child strong,
+.work-hub-source-toolbar > div:first-child span {
+  display: block;
+}
+
+.work-hub-source-toolbar > div:first-child strong {
+  color: var(--lc-text-soft);
   font-size: 11px;
+  font-weight: 570;
+}
+
+.work-hub-source-toolbar > div:first-child span {
+  margin-top: 3px;
+  color: var(--lc-muted);
+  font-size: 9.5px;
 }
 
 .work-hub-source-form {
   display: grid;
-  gap: 10px;
-  padding: 14px;
+  gap: 14px;
+  padding: 15px;
   margin-bottom: 15px;
   border: 1px solid var(--lc-border);
-  border-radius: 11px;
+  border-radius: 10px;
   background: var(--lc-surface);
+}
+
+.work-hub-form-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--lc-border-soft);
+}
+
+.work-hub-form-heading strong,
+.work-hub-form-heading span {
+  display: block;
+}
+
+.work-hub-form-heading strong {
+  color: var(--lc-text-soft);
+  font-size: 12px;
+  font-weight: 580;
+}
+
+.work-hub-form-heading span {
+  margin-top: 3px;
+  color: var(--lc-muted);
+  font-size: 10px;
+}
+
+.work-hub-form-heading > button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lc-muted);
 }
 
 .work-hub-source-form label > span {
   display: block;
   margin-bottom: 5px;
   color: var(--lc-text-soft);
-  font-size: 12px;
+  font-size: 10px;
 }
 
-.work-hub-source-form textarea {
-  min-height: 74px;
-  resize: vertical;
+.work-hub-shell .work-hub-source-form .ui-select-trigger {
+  min-height: 32px;
+  padding: 0 9px;
+  font: 520 10.5px/1.2 var(--lc-font-sans);
+  letter-spacing: 0;
+}
+
+.work-hub-shell .work-hub-source-form .ui-select-trigger svg {
+  width: 12px;
+  height: 12px;
+}
+
+.work-hub-shell .work-hub-source-form .ui-select-popover > button {
+  font: 500 10px/1.25 var(--lc-font-sans);
+  letter-spacing: 0;
+}
+
+.work-hub-shell .work-hub-source-form .ui-select-popover strong {
+  font-size: 10.5px;
+}
+
+.work-hub-shell .work-hub-source-form .ui-select-popover small {
+  font-size: 8.5px;
+}
+
+.work-hub-shell .settings-option-group > button.added,
+.work-hub-shell .settings-option-group > button.added:hover {
+  border-color: var(--lc-border-soft);
+  background: color-mix(in srgb, var(--lc-surface-2) 42%, transparent);
+  box-shadow: none;
+  color: var(--lc-muted);
+  cursor: not-allowed;
+  opacity: .58;
+}
+
+.work-hub-source-form section > h3 {
+  margin: 0 0 7px;
+  color: var(--lc-text-soft);
+  font-size: 10px;
+  font-weight: 560;
 }
 
 .work-hub-source-form-actions {
@@ -1760,12 +2840,73 @@
 }
 
 .work-hub-empty {
-  padding: 22px;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 24px;
   text-align: center;
   color: var(--lc-muted);
-  font-size: 13px;
-  border: 1px dashed var(--lc-border);
+  font-size: 10px;
+  border: 1px dashed var(--lc-border-soft);
   border-radius: 10px;
+  background: color-mix(in srgb, var(--lc-surface-2) 20%, transparent);
+}
+
+.work-hub-empty.large {
+  min-height: 260px;
+  align-content: center;
+}
+
+.work-hub-empty > svg,
+.work-hub-board-empty > svg {
+  margin-bottom: 3px;
+  color: var(--lc-faint);
+}
+
+.work-hub-empty strong,
+.work-hub-empty span,
+.work-hub-board-empty strong,
+.work-hub-board-empty span {
+  display: block;
+}
+
+.work-hub-empty strong,
+.work-hub-board-empty strong {
+  color: var(--lc-text-soft);
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.work-hub-empty .btn-primary {
+  min-height: 30px;
+  margin-top: 6px;
+  padding: 0 11px !important;
+  font-size: 10px;
+}
+
+.work-hub-message-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lc-border-strong);
+}
+
+.work-hub-item.unread .work-hub-message-dot {
+  background: var(--lc-accent);
+}
+
+@keyframes work-hub-spin {
+  to { transform: rotate(360deg); }
+}
+
+.work-hub-shell .spin {
+  animation: work-hub-spin .8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .work-hub-shell .spin {
+    animation: none;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1781,7 +2922,8 @@
     border-bottom: 1px solid var(--lc-border);
     padding: 8px;
   }
-  .work-hub-rail h1 {
+  .work-hub-rail-title,
+  .work-hub-rail-footer {
     display: none;
   }
   .work-hub-rail button {
@@ -1793,6 +2935,39 @@
   }
   .work-hub-main {
     padding: 16px;
+  }
+  .work-hub-source-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .work-hub-board {
+    grid-template-columns: repeat(6, 220px);
+  }
+  .work-hub-header p {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .work-hub-backdrop {
+    padding: 10px;
+  }
+  .work-hub-shell {
+    width: 100%;
+    height: calc(100vh - 20px);
+  }
+  .work-hub-header {
+    align-items: flex-start;
+  }
+  .work-hub-summary-grid {
+    grid-template-columns: 1fr;
+  }
+  .work-hub-source-card {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+  .work-hub-source-actions {
+    grid-column: 2;
+    justify-content: flex-start;
   }
 }
 
@@ -1834,6 +3009,319 @@
   justify-content: flex-end;
 }
 
+/* --------------------------------------------------------------------------
+   22. Live Chat activity. This follows the useful part of the GPT/Claude
+       pattern: a calm, compact “thinking” surface with an optional detail
+       log. It exposes safe progress metadata, never hidden chain-of-thought.
+   ----------------------------------------------------------------------- */
+
+.assistant-activity-card {
+  width: min(100%, 680px);
+  margin: 2px 0 18px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--lc-border) 94%, var(--lc-accent));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--lc-surface) 78%, var(--lc-bg));
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--lc-bg) 34%, transparent);
+}
+
+.assistant-activity-header,
+.assistant-activity-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-activity-header {
+  min-height: 48px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--lc-border-soft);
+}
+
+.assistant-activity-heading,
+.assistant-activity-stats,
+.assistant-activity-toggle,
+.assistant-provider-chip {
+  display: inline-flex;
+  align-items: center;
+}
+
+.assistant-activity-heading {
+  min-width: 0;
+  gap: 8px;
+  color: var(--lc-text);
+}
+
+.assistant-activity-heading strong {
+  font-size: 12px;
+  font-weight: 640;
+  letter-spacing: -.01em;
+}
+
+.assistant-activity-time {
+  color: var(--lc-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.assistant-live-indicator {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--lc-accent-soft);
+}
+
+.assistant-live-indicator i,
+.assistant-stat-dot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--lc-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--lc-accent) 10%, transparent);
+}
+
+.assistant-live-indicator i {
+  animation: lc-activity-pulse 1.8s ease-in-out infinite;
+}
+
+.assistant-provider-chip {
+  max-width: 48%;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--lc-faint);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-provider-chip span {
+  color: var(--lc-border);
+}
+
+.assistant-activity-current {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 14px 14px 11px;
+}
+
+.assistant-activity-orb {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--lc-accent) 24%, var(--lc-border));
+  border-radius: 10px;
+  background: var(--lc-accent-soft);
+  color: var(--lc-accent);
+}
+
+.assistant-activity-current strong,
+.assistant-activity-current p {
+  display: block;
+}
+
+.assistant-activity-current strong {
+  margin-top: 1px;
+  color: var(--lc-text-soft);
+  font-size: 11.5px;
+  font-weight: 610;
+}
+
+.assistant-activity-current p {
+  margin: 4px 0 0;
+  color: var(--lc-muted);
+  font-size: 11px;
+  line-height: 1.48;
+}
+
+.assistant-activity-steps {
+  display: grid;
+  gap: 0;
+  margin: 0 14px;
+  padding: 4px 0 5px;
+  border-top: 1px solid var(--lc-border-soft);
+}
+
+.assistant-activity-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 39px;
+  align-items: start;
+  padding: 8px 0 4px;
+}
+
+.assistant-activity-step:not(:last-child)::before {
+  position: absolute;
+  top: 27px;
+  bottom: -2px;
+  left: 9px;
+  width: 1px;
+  background: var(--lc-border);
+  content: '';
+}
+
+.assistant-step-mark {
+  z-index: 1;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid var(--lc-border);
+  border-radius: 50%;
+  background: var(--lc-surface);
+  color: var(--lc-faint);
+}
+
+.assistant-activity-step.done .assistant-step-mark {
+  border-color: color-mix(in srgb, var(--lc-positive) 44%, var(--lc-border));
+  background: color-mix(in srgb, var(--lc-positive) 11%, var(--lc-surface));
+  color: var(--lc-positive);
+}
+
+.assistant-activity-step.active .assistant-step-mark {
+  border-color: color-mix(in srgb, var(--lc-accent) 45%, var(--lc-border));
+  background: var(--lc-accent-soft);
+  color: var(--lc-accent);
+}
+
+.assistant-activity-step.active .assistant-step-mark svg {
+  animation: lc-agent-spin 1s linear infinite;
+}
+
+.assistant-activity-step strong,
+.assistant-activity-step small {
+  display: block;
+}
+
+.assistant-activity-step strong {
+  color: var(--lc-text-soft);
+  font-size: 10.5px;
+  font-weight: 570;
+  line-height: 1.3;
+}
+
+.assistant-activity-step.pending strong {
+  color: var(--lc-faint);
+}
+
+.assistant-activity-step small {
+  margin-top: 2px;
+  color: var(--lc-faint);
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+
+.assistant-activity-footer {
+  min-height: 39px;
+  margin: 2px 14px 0;
+  border-top: 1px solid var(--lc-border-soft);
+}
+
+.assistant-activity-stats {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  color: var(--lc-faint);
+  font-size: 9px;
+}
+
+.assistant-activity-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.assistant-stat-dot {
+  width: 5px;
+  height: 5px;
+  box-shadow: none;
+}
+
+.assistant-activity-toggle {
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 5px 0 5px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--lc-muted);
+  font-size: 9.5px;
+}
+
+.assistant-activity-toggle:hover {
+  color: var(--lc-text-soft);
+}
+
+.assistant-activity-toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.assistant-activity-log {
+  display: grid;
+  gap: 7px;
+  margin: 0 14px 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--lc-border-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--lc-bg) 38%, transparent);
+}
+
+.assistant-activity-log-row {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  color: var(--lc-text-soft);
+  font-size: 9.5px;
+}
+
+.assistant-log-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--lc-faint);
+}
+
+.assistant-activity-log-row span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-activity-log-row time {
+  color: var(--lc-faint);
+  font-size: 8.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.assistant-privacy-note {
+  margin: 2px 0 0;
+  color: var(--lc-faint);
+  font-size: 8.5px;
+  line-height: 1.35;
+}
+
+@keyframes lc-activity-pulse {
+  0%, 100% { opacity: .5; transform: scale(.78); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-live-indicator i,
+  .assistant-activity-step.active .assistant-step-mark svg {
+    animation: none;
+  }
+}
+
 @media (max-width: 760px) {
   .conversation-context-badge {
     max-width: 94px;
@@ -1853,4 +3341,79 @@
   .user-turn-shell {
     max-width: 94%;
   }
+
+  .assistant-activity-card {
+    border-radius: 14px;
+  }
+
+  .assistant-provider-chip {
+    max-width: 42%;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   22. Interaction targets. The window drag strip spans the full titlebar, and
+       the sidebar divider gets a forgiving hit area plus a visible grip. The
+       old 4px target was easy to miss even when the cursor looked correct.
+   ----------------------------------------------------------------------- */
+
+.lc-shell-sidebar-resizer {
+  right: -7px !important;
+  width: 14px !important;
+  transform: none !important;
+  cursor: col-resize !important;
+  touch-action: none;
+  user-select: none;
+}
+
+.lc-shell-sidebar-resizer::before {
+  position: absolute;
+  top: 0;
+  right: 6px;
+  width: 2px;
+  height: 100%;
+  background: color-mix(in srgb, var(--lc-border-strong) 58%, transparent);
+  content: '';
+  opacity: .7;
+  transition: background 120ms ease, opacity 120ms ease;
+}
+
+.lc-shell-sidebar-resizer::after {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  width: 4px;
+  height: 38px;
+  border-radius: 999px;
+  background: var(--lc-border-strong);
+  content: '';
+  opacity: .9;
+  transform: translateY(-50%);
+  transition: background 120ms ease, height 120ms ease, opacity 120ms ease;
+}
+
+.lc-shell-sidebar-resizer:hover::before,
+.lc-shell-sidebar-resizer:focus-visible::before,
+.sidebar-resizing .lc-shell-sidebar-resizer::before {
+  background: var(--lc-accent);
+  opacity: 1;
+}
+
+.lc-shell-sidebar-resizer:hover::after,
+.lc-shell-sidebar-resizer:focus-visible::after,
+.sidebar-resizing .lc-shell-sidebar-resizer::after {
+  height: 52px;
+  background: var(--lc-accent);
+  opacity: 1;
+}
+
+.lc-shell-sidebar-resizer:focus-visible {
+  outline: 2px solid var(--lc-accent);
+  outline-offset: -1px;
+}
+
+.lc-shell-app-shell.sidebar-resizing,
+.lc-shell-app-shell.sidebar-resizing * {
+  user-select: none;
+  cursor: col-resize !important;
 }

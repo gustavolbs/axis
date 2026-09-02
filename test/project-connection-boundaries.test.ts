@@ -174,7 +174,8 @@ test('subscription account runtimes pass structured-output schemas through offic
     commandPrefixArgs: [fakeClaude],
     terminationGraceMs: 50
   });
-  const claudeResult = await claude.invoke('personal', 'OK', { jsonSchema: schema });
+  const claudeResult = await claude.invoke('personal', 'OK', { model: 'sonnet', jsonSchema: schema });
+  assert.match(claudeResult.stdout, /"--model","sonnet"/);
   assert.match(claudeResult.stdout, /--json-schema/);
   assert.match(claudeResult.stdout, /additionalProperties/);
 

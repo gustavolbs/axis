@@ -31,7 +31,10 @@ export interface OllamaStreamProgress {
   chunkCount: number;
   thinkingChars: number;
   outputChars: number;
-  state: 'thinking' | 'generating';
+  providerId?: string;
+  model?: string;
+  /** Waiting is used by cloud adapters before the first streamed event. */
+  state: 'waiting' | 'thinking' | 'generating';
   lastActivityAt: string;
 }
 

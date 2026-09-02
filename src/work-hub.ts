@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { ClaudeAccountProfileStore, ClaudeAccountRuntime } from './claude-account-profiles.js';
 import { CodexAccountProfileStore, CodexAccountRuntime } from './codex-account-profiles.js';
+import { parseClaudeMcpList, parseCodexMcpList, type McpConnector } from './mcp-connectors.js';
 import { ProviderConnectionRuntime } from './provider-connections.js';
 
 export type WorkHubSourceKind = 'calendar' | 'tickets' | 'messages';
@@ -93,9 +94,22 @@ export type WorkHubItem = NormalizedCalendarEvent | NormalizedTicket | Normalize
 export interface WorkHubSourceState {
   sourceId: string;
   status: 'idle' | 'syncing' | 'ready' | 'error';
+  stage?: 'discovering' | 'collecting' | 'normalizing';
+  syncStartedAt?: string;
+  lastAttemptAt?: string;
   lastSyncedAt?: string;
+  durationMs?: number;
   itemCount: number;
+  systems?: string[];
   error?: string;
+}
+
+export interface WorkHubMessageState {
+  sourceId: string;
+  externalId: string;
+  read: boolean;
+  dismissed: boolean;
+  updatedAt: string;
 }
 
 export interface WorkHubSnapshot {
@@ -108,8 +122,19 @@ export interface WorkHubSnapshot {
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const SOURCE_QUERY_DAYS_PAST = 7;
-const SOURCE_QUERY_DAYS_FUTURE = 30;
+const SOURCE_QUERY_DAYS_PAST = 3;
+const SOURCE_QUERY_DAYS_FUTURE = 14;
+const CONNECTOR_CACHE_MS = 5 * 60_000;
+
+const CONNECTOR_HINTS: Record<WorkHubSourceKind, RegExp> = {
+  calendar: /calendar|outlook|microsoft\s*365|agenda/i,
+  tickets: /jira|linear|asana|trello|clickup|github|gitlab|atlassian|azure\s*devops/i,
+  // The Messages source is intentionally a focused cross-system alert feed:
+  // Jira comments on the user's assigned tickets and Slack messages. It must
+  // not broaden into every connector available on the account.
+  messages: /jira|slack/i
+};
+const DEDICATED_TRACKER_HINT = /jira|linear|asana|trello|clickup|atlassian|azure\s*devops/i;
 
 function workHubRoot(): string {
   return process.env.LOCAL_CODER_WORK_HUB_DIR?.trim() || path.join(os.homedir(), '.local-coder-mcp', 'work-hub');
@@ -132,9 +157,17 @@ function sourceKind(value: string): WorkHubSourceKind {
   throw new Error('Work Hub source kind must be calendar, tickets, or messages.');
 }
 
+function sourceKindLabel(kind: WorkHubSourceKind): string {
+  if (kind === 'calendar') return 'calendar';
+  if (kind === 'tickets') return 'work tracker';
+  return 'Jira comments or Slack messages';
+}
+
 function retention(value: string | undefined): WorkHubRetention {
-  if (value === undefined || value === 'memory') return 'memory';
-  if (value === 'local') return 'local';
+  // Work Hub is stale-while-revalidate: previously normalized results must be
+  // available immediately after reopening the desktop. `memory` is accepted as
+  // a legacy value and migrated to the local normalized cache behavior.
+  if (value === undefined || value === 'memory' || value === 'local') return 'local';
   throw new Error('Work Hub retention must be memory or local.');
 }
 
@@ -149,9 +182,13 @@ function tools(values: string[] | undefined): string[] {
 export class WorkHubSourceStore {
   private readonly root: string;
   private readonly file: string;
+  private readonly stateFile: string;
+  private readonly messageStateFile: string;
   constructor(root = workHubRoot()) {
     this.root = path.resolve(root);
     this.file = path.join(this.root, 'sources.json');
+    this.stateFile = path.join(this.root, 'sync-state.json');
+    this.messageStateFile = path.join(this.root, 'message-state.json');
   }
 
   list(): WorkHubSource[] {
@@ -200,6 +237,83 @@ export class WorkHubSourceStore {
 
   cacheFile(sourceId: string): string {
     return path.join(this.root, 'cache', `${safeId(sourceId, 'Work Hub source id')}.json`);
+  }
+
+  readStates(): WorkHubSourceState[] {
+    if (!fs.existsSync(this.stateFile)) return [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.stateFile, 'utf8')) as { version?: unknown; states?: unknown };
+      if (parsed.version !== 1 || !Array.isArray(parsed.states)) return [];
+      return parsed.states.flatMap((raw): WorkHubSourceState[] => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+        const value = raw as Partial<WorkHubSourceState>;
+        if (!value.sourceId || !['idle', 'syncing', 'ready', 'error'].includes(value.status ?? '')) return [];
+        return [{
+          sourceId: safeId(value.sourceId, 'Work Hub source id'),
+          status: value.status!,
+          stage: value.stage === 'discovering' || value.stage === 'collecting' || value.stage === 'normalizing' ? value.stage : undefined,
+          syncStartedAt: string(value.syncStartedAt),
+          lastAttemptAt: string(value.lastAttemptAt),
+          lastSyncedAt: string(value.lastSyncedAt),
+          durationMs: typeof value.durationMs === 'number' && Number.isFinite(value.durationMs) ? Math.max(0, value.durationMs) : undefined,
+          itemCount: typeof value.itemCount === 'number' && Number.isFinite(value.itemCount) ? Math.max(0, Math.floor(value.itemCount)) : 0,
+          systems: Array.isArray(value.systems) ? value.systems.flatMap((entry) => string(entry) ?? []).slice(0, 16) : undefined,
+          error: string(value.error)?.slice(0, 2_000)
+        }];
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  writeStates(states: WorkHubSourceState[]): void {
+    fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
+    const temp = `${this.stateFile}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(temp, `${JSON.stringify({ version: 1, states, updatedAt: new Date().toISOString() }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    try {
+      fs.renameSync(temp, this.stateFile);
+      try { fs.chmodSync(this.stateFile, 0o600); } catch { /* best effort */ }
+    } catch (error) {
+      try { fs.unlinkSync(temp); } catch { /* best effort */ }
+      throw error;
+    }
+  }
+
+  readMessageStates(): WorkHubMessageState[] {
+    if (!fs.existsSync(this.messageStateFile)) return [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.messageStateFile, 'utf8')) as { version?: unknown; states?: unknown };
+      if (parsed.version !== 1 || !Array.isArray(parsed.states)) return [];
+      return parsed.states.flatMap((raw): WorkHubMessageState[] => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+        const value = raw as Partial<WorkHubMessageState>;
+        if (typeof value.sourceId !== 'string' || typeof value.externalId !== 'string' || typeof value.updatedAt !== 'string') return [];
+        const externalId = value.externalId.trim();
+        if (!externalId || externalId.length > 512 || /[\0\r\n]/.test(externalId)) return [];
+        return [{
+          sourceId: safeId(value.sourceId, 'Work Hub source id'),
+          externalId,
+          read: value.read === true,
+          dismissed: value.dismissed === true,
+          updatedAt: value.updatedAt
+        }];
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  writeMessageStates(states: WorkHubMessageState[]): void {
+    fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
+    const temp = `${this.messageStateFile}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(temp, `${JSON.stringify({ version: 1, states, updatedAt: new Date().toISOString() }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    try {
+      fs.renameSync(temp, this.messageStateFile);
+      try { fs.chmodSync(this.messageStateFile, 0o600); } catch { /* best effort */ }
+    } catch (error) {
+      try { fs.unlinkSync(temp); } catch { /* best effort */ }
+      throw error;
+    }
   }
 
   private read(): WorkHubSourceFile {
@@ -275,6 +389,16 @@ function extractJson(output: string): unknown {
   throw new Error('Collector did not return valid normalized JSON.');
 }
 
+function collectorFailure(
+  label: string,
+  result: { stderr: string; exitCode: number | null; timedOut: boolean; cancelled: boolean }
+): Error {
+  if (result.timedOut) return new Error(`${label} timed out after 3 minutes. Check the connector status in Settings → Connections, then try again.`);
+  if (result.cancelled) return new Error(`${label} was cancelled before it finished.`);
+  const detail = result.stderr.trim().replace(/\s+/g, ' ').slice(0, 600);
+  return new Error(detail ? `${label} failed: ${detail}` : `${label} failed with exit code ${String(result.exitCode)}.`);
+}
+
 function string(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
@@ -283,13 +407,36 @@ function bool(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function messageExternalId(value: string): string {
+  const clean = value.trim();
+  if (!clean || clean.length > 512 || /[\0\r\n]/.test(clean)) throw new Error('Work Hub message id is invalid.');
+  return clean;
+}
+
 function array(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value)
     ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
     : [];
 }
 
-function collectorPrompt(source: WorkHubSource): string {
+function collectorPrompt(source: WorkHubSource, systems: string[] = []): string {
+  const date = (offsetDays: number) => {
+    const value = new Date();
+    value.setDate(value.getDate() + offsetDays);
+    return value.toISOString().slice(0, 10);
+  };
+  if (source.kind === 'calendar' && systems.some((system) => /microsoft\s*365/i.test(system))) {
+    return [
+      `Usando o MCP do Teams, diga quais são minhas reuniões entre ${date(-SOURCE_QUERY_DAYS_PAST)} e ${date(SOURCE_QUERY_DAYS_FUTURE)}. Não altere nada.`,
+      'Responda apenas JSON, sem Markdown ou explicações, no formato {"events":[{"externalId":"id estável","system":"Outlook","title":"...","start":"ISO-8601","end":"ISO-8601","allDay":false,"calendar":"...","location":"...","meetingUrl":"...","organizer":"...","status":"...","url":"..."}]}.'
+    ].join('\n');
+  }
+  if (source.kind === 'tickets' && systems.some((system) => /jira/i.test(system))) {
+    return [
+      'Usando o MCP do Jira, diga quais tasks estão assignadas pra mim e o status de cada uma. Não altere nada e não busque histórico de tasks concluídas.',
+      'Responda apenas JSON, sem Markdown ou explicações, no formato {"tickets":[{"externalId":"id estável","key":"ABC-123","title":"...","status":"..."}]}. Inclua somente esses quatro campos por ticket.'
+    ].join('\n');
+  }
   const common = [
     'You are a Local Coder Work Hub synchronization task running through one exact provider account.',
     'Discover and use the MCP servers/connectors configured for this account that are relevant to the requested data. The user does not provide MCP tool names and Local Coder does not require a manual tool allowlist.',
@@ -298,25 +445,44 @@ function collectorPrompt(source: WorkHubSource): string {
   ];
   if (source.kind === 'calendar') {
     return [...common,
-      `Read calendar events from ${SOURCE_QUERY_DAYS_PAST} days ago through ${SOURCE_QUERY_DAYS_FUTURE} days ahead across all relevant calendar services visible to this account. If more than one connected calendar service is relevant, combine the results.`,
+      `Read calendar events from ${date(-SOURCE_QUERY_DAYS_PAST)} through ${date(SOURCE_QUERY_DAYS_FUTURE)} inclusive across the relevant calendar services visible to this account. Do not read outside that date range. If more than one connected calendar service is relevant, combine the results.`,
       'Return {"events":[{"externalId":"stable remote id","system":"Google Calendar or Outlook or other actual source","title":"...","start":"ISO-8601","end":"ISO-8601","allDay":false,"calendar":"...","location":"...","meetingUrl":"...","organizer":"...","status":"...","url":"..."}]}.'
     ].join('\n');
   }
   if (source.kind === 'tickets') {
     return [...common,
-      'Read work items/tickets assigned to the current account across all relevant connected issue trackers. Include unresolved items and enough recently completed items to make current status understandable. Preserve the remote status exactly.',
+      'Read only the current work items/tickets assigned to this account and their current status. Preserve the remote status exactly and do not crawl source-code repositories or request completed-item history.',
       'Return {"tickets":[{"externalId":"stable remote id","system":"Jira or Linear or other actual source","key":"ABC-123","title":"...","status":"...","priority":"...","assignee":"...","dueAt":"ISO-8601","updatedAt":"ISO-8601","project":"...","url":"..."}]}.'
     ].join('\n');
   }
   return [...common,
-    'Read recent messages/threads across all relevant connected messaging or mail services visible to the current account. Prefer unread items and items that plausibly require the user’s attention.',
-    'Return {"messages":[{"externalId":"stable remote id","system":"Teams or Slack or mail or other actual source","title":"thread/channel subject","preview":"short summary","sender":"...","timestamp":"ISO-8601","channel":"...","unread":true,"requiresAttention":true,"url":"..."}]}.'
+    'This Messages source is deliberately limited to two places: (1) recent comments on the current account\'s assigned Jira tickets, and (2) recent Slack messages or threads that plausibly require the user\'s attention. Do not access GitHub, email, Teams, calendars, or any other connector, and do not read unrelated Jira tickets or broad Jira history.',
+    'Return {"messages":[{"externalId":"stable remote id","system":"Jira or Slack","title":"ticket key and comment or Slack thread/channel subject","preview":"short comment or message summary","sender":"...","timestamp":"ISO-8601","channel":"...","unread":true,"requiresAttention":true,"url":"..."}]}.'
   ].join('\n');
+}
+
+function claudeServerId(connector: McpConnector): string {
+  const safeName = connector.name.trim().replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+  return `${connector.managed ? 'claude_ai_' : ''}${safeName}`;
+}
+
+function relevantConnectors(kind: WorkHubSourceKind, connectors: McpConnector[]): McpConnector[] {
+  const relevant = connectors.filter((connector) => connector.status === 'connected' && CONNECTOR_HINTS[kind].test(connector.name));
+  if (kind !== 'tickets') return relevant;
+  // Prefer the dedicated issue tracker when an account also has a broad source
+  // code connector. This keeps a Jira board refresh bounded instead of asking a
+  // single collector to crawl both Jira and every accessible GitHub repository.
+  const dedicated = relevant.filter((connector) => DEDICATED_TRACKER_HINT.test(connector.name));
+  return dedicated.length > 0 ? dedicated : relevant;
 }
 
 export class WorkHubService {
   private readonly items = new Map<string, WorkHubItem[]>();
+  private readonly messageStates = new Map<string, WorkHubMessageState>();
   private readonly states = new Map<string, WorkHubSourceState>();
+  private readonly inFlight = new Map<string, Promise<void>>();
+  private readonly accountQueues = new Map<string, Promise<void>>();
+  private readonly connectorCache = new Map<string, { expiresAt: number; connectors: McpConnector[] }>();
   private readonly connections: ProviderConnectionRuntime;
   private readonly claudeRuntime: ClaudeAccountRuntime;
   private readonly codexRuntime: CodexAccountRuntime;
@@ -336,10 +502,19 @@ export class WorkHubService {
     this.claudeRuntime = options.claudeRuntime ?? new ClaudeAccountRuntime(claudeProfiles);
     const codexProfiles = options.codexProfiles ?? new CodexAccountProfileStore();
     this.codexRuntime = options.codexRuntime ?? new CodexAccountRuntime(codexProfiles);
+    const restoredStates = new Map(this.sources.readStates().map((state) => [state.sourceId, state]));
+    for (const state of this.sources.readMessageStates()) this.messageStates.set(`${state.sourceId}\u0000${state.externalId}`, state);
     for (const source of this.sources.list()) {
-      this.states.set(source.id, { sourceId: source.id, status: 'idle', itemCount: 0 });
-      this.restoreCache(source);
+      const restored = restoredStates.get(source.id);
+      this.states.set(source.id, restored?.status === 'syncing'
+        ? { ...restored, status: 'error', stage: undefined, syncStartedAt: undefined, error: 'The previous sync was interrupted when Local Coder closed.' }
+        : restored ?? { sourceId: source.id, status: 'idle', itemCount: 0 });
+      const cacheRestored = this.restoreCache(source);
+      if (!cacheRestored && this.states.get(source.id)?.status === 'ready') {
+        this.states.set(source.id, { ...this.states.get(source.id)!, status: 'idle', itemCount: 0 });
+      }
     }
+    this.persistStates();
   }
 
   listSources(): WorkHubSource[] { return this.sources.list(); }
@@ -364,7 +539,20 @@ export class WorkHubService {
     if (source) {
       try { fs.rmSync(this.sources.cacheFile(source.id), { force: true }); } catch { /* best effort */ }
     }
+    for (const key of this.messageStates.keys()) {
+      if (key.startsWith(`${id}\u0000`)) this.messageStates.delete(key);
+    }
+    this.persistMessageStates();
+    this.persistStates();
     return true;
+  }
+
+  markMessageRead(sourceId: string, externalId: string): WorkHubSnapshot {
+    return this.updateMessageState(sourceId, externalId, 'read');
+  }
+
+  dismissMessage(sourceId: string, externalId: string): WorkHubSnapshot {
+    return this.updateMessageState(sourceId, externalId, 'dismiss');
   }
 
   snapshot(): WorkHubSnapshot {
@@ -375,7 +563,14 @@ export class WorkHubService {
       sourceStates: this.sources.list().map((source) => this.states.get(source.id) ?? { sourceId: source.id, status: 'idle', itemCount: 0 }),
       events: items.filter((item): item is NormalizedCalendarEvent => item.kind === 'calendar').sort((a, b) => a.start.localeCompare(b.start)),
       tickets: items.filter((item): item is NormalizedTicket => item.kind === 'ticket').sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')),
-      messages: items.filter((item): item is NormalizedMessage => item.kind === 'message').sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      messages: items
+        .filter((item): item is NormalizedMessage => item.kind === 'message')
+        .map((item) => {
+          const state = this.messageStates.get(`${item.sourceId}\u0000${item.externalId}`);
+          return state?.read ? { ...item, unread: false, requiresAttention: false } : item;
+        })
+        .filter((item) => this.messageStates.get(`${item.sourceId}\u0000${item.externalId}`)?.dismissed !== true)
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
     };
   }
 
@@ -384,65 +579,171 @@ export class WorkHubService {
       ? [this.sources.get(sourceId)].filter((source): source is WorkHubSource => Boolean(source))
       : this.sources.list().filter((source) => source.enabled);
     if (sourceId && selected.length === 0) throw new Error(`Work Hub source not found: ${sourceId}`);
-    // Sequential by design: different enterprise identities stay isolated, and one refresh
-    // cannot stampede multiple subscription quotas/connectors at the same time.
-    for (const source of selected) await this.refreshSource(source);
+    // Keep one collector at a time inside each account, but let isolated accounts sync
+    // together. A second click on an in-flight source joins the existing promise.
+    const byConnection = new Map<string, WorkHubSource[]>();
+    for (const source of selected) byConnection.set(source.connectionId, [...(byConnection.get(source.connectionId) ?? []), source]);
+    await Promise.all([...byConnection.values()].map(async (accountSources) => {
+      for (const source of accountSources) await this.refreshSource(source);
+    }));
     return this.snapshot();
   }
 
-  private async refreshSource(source: WorkHubSource): Promise<void> {
-    this.states.set(source.id, { sourceId: source.id, status: 'syncing', itemCount: this.items.get(source.id)?.length ?? 0 });
+  private refreshSource(source: WorkHubSource): Promise<void> {
+    const current = this.inFlight.get(source.id);
+    if (current) return current;
+    const previous = this.accountQueues.get(source.connectionId) ?? Promise.resolve();
+    const run = previous.then(() => this.runRefreshSource(source));
+    const pending = run.finally(() => {
+      this.inFlight.delete(source.id);
+      if (this.accountQueues.get(source.connectionId) === pending) this.accountQueues.delete(source.connectionId);
+    });
+    this.inFlight.set(source.id, pending);
+    this.accountQueues.set(source.connectionId, pending);
+    return pending;
+  }
+
+  private async runRefreshSource(source: WorkHubSource): Promise<void> {
+    const startedAt = new Date().toISOString();
+    this.setState({
+      sourceId: source.id,
+      status: 'syncing',
+      stage: 'discovering',
+      syncStartedAt: startedAt,
+      lastAttemptAt: startedAt,
+      lastSyncedAt: this.states.get(source.id)?.lastSyncedAt,
+      itemCount: this.items.get(source.id)?.length ?? 0,
+      systems: this.states.get(source.id)?.systems
+    });
     try {
       const connection = this.connections.view(source.connectionId);
       if (!connection?.accountProfileId) throw new Error('Work Hub source connection is missing its account profile.');
       let output: string;
+      let systems: string[] | undefined;
       if (connection.auth === 'claude-account') {
-        const result = await this.claudeRuntime.invoke(connection.accountProfileId, collectorPrompt(source), {
+        const connectors = await this.connectorsFor('claude', connection.accountProfileId);
+        const relevant = relevantConnectors(source.kind, connectors);
+        if (relevant.length === 0) {
+          throw new Error(`No connected ${sourceKindLabel(source.kind)} connector was found for ${connection.label}. Open Settings → Connections to connect one, then try again.`);
+        }
+        systems = relevant.map((connector) => connector.name);
+        this.setState({ ...this.states.get(source.id)!, stage: 'collecting', systems });
+        const result = await this.claudeRuntime.invoke(connection.accountProfileId, collectorPrompt(source, systems), {
           timeoutMs: 180_000,
-          allowedTools: ['mcp__*']
+          allowedTools: relevant.map((connector) => `mcp__${claudeServerId(connector)}__*`),
+          stopOnValidJson: true
         });
         if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
-          throw new Error(result.stderr || result.stdout || 'Claude Work Hub collector failed.');
+          throw collectorFailure('Claude Work Hub sync', result);
         }
         output = result.stdout;
       } else if (connection.auth === 'chatgpt-account') {
-        const result = await this.codexRuntime.invoke(connection.accountProfileId, collectorPrompt(source), {
-          timeoutMs: 180_000
+        const connectors = await this.connectorsFor('codex', connection.accountProfileId);
+        const relevant = relevantConnectors(source.kind, connectors);
+        if (relevant.length === 0) {
+          throw new Error(`No connected ${sourceKindLabel(source.kind)} connector was found for ${connection.label}. Open Settings → Connections to connect one, then try again.`);
+        }
+        systems = relevant.map((connector) => connector.name);
+        this.setState({ ...this.states.get(source.id)!, stage: 'collecting', systems });
+        const result = await this.codexRuntime.invoke(connection.accountProfileId, collectorPrompt(source, systems), {
+          timeoutMs: 180_000,
+          mcpPolicies: connectors.map((connector) => ({
+            serverId: connector.name,
+            enabled: relevant.some((candidate) => candidate.name === connector.name)
+          })),
+          stopOnValidJson: true
         });
         if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
-          throw new Error(result.stderr || result.stdout || 'ChatGPT Work Hub collector failed.');
+          throw collectorFailure('ChatGPT Work Hub sync', result);
         }
         output = result.stdout;
       } else {
         throw new Error(`${connection.label} cannot collect MCP data.`);
       }
       const collectedAt = new Date().toISOString();
-      const normalized = this.normalize(source, connection.providerFamily as 'anthropic' | 'openai', extractJson(output), collectedAt);
+      this.setState({ ...this.states.get(source.id)!, stage: 'normalizing', systems });
+      const normalized = this.normalize(source, connection.providerFamily as 'anthropic' | 'openai', extractJson(output), collectedAt, systems?.[0]);
       this.items.set(source.id, normalized);
-      this.states.set(source.id, { sourceId: source.id, status: 'ready', lastSyncedAt: collectedAt, itemCount: normalized.length });
-      if (source.retention === 'local') this.persistCache(source, normalized, collectedAt);
-      else {
-        try { fs.rmSync(this.sources.cacheFile(source.id), { force: true }); } catch { /* best effort */ }
-      }
+      this.setState({
+        sourceId: source.id,
+        status: 'ready',
+        lastAttemptAt: startedAt,
+        lastSyncedAt: collectedAt,
+        durationMs: Date.now() - Date.parse(startedAt),
+        itemCount: normalized.length,
+        systems
+      });
+      this.persistCache(source, normalized, collectedAt);
     } catch (error) {
-      this.states.set(source.id, {
+      this.setState({
         sourceId: source.id,
         status: 'error',
+        lastAttemptAt: startedAt,
         lastSyncedAt: this.states.get(source.id)?.lastSyncedAt,
+        durationMs: Date.now() - Date.parse(startedAt),
         itemCount: this.items.get(source.id)?.length ?? 0,
+        systems: this.states.get(source.id)?.systems,
         error: error instanceof Error ? error.message : String(error)
       });
     }
   }
 
-  private normalize(source: WorkHubSource, providerFamily: 'anthropic' | 'openai', payload: unknown, collectedAt: string): WorkHubItem[] {
+  private async connectorsFor(provider: 'claude' | 'codex', profileId: string): Promise<McpConnector[]> {
+    const key = `${provider}:${profileId}`;
+    const cached = this.connectorCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.connectors;
+    let result = provider === 'claude'
+      ? await this.claudeRuntime.listMcp(profileId, { timeoutMs: 45_000 })
+      : await this.codexRuntime.listMcp(profileId, { timeoutMs: 45_000, json: true });
+    if (provider === 'codex' && (result.exitCode !== 0 || result.timedOut || result.cancelled)) {
+      result = await this.codexRuntime.listMcp(profileId, { timeoutMs: 45_000 });
+    }
+    if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
+      throw new Error(result.timedOut ? 'Connector discovery timed out.' : result.stderr || result.stdout || 'Could not discover account connectors.');
+    }
+    const connectors = provider === 'claude' ? parseClaudeMcpList(result.stdout || result.stderr) : parseCodexMcpList(result.stdout || result.stderr);
+    this.connectorCache.set(key, { expiresAt: Date.now() + CONNECTOR_CACHE_MS, connectors });
+    return connectors;
+  }
+
+  private setState(state: WorkHubSourceState): void {
+    this.states.set(state.sourceId, state);
+    this.persistStates();
+  }
+
+  private persistStates(): void {
+    try { this.sources.writeStates([...this.states.values()]); } catch { /* status persistence must not break a sync */ }
+  }
+
+  private persistMessageStates(): void {
+    try { this.sources.writeMessageStates([...this.messageStates.values()]); } catch { /* local inbox state must not break a sync */ }
+  }
+
+  private updateMessageState(sourceId: string, externalId: string, action: 'read' | 'dismiss'): WorkHubSnapshot {
+    const source = this.sources.get(sourceId);
+    if (!source || source.kind !== 'messages') throw new Error(`Work Hub message source not found: ${sourceId}`);
+    const cleanExternalId = messageExternalId(externalId);
+    const key = `${source.id}\u0000${cleanExternalId}`;
+    const current = this.messageStates.get(key);
+    this.messageStates.set(key, {
+      sourceId: source.id,
+      externalId: cleanExternalId,
+      read: current?.read === true || action === 'read',
+      dismissed: current?.dismissed === true || action === 'dismiss',
+      updatedAt: new Date().toISOString()
+    });
+    this.persistMessageStates();
+    return this.snapshot();
+  }
+
+  private normalize(source: WorkHubSource, providerFamily: 'anthropic' | 'openai', payload: unknown, collectedAt: string, discoveredSystem?: string): WorkHubItem[] {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Collector payload must be a JSON object.');
     const value = payload as Record<string, unknown>;
     const base = (externalId: string, system?: string): NormalizedBase => ({
       sourceId: source.id,
       connectionId: source.connectionId,
       providerFamily,
-      system: system ?? source.system,
+      system: system ?? discoveredSystem ?? source.system,
       externalId,
       collectedAt
     });
@@ -490,16 +791,29 @@ export class WorkHubService {
   private persistCache(source: WorkHubSource, items: WorkHubItem[], syncedAt: string): void {
     const file = this.sources.cacheFile(source.id);
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(file, `${JSON.stringify({ version: 1, sourceId: source.id, syncedAt, items }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    const temp = `${file}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(temp, `${JSON.stringify({ version: 1, sourceId: source.id, syncedAt, items }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    try {
+      fs.renameSync(temp, file);
+      try { fs.chmodSync(file, 0o600); } catch { /* best effort */ }
+    } catch (error) {
+      try { fs.unlinkSync(temp); } catch { /* best effort */ }
+      throw error;
+    }
   }
 
-  private restoreCache(source: WorkHubSource): void {
-    if (source.retention !== 'local') return;
+  private restoreCache(source: WorkHubSource): boolean {
     try {
-      const parsed = JSON.parse(fs.readFileSync(this.sources.cacheFile(source.id), 'utf8')) as { syncedAt?: string; items?: WorkHubItem[] };
-      if (!Array.isArray(parsed.items)) return;
+      const parsed = JSON.parse(fs.readFileSync(this.sources.cacheFile(source.id), 'utf8')) as { version?: number; sourceId?: string; syncedAt?: string; items?: WorkHubItem[] };
+      if (parsed.version !== 1 || parsed.sourceId !== source.id || !Array.isArray(parsed.items)) return false;
       this.items.set(source.id, parsed.items);
-      this.states.set(source.id, { sourceId: source.id, status: 'ready', lastSyncedAt: parsed.syncedAt, itemCount: parsed.items.length });
-    } catch { /* no cache is normal */ }
+      const current = this.states.get(source.id);
+      this.states.set(source.id, current?.status === 'error'
+        ? { ...current, itemCount: parsed.items.length }
+        : { ...current, sourceId: source.id, status: 'ready', lastSyncedAt: parsed.syncedAt ?? current?.lastSyncedAt, itemCount: parsed.items.length });
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

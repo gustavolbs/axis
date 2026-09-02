@@ -29,6 +29,7 @@ type DirectChatHistoryTurn = {
 type DirectChatModelLimits = {
   providerId: string;
   providerKind: 'local' | 'cloud';
+  modelId?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
 };
@@ -196,14 +197,35 @@ Research policy:
 If a deliberate Architect/Critic/Judge result is supplied, use it as additional structured evidence. Do not blindly accept it: reconcile it against current repository evidence and user constraints.
 Do not edit code. Return only the required JSON.`;
 
-const DIRECT_CHAT_SYSTEM_PROMPT = `You are Local Coder's conversational assistant.
+function directChatSystemPrompt(input: PremiumAgentInput, config: LocalCoderConfig): string {
+  const providerId = input.chatModelLimits?.providerId ?? 'ollama';
+  const providerKind = input.chatModelLimits?.providerKind ?? 'local';
+  const modelId = input.chatModelLimits?.modelId ?? (providerKind === 'local' ? config.model : undefined);
+  const providerLabel = providerId === 'ollama'
+    ? 'Ollama'
+    : providerId === 'anthropic' || providerId.startsWith('claude-')
+      ? 'Anthropic/Claude'
+      : providerId === 'openai' || providerId.startsWith('chatgpt-')
+        ? 'OpenAI/ChatGPT'
+        : providerId;
+  const identity = [
+    `Selected provider: ${providerLabel} (${providerId})`,
+    modelId ? `Selected model: ${modelId}` : 'Selected model: the account default exposed by the provider'
+  ].join('\n');
+
+  return `You are Local Coder's conversational assistant.
 This request is in Chat mode, not Cowork mode.
 Respond directly and naturally to the user's message.
 Do not inspect, search, plan, edit, validate, review, or otherwise operate on a repository.
 Do not create implementation plans, material-decision checkpoints, or engineering escalation requests.
 Use only information the user explicitly supplied in the current message, prior conversation history, or attached context.
 For casual conversation, answer casually and concisely.
-Reply in the user's language unless they ask for another language.`;
+Reply in the user's language unless they ask for another language.
+
+The following runtime identity is authoritative for this response:
+${identity}
+If the user asks which model or provider is answering, report that identity accurately. Never claim to be Claude, Anthropic, GPT, OpenAI, or another provider unless it matches the selected provider above. In particular, when the selected provider is Ollama, say that you are running through Ollama and do not identify yourself as Claude or Anthropic.`;
+}
 
 const LOCAL_CHAT_HISTORY_MAX_CHARS = 24_000;
 const LOCAL_CHAT_TURN_MAX_CHARS = 12_000;
@@ -220,7 +242,7 @@ function estimatedTokens(chars: number): number {
   return Math.ceil(chars / APPROX_CHARS_PER_TOKEN);
 }
 
-function directChatHistoryBudget(input: PremiumAgentInput): DirectChatHistoryBudget {
+function directChatHistoryBudget(input: PremiumAgentInput, config: LocalCoderConfig): DirectChatHistoryBudget {
   const limits = input.chatModelLimits;
   if (!limits || limits.providerKind === 'local') {
     return {
@@ -237,7 +259,7 @@ function directChatHistoryBudget(input: PremiumAgentInput): DirectChatHistoryBud
   );
   const safetyReserve = Math.max(4_096, Math.floor(contextWindow * 0.08));
   const fixedChars = [
-    DIRECT_CHAT_SYSTEM_PROMPT,
+    directChatSystemPrompt(input, config),
     input.goal,
     input.context ?? '',
     ...(input.constraints ?? [])
@@ -306,7 +328,7 @@ async function executeDirectChat(
   config: LocalCoderConfig,
   input: PremiumAgentInput
 ): Promise<LocalEngineerExecution> {
-  const history = renderDirectChatHistory(input.chatHistory, directChatHistoryBudget(input));
+  const history = renderDirectChatHistory(input.chatHistory, directChatHistoryBudget(input, config));
   const userPrompt = [
     history ? `# CONVERSATION HISTORY\n${history}` : input.goal.trim(),
     history ? `# CURRENT USER MESSAGE\n${input.goal.trim()}` : '',
@@ -318,7 +340,7 @@ async function executeDirectChat(
 
   const localChat = input.chatModelLimits?.providerKind !== 'cloud';
   const generation = await model.chat(
-    DIRECT_CHAT_SYSTEM_PROMPT,
+    directChatSystemPrompt(input, config),
     userPrompt,
     undefined,
     {
@@ -330,15 +352,27 @@ async function executeDirectChat(
       think: localChat ? 'low' : undefined,
       maxTokens: directChatOutputLimit(input, config),
       onStreamProgress: (progress) => {
+        const providerId = progress.providerId ?? input.chatModelLimits?.providerId ?? 'ollama';
+        const model = progress.model ?? input.chatModelLimits?.modelId ?? config.model;
         reportProgress({
           phase: 'other',
-          action: progress.state === 'thinking'
-            ? 'Model is reasoning about the conversation'
-            : 'Model is drafting the response',
-          detail: `model=${input.chatModelLimits?.providerId ?? 'ollama'} · elapsed=${Math.round(progress.elapsedMs / 1000)}s`,
+          action: progress.state === 'waiting'
+            ? 'Connecting to the model'
+            : progress.state === 'thinking'
+              ? 'Model is reasoning about the conversation'
+              : 'Model is drafting the response',
+          detail: `provider=${providerId} · model=${model} · ${progress.chunkCount} stream events · ${progress.outputChars} output chars · elapsed=${Math.round(progress.elapsedMs / 1000)}s`,
           reasoningSummary: progress.state === 'thinking'
             ? 'The model is processing the request. Hidden reasoning remains private; only safe progress metadata is shown.'
-            : 'Reasoning is complete or not required; the model is composing the user-visible answer.'
+            : progress.state === 'waiting'
+              ? 'The request was sent and the provider is opening its response stream.'
+              : 'Reasoning is complete or not required; the model is composing the user-visible answer.',
+          streamState: progress.state === 'waiting' ? 'waiting-response' : progress.state === 'thinking' ? 'reasoning' : 'generating',
+          providerId,
+          model,
+          eventCount: progress.chunkCount,
+          outputChars: progress.outputChars,
+          elapsedMs: progress.elapsedMs
         });
       }
     }

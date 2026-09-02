@@ -20,7 +20,7 @@ test('preload exposes bounded connection and Work Hub actions without generic ac
   for (const method of [
     'claudeDiscover', 'claudeAccounts', 'createClaudeAccount', 'claudeAccountStatus', 'loginClaudeAccount', 'listClaudeAccountMcps', 'addClaudeAccountMcp', 'removeClaudeAccountMcp', 'loginClaudeAccountMcp',
     'codexDiscover', 'codexAccounts', 'createCodexAccount', 'codexAccountStatus', 'loginCodexAccount', 'listCodexAccountMcps', 'addCodexAccountMcp', 'removeCodexAccountMcp', 'loginCodexAccountMcp',
-    'providerConnections', 'workHubSnapshot', 'upsertWorkHubSource', 'removeWorkHubSource', 'refreshWorkHub'
+    'providerConnections', 'workHubSnapshot', 'upsertWorkHubSource', 'removeWorkHubSource', 'markWorkHubMessageRead', 'dismissWorkHubMessage', 'refreshWorkHub'
   ]) assert.match(preload, new RegExp(`\\b${method}\\b`));
 
   assert.doesNotMatch(preload, /setup-token|oauthToken|credentials\.json|Keychain/i);
@@ -74,12 +74,42 @@ test('Work Hub is shell-owned, capability-driven and uses the shared stylesheet'
   assert.match(shell, /GlobalWorkHubLauncher/);
   assert.doesNotMatch(main, /GlobalWorkHubLauncher/);
   assert.match(hub, /Choose what to sync/);
+  assert.match(hub, /Work board/);
+  assert.match(hub, /work-hub-sync-banner/);
+  assert.match(hub, /work-hub-week-grid/);
+  assert.match(hub, /work-hub-calendar-join/);
+  assert.match(hub, /work-hub-calendar-tooltip/);
+  assert.match(hub, /calendarEventDetails/);
+  assert.match(hub, /id: 'qa'/);
+  assert.match(hub, /result\.setDate\(result\.getDate\(\) - day\)/);
+  assert.match(hub, /work-hub-account-filter/);
+  assert.match(hub, /accountClass\(item\.connectionId\)/);
+  assert.match(hub, /prepareSourceForm/);
+  assert.match(hub, /alreadyAdded \? ' added' : ''/);
+  assert.match(hub, /hasCachedSnapshot/);
+  assert.match(hub, /Checking connected services/);
   assert.match(hub, /The provider discovers its connected services automatically/);
   assert.doesNotMatch(hub, /Exact read-only MCP tools|Remote system|Normalized-data retention|<style>/);
   assert.match(runtime, /does not require a manual tool allowlist/);
   assert.match(runtime, /Interactive user requests outside Work Hub may use write actions normally/);
   assert.match(styles, /\.work-hub-shell/);
   assert.match(styles, /\.work-hub-source-form/);
+  assert.match(styles, /\.work-hub-board-column/);
+  assert.match(styles, /\.work-hub-sync-banner/);
+  assert.match(styles, /\.work-hub-now/);
+  assert.match(styles, /\.work-hub-calendar-tooltip/);
+  assert.match(styles, /\.work-hub-shell \.work-hub-calendar-join/);
+  assert.match(styles, /\.work-hub-shell \.work-hub-calendar-today/);
+  assert.match(styles, /\.work-hub-shell \.work-hub-icon-button/);
+  assert.match(styles, /grid-template-columns: 52px repeat\(7, 168px\)/);
+  assert.match(styles, /width: 1228px/);
+  assert.match(styles, /height: 928px/);
+  assert.match(styles, /\.work-hub-account-toggle/);
+  assert.match(styles, /\.work-hub-source-form \.ui-select-trigger/);
+  assert.match(styles, /\.settings-option-group > button\.added/);
+  assert.match(styles, /\.account-tone-0/);
+  assert.match(styles, /repeat\(6/);
+  assert.match(runtime, /stopOnValidJson: true/);
   assert.doesNotMatch(source('desktop/preload.cjs'), /workHubPrompt|runWorkHubPrompt/);
 });
 

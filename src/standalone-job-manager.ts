@@ -69,6 +69,12 @@ export interface StandaloneJobActivity {
   action: string;
   detail?: string;
   reasoningSummary?: string;
+  streamState?: EngineeringProgress['streamState'];
+  providerId?: string;
+  model?: string;
+  eventCount?: number;
+  outputChars?: number;
+  elapsedMs?: number;
   updatedAt: string;
 }
 
@@ -90,6 +96,8 @@ export interface StandaloneJobSnapshot {
   turns: StandaloneJobTurn[];
   /** Ephemeral safe progress metadata. Hidden reasoning text is never stored here. */
   activity?: StandaloneJobActivity;
+  /** Bounded safe activity history used by the inline disclosure UI. */
+  activityHistory?: StandaloneJobActivity[];
   decisionRequest?: PremiumDecisionRequest;
   escalationPlan?: ProjectEscalationPlan;
   result?: LocalEngineerResult;
@@ -189,6 +197,7 @@ function snapshot(job: JobInternal): StandaloneJobSnapshot {
     input: job.input,
     turns: [...job.turns],
     activity: job.activity,
+    activityHistory: job.activityHistory ? [...job.activityHistory] : [],
     decisionRequest: job.decisionRequest,
     escalationPlan: job.escalationPlan,
     result: job.result,
@@ -637,12 +646,27 @@ export class StandaloneJobManager {
     if (!action) return;
     const now = Date.now();
     const previous = this.lastActivityPublish.get(job.id);
+    const previousActivity = job.activity;
     job.activity = {
       action,
       detail: progress.detail?.trim() || undefined,
       reasoningSummary: progress.reasoningSummary?.trim() || undefined,
+      streamState: progress.streamState,
+      providerId: progress.providerId,
+      model: progress.model,
+      eventCount: progress.eventCount,
+      outputChars: progress.outputChars,
+      elapsedMs: progress.elapsedMs,
       updatedAt: new Date(now).toISOString()
     };
+    const isStreamTelemetry = progress.streamState !== undefined;
+    const isMeaningful = isStreamTelemetry
+      ? previousActivity?.streamState !== job.activity.streamState
+      : previousActivity?.action !== job.activity.action || previousActivity?.detail !== job.activity.detail;
+    if (isMeaningful) {
+      job.activityHistory = [...(job.activityHistory ?? []), job.activity].slice(-40);
+      void this.schedulePersist();
+    }
     if (previous?.action === action && now - previous.at < 350) return;
     this.lastActivityPublish.set(job.id, { action, at: now });
     const event: StandaloneJobEvent = {

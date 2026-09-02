@@ -82,14 +82,18 @@ function streamProgress(
   state: 'waiting-response' | 'reasoning' | 'generating',
   timestamp: string,
   eventCount: number,
-  outputChars: number
+  outputChars: number,
+  providerId?: string,
+  model?: string
 ): OllamaStreamProgress {
   return {
     elapsedMs: Math.max(0, Date.now() - startedAt),
     chunkCount: eventCount,
     thinkingChars: 0,
     outputChars,
-    state: state === 'generating' ? 'generating' : 'thinking',
+    providerId,
+    model,
+    state: state === 'waiting-response' ? 'waiting' : state === 'generating' ? 'generating' : 'thinking',
     lastActivityAt: timestamp
   };
 }
@@ -152,7 +156,9 @@ class SelectedProviderChatClient implements ChatClient {
               progress.state,
               progress.timestamp,
               progress.eventCount,
-              progress.outputChars
+              progress.outputChars,
+              progress.providerId,
+              progress.model
             )
           )
         : undefined
@@ -344,6 +350,7 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
               chatModelLimits: {
                 providerId: resolved.provider.id,
                 providerKind: resolved.provider.kind,
+                modelId: resolved.model.id,
                 contextWindow: resolved.model.contextWindow,
                 maxOutputTokens: resolved.model.maxOutputTokens
               }

@@ -33,6 +33,9 @@ test('chat mode performs exactly one conversational inference without touching a
     async chat(systemPrompt, userPrompt, format, runtime): Promise<OllamaGeneration> {
       calls += 1;
       assert.match(systemPrompt, /Chat mode, not Cowork mode/);
+      assert.match(systemPrompt, /Selected provider: Ollama \(ollama\)/);
+      assert.match(systemPrompt, /Selected model: qwen3\.8:27b/);
+      assert.match(systemPrompt, /do not identify yourself as Claude or Anthropic/i);
       assert.equal(userPrompt, 'Como vc está?');
       assert.equal(format, undefined);
       assert.equal(runtime?.think, 'low');

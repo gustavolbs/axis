@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   Archive,
   ArchiveRestore,
@@ -7,9 +7,11 @@ import {
   FolderOpen,
   History,
   LayoutDashboard,
+  Mail,
   MessageSquare,
   MoreHorizontal,
   PanelLeft,
+  Pencil,
   Plus,
   Search,
   Trash2
@@ -105,6 +107,7 @@ export function AppRoot() {
   const [userCollapsed, setUserCollapsed] = useState(() => localStorage.getItem('local-coder.sidebar-collapsed') === 'true');
   const [autoCollapsed, setAutoCollapsed] = useState(() => window.innerWidth < 900);
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('local-coder.sidebar-width') ?? 250));
+  const [sidebarResizing, setSidebarResizing] = useState(false);
   const [agentEpoch, setAgentEpoch] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -376,6 +379,7 @@ export function AppRoot() {
         if (event.key === 'Escape') {
           setSearchOpen(false);
           setJobMenuId(undefined);
+          setProjectMenuId(undefined);
         }
         return;
       }
@@ -398,12 +402,25 @@ export function AppRoot() {
     };
   }, []);
 
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('.lc-shell-row-menu, .lc-shell-row-menu-button')) return;
+      setJobMenuId(undefined);
+      setProjectMenuId(undefined);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, []);
+
   function beginSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
     if (sidebarCollapsed) return;
+    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     const startX = event.clientX;
     const startWidth = sidebarWidth;
     let latestWidth = startWidth;
+    setSidebarResizing(true);
     const onMove = (moveEvent: PointerEvent) => {
       latestWidth = Math.min(320, Math.max(220, startWidth + moveEvent.clientX - startX));
       setSidebarWidth(latestWidth);
@@ -411,10 +428,30 @@ export function AppRoot() {
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      localStorage.setItem('local-coder.sidebar-width', String(latestWidth));
+      window.removeEventListener('pointercancel', onUp);
+      setSidebarResizing(false);
+      localStorage.setItem('local-coder.sidebar-width', String(Math.round(latestWidth)));
     };
     window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp, { once: true });
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  }
+
+  function handleSidebarResizeKey(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (sidebarCollapsed) return;
+    const step = event.shiftKey ? 40 : 10;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      const direction = event.key === 'ArrowLeft' ? -1 : 1;
+      const nextWidth = Math.min(320, Math.max(220, sidebarWidth + direction * step));
+      setSidebarWidth(nextWidth);
+      localStorage.setItem('local-coder.sidebar-width', String(nextWidth));
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      const nextWidth = event.key === 'Home' ? 220 : 320;
+      setSidebarWidth(nextWidth);
+      localStorage.setItem('local-coder.sidebar-width', String(nextWidth));
+    }
   }
 
   /**
@@ -439,14 +476,15 @@ export function AppRoot() {
       <button className={`lc-shell-sidebar-row ${read || running ? '' : 'unread'}`} onClick={() => openJob(job)} title={jobTitle(job)}>
         <span className="lc-shell-sidebar-row-copy"><strong>{jobTitle(job)}</strong><small>{relative(job.updatedAt)}</small></span>
       </button>
-      <button className="lc-shell-row-menu-button" aria-label={`More options for ${jobTitle(job)}`} onClick={(event) => { event.stopPropagation(); setProjectMenuId(undefined); setJobMenuId((current) => current === job.id ? undefined : job.id); }}><MoreHorizontal size={14} /></button>
-      {jobMenuId === job.id ? <div className="lc-shell-row-menu">
-        <button onClick={() => openJob(job)}>Open chat</button>
-        <button onClick={() => { setJobMenuId(undefined); markRead(job.id, !read); }}>{read ? 'Mark as unread' : 'Mark as read'}</button>
-        <button onClick={() => renameJob(job)}>Rename…</button>
-        <button onClick={() => archiveJob(job, true)}>Archive</button>
-        <button onClick={() => { setJobMenuId(undefined); selectSurface('runs'); }}>View run details</button>
-        <button className="danger" onClick={() => deleteJob(job)}>Delete…</button>
+      <button className="lc-shell-row-menu-button" aria-label={`More options for ${jobTitle(job)}`} aria-haspopup="menu" aria-expanded={jobMenuId === job.id} onClick={(event) => { event.stopPropagation(); setProjectMenuId(undefined); setJobMenuId((current) => current === job.id ? undefined : job.id); }}><MoreHorizontal size={14} /></button>
+      {jobMenuId === job.id ? <div className="lc-shell-row-menu" role="menu" aria-label={`Actions for ${jobTitle(job)}`}>
+        <button type="button" role="menuitem" onClick={() => openJob(job)}>Open chat<MessageSquare size={16} aria-hidden="true" /></button>
+        <button type="button" role="menuitem" onClick={() => { setJobMenuId(undefined); markRead(job.id, !read); }}>{read ? 'Mark as unread' : 'Mark as read'}<Mail size={16} aria-hidden="true" /></button>
+        <button type="button" role="menuitem" onClick={() => renameJob(job)}>Rename…<Pencil size={16} aria-hidden="true" /></button>
+        <button type="button" role="menuitem" onClick={() => { setJobMenuId(undefined); selectSurface('runs'); }}>View run details<History size={16} aria-hidden="true" /></button>
+        <div className="lc-shell-row-menu-separator" role="separator" />
+        <button type="button" role="menuitem" onClick={() => archiveJob(job, true)}>Archive<Archive size={16} aria-hidden="true" /></button>
+        <button type="button" role="menuitem" className="danger" onClick={() => deleteJob(job)}>Delete…<Trash2 size={16} aria-hidden="true" /></button>
       </div> : null}
     </div>;
   }
@@ -461,7 +499,7 @@ export function AppRoot() {
   const avatar = profileName.trim().charAt(0).toUpperCase() || 'L';
 
   return <div
-    className={`lc-shell-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${autoCollapsed ? 'auto-sidebar-collapsed' : ''} surface-${surface}`}
+    className={`lc-shell-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${autoCollapsed ? 'auto-sidebar-collapsed' : ''} ${sidebarResizing ? 'sidebar-resizing' : ''} surface-${surface}`}
     style={shellStyle}
     data-shell={isElectron ? 'electron' : 'web'}
     data-platform={platform}
@@ -511,12 +549,13 @@ export function AppRoot() {
                 <button className="lc-shell-sidebar-row project-row" onClick={() => runProject(project)} title={project.workspace}>
                   <span className="lc-shell-sidebar-row-copy"><strong>{project.name}</strong></span>
                 </button>
-                <button className="lc-shell-row-menu-button" aria-label={`More options for ${project.name}`} onClick={(event) => { event.stopPropagation(); setJobMenuId(undefined); setProjectMenuId((current) => current === project.id ? undefined : project.id); }}><MoreHorizontal size={14} /></button>
-                {projectMenuId === project.id ? <div className="lc-shell-row-menu">
-                  <button onClick={() => { setProjectMenuId(undefined); runProject(project); }}>Open project</button>
-                  <button onClick={() => renameProject(project)}>Rename…</button>
-                  <button onClick={() => archiveProject(project, true)}>Archive</button>
-                  <button className="danger" onClick={() => deleteProject(project)}>Delete…</button>
+                <button className="lc-shell-row-menu-button" aria-label={`More options for ${project.name}`} aria-haspopup="menu" aria-expanded={projectMenuId === project.id} onClick={(event) => { event.stopPropagation(); setJobMenuId(undefined); setProjectMenuId((current) => current === project.id ? undefined : project.id); }}><MoreHorizontal size={14} /></button>
+                {projectMenuId === project.id ? <div className="lc-shell-row-menu" role="menu" aria-label={`Actions for ${project.name}`}>
+                  <button type="button" role="menuitem" onClick={() => { setProjectMenuId(undefined); runProject(project); }}>Open project<FolderOpen size={16} aria-hidden="true" /></button>
+                  <button type="button" role="menuitem" onClick={() => renameProject(project)}>Rename…<Pencil size={16} aria-hidden="true" /></button>
+                  <div className="lc-shell-row-menu-separator" role="separator" />
+                  <button type="button" role="menuitem" onClick={() => archiveProject(project, true)}>Archive<Archive size={16} aria-hidden="true" /></button>
+                  <button type="button" role="menuitem" className="danger" onClick={() => deleteProject(project)}>Delete…<Trash2 size={16} aria-hidden="true" /></button>
                 </div> : null}
               </div>
               {expanded ? <div className="lc-shell-project-children">
@@ -547,7 +586,19 @@ export function AppRoot() {
           <ChevronDown size={14} className="lc-shell-account-chevron" aria-hidden="true" />
         </button>
       </div>
-      <div className="lc-shell-sidebar-resizer" onPointerDown={beginSidebarResize} aria-hidden="true" />
+      <div
+        className="lc-shell-sidebar-resizer"
+        role="separator"
+        aria-label="Resize sidebar"
+        aria-orientation="vertical"
+        aria-valuemin={220}
+        aria-valuemax={320}
+        aria-valuenow={Math.round(sidebarWidth)}
+        tabIndex={sidebarCollapsed ? -1 : 0}
+        onPointerDown={beginSidebarResize}
+        onKeyDown={handleSidebarResizeKey}
+        title="Drag to resize sidebar"
+      />
     </aside>
 
     <main className="lc-shell-content-shell">

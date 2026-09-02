@@ -289,6 +289,10 @@ test('desktop chrome uses persistent responsive sidebar and safe native drag reg
   assert.match(css, /-webkit-app-region:\s*no-drag/);
   assert.match(css, /overflow-x:\s*clip/);
   assert.match(css, /margin-top:\s*auto/);
+  assert.match(appRoot, /role="separator"/);
+  assert.match(appRoot, /pointercancel/);
+  assert.match(fixesCss, /\[data-shell='electron'\] \.lc-shell-window-chrome[\s\S]*?right:\s*0/);
+  assert.match(fixesCss, /\.lc-shell-sidebar-resizer[\s\S]*?width:\s*14px/);
   assert.match(desktop, /trafficLightPosition/);
 });
 
@@ -361,6 +365,17 @@ test('agent remains thread-first with lightweight streaming state', () => {
   }
   for (const state of ['Working', 'Thinking', 'Writing']) assert.match(agentSurface, new RegExp(state));
   assert.doesNotMatch(agentSurface, /thinkingChars/);
+});
+
+test('chat activity exposes a polished safe live timeline for every provider', () => {
+  for (const required of ['ChatActivityCard', 'assistant-activity-card', 'assistant-activity-steps', 'Show activity', 'Private reasoning text stays hidden']) {
+    assert.match(agentSurface, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `missing activity primitive: ${required}`);
+  }
+  assert.match(agentSurface, /streamState\?: 'waiting-response' \| 'reasoning' \| 'generating'/);
+  assert.match(agentSurface, /providerLabel\(providerId\)/);
+  assert.match(fixesCss, /\.assistant-activity-card\s*\{/);
+  assert.match(fixesCss, /\.assistant-activity-toggle\[aria-expanded='true'\]/);
+  assert.match(fixesCss, /@keyframes lc-activity-pulse/);
 });
 
 test('send affordance is text-driven, and only Cowork needs a folder', () => {

@@ -168,6 +168,12 @@ async function collectSearchEvidence(
   const matchedFiles: string[] = [];
   const hits: SearchHit[] = [];
   for (const query of dedupe(queries).slice(0, 12)) {
+    reportProgress({
+      phase: 'investigation',
+      action: 'Searching the repository',
+      detail: query,
+      reasoningSummary: 'Searching local source files for the symbols and behavior relevant to this request.'
+    });
     try {
       const result = await searchWorkspace(workspace, query, {
         maxResults: 16,
@@ -244,6 +250,12 @@ async function collectFullEvidence(
 
   for (const file of dedupe(files).slice(0, 14)) {
     try {
+      reportProgress({
+        phase: 'investigation',
+        action: 'Reading repository file',
+        detail: file,
+        reasoningSummary: 'Reading a bounded, relevant file window as evidence for the answer.'
+      });
       resolveWorkspacePath(workspace, file);
       const snapshot = await readWorkspaceFile(workspace, file, config.maxFileBytes);
       if (snapshot.content === null) continue;

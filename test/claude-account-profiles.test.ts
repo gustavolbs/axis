@@ -64,6 +64,13 @@ test('execution receives exactly the selected CLAUDE_CONFIG_DIR and never falls 
   assert.rejects(() => runtime.invoke('', 'OK'), /profile id/i);
 });
 
+test('Claude account invocation forwards an explicit stable model alias', async () => {
+  const { store, runtime } = fakeRuntime(tempRoot());
+  store.create({ id: 'personal', name: 'Personal' });
+  const result = await runtime.invoke('personal', 'OK', { model: 'sonnet' });
+  assert.match(result.stdout, /"--model","sonnet"/);
+});
+
 test('status exposes allowlisted identity metadata but never raw credential fields', async () => {
   const root = tempRoot();
   const { store, runtime } = fakeRuntime(root);
@@ -113,6 +120,16 @@ test('AbortSignal cancellation terminates the subprocess', async () => {
   assert.equal(result.timedOut, false);
   assert.ok(Date.now() - startedAt < 2_000, 'cancelled child should be terminated promptly');
   assert.notEqual(result.signal, null);
+});
+
+test('structured Claude collection finishes when complete JSON arrives even if MCP keeps the process open', async () => {
+  const { store, runtime } = fakeRuntime(tempRoot());
+  store.create({ id: 'personal', name: 'Personal' });
+  const result = await runtime.invoke('personal', 'JSON_THEN_HANG', { timeoutMs: 5_000, stopOnValidJson: true });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.timedOut, false);
+  assert.deepEqual(JSON.parse(result.stdout), { ok: true });
+  assert.ok(result.durationMs < 2_000);
 });
 
 test('missing Claude binary produces a clear discovery and invocation error', async () => {

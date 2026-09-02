@@ -927,10 +927,14 @@ select {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
   color: var(--lc-text);
   font-size: 11.5px;
   font-style: normal;
   font-weight: 580;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lc-agent-popover strong em {

@@ -136,6 +136,12 @@ interface Job {
     action: string;
     detail?: string;
     reasoningSummary?: string;
+    streamState?: 'waiting-response' | 'reasoning' | 'generating';
+    providerId?: string;
+    model?: string;
+    eventCount?: number;
+    outputChars?: number;
+    elapsedMs?: number;
     updatedAt: string;
   };
   decisionRequest?: DecisionRequest;
@@ -168,6 +174,10 @@ interface CatalogModel {
 }
 interface CatalogProvider {
   id: string;
+  label?: string;
+  providerFamily?: 'ollama' | 'anthropic' | 'openai';
+  auth?: 'local' | 'api-key' | 'claude-account' | 'chatgpt-account';
+  billing?: 'local' | 'api' | 'subscription';
   kind: 'local' | 'cloud';
   ready: boolean;
   reason?: string;
@@ -196,6 +206,8 @@ interface ProviderModeConfig {
   label: string;
   description: string;
   providerId: string;
+  providerFamily?: 'ollama' | 'anthropic' | 'openai';
+  authLabel?: string;
   ready: boolean;
   reason?: string;
 }
@@ -244,10 +256,27 @@ function providerLabel(providerId: string): string {
     .join(' ');
 }
 function providerDescription(provider: CatalogProvider): string {
-  if (provider.id === 'ollama') return 'Use Ollama only for every stage';
-  if (provider.id === 'anthropic') return 'Use the selected Anthropic model directly';
-  if (provider.id === 'openai') return 'Use the selected OpenAI model directly';
-  return `Use the selected ${providerLabel(provider.id)} model directly`;
+  if (provider.auth === 'local' || provider.kind === 'local') return 'Local model · stays on this computer';
+  if (provider.auth === 'api-key') return 'API key · provider model list updates live';
+  if (provider.auth === 'claude-account') return 'Claude subscription · uses your CLI account';
+  if (provider.auth === 'chatgpt-account') return 'ChatGPT subscription · uses your CLI account';
+  if (provider.id === 'anthropic') return 'API key · use the selected Claude model directly';
+  if (provider.id === 'openai') return 'API key · use the selected OpenAI model directly';
+  return `Use the selected ${provider.label ?? providerLabel(provider.id)} model directly`;
+}
+function providerAuthLabel(provider: CatalogProvider): string {
+  if (provider.auth === 'api-key') return 'API key';
+  if (provider.auth === 'claude-account') return 'Claude account';
+  if (provider.auth === 'chatgpt-account') return 'ChatGPT account';
+  if (provider.auth === 'local' || provider.kind === 'local') return 'Local';
+  return 'Provider';
+}
+function modelDescription(provider: CatalogProvider): string {
+  if (provider.auth === 'local' || provider.kind === 'local') return 'Local model';
+  if (provider.auth === 'api-key') return 'API key · live provider model';
+  if (provider.auth === 'claude-account') return 'Claude account · managed model alias';
+  if (provider.auth === 'chatgpt-account') return 'ChatGPT account · managed model';
+  return `Cloud · ${provider.providerFamily ? providerLabel(provider.providerFamily) : 'provider'}`;
 }
 function modelValue(selection: ModelSelection): string {
   if (selection.mode === 'auto') return 'auto';
@@ -315,6 +344,12 @@ function claudeDisplayLabel(model: ModelOption): string {
 }
 
 function claudeMenuModels(models: ModelOption[]): { recent: ModelOption[]; legacy: ModelOption[] } {
+  // Account connections expose stable aliases such as `sonnet` and `opus`
+  // rather than versioned Claude ids. They are already provider-managed
+  // current choices, so they belong in the main list instead of “More models”.
+  if (models.length > 0 && !models.some((model) => claudeFamily(model.modelId))) {
+    return { recent: models, legacy: [] };
+  }
   const recent: ModelOption[] = [];
   const legacy: ModelOption[] = [];
   for (const family of CLAUDE_FAMILY_ORDER) {
@@ -359,6 +394,7 @@ export function AgentSurfaceV2() {
   const [projects, setProjects] = useState<AdminProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState(() => localStorage.getItem('local-coder.project') ?? '');
   const [catalog, setCatalog] = useState<ProjectCatalog>();
+  const [catalogRefreshNonce, setCatalogRefreshNonce] = useState(0);
   const [worker, setWorker] = useState<WorkerStatus>();
   const [error, setError] = useState<string>();
   const [workspace, setWorkspace] = useState(() => localStorage.getItem('local-coder.workspace') ?? '');
@@ -463,7 +499,7 @@ export function AgentSurfaceV2() {
         setError(next instanceof Error ? next.message : String(next));
       });
     return () => { cancelled = true; };
-  }, [selectedProjectId, activeId]);
+  }, [selectedProjectId, activeId, catalogRefreshNonce]);
 
   useEffect(() => {
     if (!active?.decisionRequest) return;
@@ -495,7 +531,7 @@ export function AgentSurfaceV2() {
           modelId: model.id,
           label: model.displayName,
           createdAt: model.createdAt,
-          description: provider.kind === 'local' ? 'Local model' : `Cloud · ${providerLabel(provider.id)}`,
+          description: modelDescription(provider),
           available: provider.ready && model.available,
           contextWindow: model.contextWindow,
           maxOutputTokens: model.maxOutputTokens,
@@ -510,9 +546,11 @@ export function AgentSurfaceV2() {
   const providerModes = useMemo<ProviderModeConfig[]>(() => {
     const modes = (catalog?.providers ?? []).map((provider) => ({
       id: provider.id,
-      label: providerLabel(provider.id),
+      label: provider.label ?? providerLabel(provider.id),
       description: providerDescription(provider),
       providerId: provider.id,
+      providerFamily: provider.providerFamily ?? provider.id as 'ollama' | 'anthropic' | 'openai',
+      authLabel: providerAuthLabel(provider),
       ready: provider.ready && provider.models.some((model) => model.available),
       reason: provider.reason
     }));
@@ -523,6 +561,8 @@ export function AgentSurfaceV2() {
         label: 'Local-first',
         description: 'Start on Ollama; ask before bounded cloud escalation',
         providerId: 'ollama',
+        providerFamily: 'ollama',
+        authLabel: 'Local',
         ready: modes[localIndex]!.ready,
         reason: modes[localIndex]!.reason
       });
@@ -889,6 +929,7 @@ export function AgentSurfaceV2() {
         setExtrasOpen={setExtrasOpen}
         modelMenu={modelMenu}
         setModelMenu={setModelMenu}
+        refreshCatalog={() => setCatalogRefreshNonce((value) => value + 1)}
         modelOptions={modelOptions}
         providerModes={providerModes}
         modelSelection={modelSelection}
@@ -1008,6 +1049,7 @@ function Composer(props: {
   setExtrasOpen: (value: boolean) => void;
   modelMenu: ModelMenuView;
   setModelMenu: (value: ModelMenuView) => void;
+  refreshCatalog: () => void;
   modelOptions: ModelOption[];
   providerModes: ProviderModeConfig[];
   modelSelection: string;
@@ -1109,7 +1151,7 @@ function Composer(props: {
         <div className="composer-toolbar-right">
           {props.contextInfo ? <ConversationContextBadge info={props.contextInfo} /> : null}
           <div className="composer-menu-anchor model-menu-anchor">
-            <button className="model-effort-trigger" aria-haspopup="menu" aria-expanded={props.modelMenu !== 'closed'} onClick={() => { props.setExtrasOpen(false); props.setProjectMenu(false); props.setModelMenu(props.modelMenu === 'closed' ? 'providers' : 'closed'); }}>
+            <button className="model-effort-trigger" aria-haspopup="menu" aria-expanded={props.modelMenu !== 'closed'} onClick={() => { props.setExtrasOpen(false); props.setProjectMenu(false); if (props.modelMenu === 'closed') props.refreshCatalog(); props.setModelMenu(props.modelMenu === 'closed' ? 'providers' : 'closed'); }}>
               <Zap size={13} strokeWidth={1.7} />
               <span>{props.modelLabel}</span>{props.selectedModelLabel ? <><span className="model-trigger-dot">·</span><span>{props.selectedModelLabel}</span></> : null}<span className="model-trigger-dot">·</span><span>{props.effortLabel}</span>
               <ChevronDown size={13} strokeWidth={1.6} />
@@ -1164,7 +1206,7 @@ function ModelMenu(props: {
       ready: false
     };
   const currentModels = props.modelOptions.filter((model) => model.providerId === currentModeConfig.providerId);
-  const claudeGroups = currentModeConfig.providerId === 'anthropic'
+  const claudeGroups = currentModeConfig.providerFamily === 'anthropic'
     ? claudeMenuModels(currentModels)
     : { recent: currentModels, legacy: [] };
   const selectedModelId = props.modelSelection.includes('\0')
@@ -1189,7 +1231,7 @@ function ModelMenu(props: {
       <button className="popover-back" onClick={() => props.setModelMenu(legacy ? 'models' : 'providers')}><ChevronLeft size={16} /><strong>{legacy ? 'More Claude models' : `${currentModeConfig.label} models`}</strong></button>
       <div className="popover-separator" />
       {visibleModels.map((model) => <button key={`${currentMode}-${model.modelId}`} className={selectedModelId === model.modelId ? 'selected' : ''} disabled={!model.available} title={!model.available ? model.reason ?? 'Provider unavailable' : undefined} onClick={() => { props.setModelSelection(modeValue(currentMode, model.modelId)); props.setModelMenu('closed'); }}>
-        <span><strong>{currentModeConfig.providerId === 'anthropic' ? claudeDisplayLabel(model) : model.label}</strong><small>{model.description}{model.available ? '' : ` · ${model.reason ?? 'unavailable'}`}</small></span>
+        <span><strong>{currentModeConfig.providerFamily === 'anthropic' ? claudeDisplayLabel(model) : model.label}</strong><small>{model.description}{model.available ? '' : ` · ${model.reason ?? 'unavailable'}`}</small></span>
         {selectedModelId === model.modelId ? <Check size={16} /> : null}
       </button>)}
       {!legacy && claudeGroups.legacy.length > 0 ? <><div className="popover-separator" /><button className="popover-row-link" onClick={() => props.setModelMenu('legacy-models')}><span><strong>More models</strong><small>Older Claude versions and dated snapshots</small></span><ChevronRight size={16} /></button></> : null}
@@ -1198,14 +1240,14 @@ function ModelMenu(props: {
   }
 
   return <div className="lc-agent-popover model-popover" role="menu">
-    <div className="model-provider-label">Provider</div>
+    <div className="model-provider-label">Provider or account</div>
     {props.providerModes.map((mode) => {
       const ready = modeReady(mode);
       const unavailable = mode.id === 'local-first' && !props.allowLocalFirst
         ? ' · requires a project'
         : ready ? '' : ` · ${mode.reason ?? 'unavailable'}`;
       return <button key={mode.id} className={selectedMode === mode.id ? 'selected' : ''} disabled={!ready} title={!ready ? mode.reason : undefined} onClick={() => chooseProviderMode(mode)}>
-        <span><strong>{mode.label}</strong><small>{mode.description}{unavailable}</small></span>
+        <span><strong>{mode.label}{mode.authLabel ? <em>{mode.authLabel}</em> : null}</strong><small>{mode.description}{unavailable}</small></span>
         {ready ? <ChevronRight size={16} /> : null}
       </button>;
     })}
@@ -1276,37 +1318,145 @@ function chatProgress(
   model?: string,
   activity?: Job['activity'],
   latestEvent?: JobEvent
-): { title: string; detail: string } {
+): { title: string; detail: string; kind: 'connecting' | 'thinking' | 'writing' | 'working' } {
   const name = model ?? 'Local Coder';
   const activityText = `${activity?.action ?? ''} ${latestEvent?.title ?? ''}`.toLowerCase();
-  if (activityText.includes('reasoning') || activityText.includes('thinking')) {
+  const streamState = activity?.streamState ?? state;
+  if (streamState === 'waiting' || activityText.includes('connecting') || activityText.includes('waiting')) {
+    return {
+      title: 'Connecting',
+      kind: 'connecting',
+      detail: activity?.reasoningSummary ?? activity?.detail ?? `${name} is opening a response stream.`
+    };
+  }
+  if (streamState === 'reasoning' || activityText.includes('reasoning') || activityText.includes('thinking')) {
     return {
       title: 'Thinking',
+      kind: 'thinking',
       detail: activity?.reasoningSummary ?? activity?.detail ?? `${name} is analyzing the request and deciding how to answer.`
     };
   }
-  if (activityText.includes('drafting') || activityText.includes('writing')) {
+  if (streamState === 'generating' || activityText.includes('drafting') || activityText.includes('writing')) {
     return {
       title: 'Writing',
+      kind: 'writing',
       detail: activity?.reasoningSummary ?? activity?.detail ?? `${name} is turning the result into a response.`
-    };
-  }
-  if (state === 'thinking') {
-    return {
-      title: 'Thinking',
-      detail: `${name} is working through your message. Hidden reasoning stays private.`
-    };
-  }
-  if (state === 'generating') {
-    return {
-      title: 'Writing',
-      detail: `${name} is composing the answer from this conversation.`
     };
   }
   return {
     title: activity?.action ?? 'Analyzing',
+    kind: 'working',
     detail: activity?.reasoningSummary ?? activity?.detail ?? `${name} is reading the conversation and preparing its approach.`
   };
+}
+
+type ActivityStepState = 'done' | 'active' | 'pending';
+
+function ChatActivityCard(props: {
+  job: Job;
+  progress: ReturnType<typeof chatProgress>;
+  currentInference?: NonNullable<WorkerStatus['inference']>['current'];
+  latestEvent?: JobEvent;
+}) {
+  const { job, progress, currentInference, latestEvent } = props;
+  const activity = job.activity;
+  const [open, setOpen] = useState(true);
+  const [now, setNow] = useState(() => Date.now());
+  const startedAt = useRef(Date.now());
+
+  useEffect(() => {
+    startedAt.current = Date.now();
+    setOpen(true);
+  }, [job.id, job.status]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const elapsedMs = activity?.elapsedMs ?? currentInference?.runningMs ?? Math.max(0, now - startedAt.current);
+  const providerId = activity?.providerId ?? (job.input.modelSelection?.mode === 'explicit' ? job.input.modelSelection.providerId : undefined) ?? 'ollama';
+  const model = activity?.model
+    ?? currentInference?.model
+    ?? (job.input.modelSelection && job.input.modelSelection.mode !== 'auto' ? job.input.modelSelection.modelId : undefined)
+    ?? 'Default model';
+  const eventCount = activity?.eventCount ?? currentInference?.streamChunks;
+  const outputChars = activity?.outputChars ?? currentInference?.outputChars;
+  const streamActive = progress.kind === 'thinking' || progress.kind === 'writing';
+  const steps: Array<{ label: string; detail: string; state: ActivityStepState }> = [
+    { label: 'Request received', detail: 'Your message is in the active conversation.', state: 'done' },
+    {
+      label: 'Provider connected',
+      detail: streamActive ? `${providerLabel(providerId)} is streaming updates.` : 'Opening the provider response stream.',
+      state: progress.kind === 'connecting' ? 'active' : 'done'
+    },
+    {
+      label: 'Reasoning',
+      detail: progress.kind === 'thinking' ? 'Processing the request with private reasoning.' : progress.kind === 'writing' ? 'Reasoning is complete or not required.' : 'Waiting for the first model event.',
+      state: progress.kind === 'thinking' ? 'active' : progress.kind === 'writing' ? 'done' : 'pending'
+    },
+    {
+      label: 'Drafting response',
+      detail: progress.kind === 'writing' ? 'Building the answer you will see next.' : 'The user-visible answer will appear here.',
+      state: progress.kind === 'writing' ? 'active' : 'pending'
+    }
+  ];
+  const updates = [
+    ...job.events
+      .filter((event) => event.type === 'status')
+      .slice(-3)
+      .map((event) => ({ label: event.title, timestamp: event.timestamp })),
+    ...(latestEvent?.type === 'status' ? [{ label: latestEvent.title, timestamp: latestEvent.timestamp }] : []),
+    ...(activity ? [{ label: activity.action, timestamp: activity.updatedAt }] : [])
+  ].filter((item, index, items) => index === items.findIndex((candidate) => candidate.label === item.label));
+
+  return <section className="assistant-activity-card" data-state={progress.kind} aria-label="Live response activity">
+    <div className="assistant-activity-header">
+      <div className="assistant-activity-heading">
+        <span className="assistant-live-indicator" aria-hidden="true"><i /></span>
+        <strong>{progress.title}</strong>
+        <span className="assistant-activity-time">{duration(elapsedMs)}</span>
+      </div>
+      <span className="assistant-provider-chip" title={`${providerLabel(providerId)} · ${model}`}>
+        {providerLabel(providerId)}<span>·</span>{model}
+      </span>
+    </div>
+
+    <div className="assistant-activity-current">
+      <div className="assistant-activity-orb" aria-hidden="true"><Sparkles size={15} strokeWidth={1.65} /></div>
+      <div>
+        <strong>{progress.kind === 'connecting' ? 'Starting the response' : progress.kind === 'thinking' ? 'Working through your request' : progress.kind === 'writing' ? 'Composing the answer' : 'Preparing the next step'}</strong>
+        <p>{progress.detail}</p>
+      </div>
+    </div>
+
+    <div className="assistant-activity-steps" aria-label="Response stages">
+      {steps.map((step) => <div className={`assistant-activity-step ${step.state}`} key={step.label}>
+        <span className="assistant-step-mark" aria-hidden="true">{step.state === 'done' ? <Check size={11} /> : step.state === 'active' ? <LoaderCircle size={11} /> : null}</span>
+        <span><strong>{step.label}</strong><small>{step.detail}</small></span>
+      </div>)}
+    </div>
+
+    <div className="assistant-activity-footer">
+      <div className="assistant-activity-stats" aria-label="Stream statistics">
+        {streamActive ? <span><i className="assistant-stat-dot" />Live stream</span> : <span>Waiting for stream</span>}
+        {eventCount !== undefined ? <span>{eventCount} events</span> : null}
+        {outputChars !== undefined && outputChars > 0 ? <span>{outputChars.toLocaleString()} chars</span> : null}
+      </div>
+      <button className="assistant-activity-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        {open ? 'Hide activity' : 'Show activity'}<ChevronDown size={14} />
+      </button>
+    </div>
+
+    {open ? <div className="assistant-activity-log" aria-label="Recent activity updates">
+      {updates.length ? updates.map((update) => <div className="assistant-activity-log-row" key={`${update.label}-${update.timestamp}`}>
+        <span className="assistant-log-dot" aria-hidden="true" />
+        <span>{update.label}</span>
+        <time dateTime={update.timestamp}>{time(update.timestamp)}</time>
+      </div>) : <div className="assistant-activity-log-row"><span className="assistant-log-dot" aria-hidden="true" /><span>Waiting for the first update</span></div>}
+      <p className="assistant-privacy-note">Private reasoning text stays hidden. This timeline shows safe progress metadata only.</p>
+    </div> : null}
+  </section>;
 }
 
 function TaskThread(props: {
@@ -1339,9 +1489,9 @@ function TaskThread(props: {
     ? job.input.modelSelection.modelId
     : undefined;
   const progress = job.input.interactionMode === 'chat'
-    ? chatProgress(
+      ? chatProgress(
         currentInference?.streamState,
-        selectedChatModel ?? currentInference?.model,
+        job.activity?.model ?? selectedChatModel ?? currentInference?.model,
         job.activity,
         latestEvent
       )
@@ -1372,11 +1522,12 @@ function TaskThread(props: {
     {terminalAssistant ? <div className="thread-assistant-turn">
       <div className={`assistant-mark ${working ? 'working' : ''}`}><Sparkles size={18} strokeWidth={1.55} /></div>
       <div className="assistant-body">
-        {working ? <div className="assistant-stream-state">
-          <div className="assistant-stream-title"><LoaderCircle className="assistant-spinner" size={16} /><strong>{progress?.title ?? (currentInference?.streamState === 'generating' ? 'Writing' : currentInference?.streamState === 'thinking' ? 'Thinking' : 'Working')}</strong></div>
-          <p>{progress?.detail ?? latestEvent?.title ?? 'Starting the task…'}</p>
-          <div className="assistant-stream-meta">{currentInference?.stage ? <span>{currentInference.stage}</span> : null}{selectedChatModel ? <span>{selectedChatModel}</span> : currentInference?.model ? <span>{currentInference.model}</span> : null}{currentInference?.runningMs ? <span>{duration(currentInference.runningMs)}</span> : null}</div>
-        </div> : null}
+        {working && progress ? <ChatActivityCard
+          job={job}
+          progress={progress}
+          currentInference={currentInference}
+          latestEvent={latestEvent}
+        /> : null}
         {job.status === 'waiting-guidance' && result?.escalation ? <GuidanceMessage job={job} guidance={props.guidance} setGuidance={props.setGuidance} onContinue={props.sendGuidance} onEscalate={props.sendEscalation} /> : null}
         {job.status === 'error' ? <div className="assistant-result-message error"><strong>Something went wrong</strong><p>{job.error ?? 'The task stopped unexpectedly.'}</p></div> : null}
         {job.status === 'cancelled' ? <div className="assistant-result-message muted-result"><strong>Task stopped</strong><p>The run was cancelled and will not resume automatically.</p></div> : null}

@@ -64,6 +64,13 @@ function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
+function connectionAuthLabel(auth: ProviderConnectionView['auth']): string {
+  if (auth === 'api-key') return 'API key';
+  if (auth === 'claude-account') return 'Claude account';
+  if (auth === 'chatgpt-account') return 'ChatGPT account';
+  return 'Local';
+}
+
 export function ProjectConnectionsPanel({
   project,
   onProjectChanged
@@ -218,7 +225,7 @@ export function ProjectConnectionsPanel({
         const compatible = belongs(connection);
         const checked = policy.chat.allowedConnectionIds.includes(connection.id);
         return <button type="button" key={`chat:${connection.id}`} className={`pcp-row ${compatible ? '' : 'disabled'}`} disabled={!compatible || busy} onClick={() => toggle('chat', connection.id)}>
-          <span className="pcp-check">{checked ? <Check size={11}/> : null}</span><span className="pcp-copy"><strong>{connection.label}</strong><small>{connection.organizationId} · {connection.billing}</small></span><span className="pcp-kind">{connection.providerFamily}</span>
+          <span className="pcp-check">{checked ? <Check size={11}/> : null}</span><span className="pcp-copy"><strong>{connection.label}</strong><small>{connectionAuthLabel(connection.auth)} · {connection.organizationId}</small></span><span className="pcp-kind">{connection.providerFamily}</span>
         </button>;
       })}
     </div>
@@ -237,7 +244,7 @@ export function ProjectConnectionsPanel({
         const compatible = belongs(connection);
         const checked = policy.inference.allowedConnectionIds.includes(connection.id);
         return <button type="button" key={`cowork:${connection.id}`} className={`pcp-row ${compatible ? '' : 'disabled'}`} disabled={!compatible || busy} onClick={() => toggle('inference', connection.id)}>
-          <span className="pcp-check">{checked ? <Check size={11}/> : null}</span><span className="pcp-copy"><strong>{connection.label}</strong><small>{connection.organizationId} · {connection.billing}</small></span><span className="pcp-kind">{connection.providerFamily}</span>
+          <span className="pcp-check">{checked ? <Check size={11}/> : null}</span><span className="pcp-copy"><strong>{connection.label}</strong><small>{connectionAuthLabel(connection.auth)} · {connection.organizationId}</small></span><span className="pcp-kind">{connection.providerFamily}</span>
         </button>;
       })}
       <select className="pcp-select" value={policy.inference.preferredConnectionId ?? ''} onChange={(event) => setPolicy((current) => ({ ...current, inference: { ...current.inference, preferredConnectionId: event.target.value || undefined } }))}>

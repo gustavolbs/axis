@@ -74,6 +74,11 @@ export interface PersonalChatCatalogModel {
 
 export interface PersonalChatCatalogProvider {
   id: string;
+  /** Friendly connection/account name; the id may be a hashed technical alias. */
+  label?: string;
+  providerFamily?: 'ollama' | 'anthropic' | 'openai';
+  auth?: 'local' | 'api-key' | 'claude-account' | 'chatgpt-account';
+  billing?: 'local' | 'api' | 'subscription';
   kind: ProviderKind;
   ready: boolean;
   reason?: string;
@@ -110,13 +115,14 @@ function unique(values: Array<string | undefined>): string[] {
   return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
 }
 
-const OPENAI_PERSONAL_CHAT_MODELS = new Set([
-  'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.4-mini', 'gpt-5.5-pro'
-]);
-
 function isPersonalChatModel(providerId: string, model: ModelDefinition): boolean {
-  if (providerId === 'openai') return OPENAI_PERSONAL_CHAT_MODELS.has(model.id.toLowerCase());
+  // The provider owns the model catalog. Keep this filter limited to
+  // non-conversational or clearly retired/snapshot identifiers; never
+  // enumerate active chat models here, otherwise a newly released model
+  // requires a Local Coder update.
   if (providerId === 'anthropic') return /^claude-/i.test(model.id);
+  if (providerId === 'openai' && /^gpt-4(?:[.-]|$)/i.test(model.id)) return false;
+  if (providerId === 'openai' && /-\d{4}-\d{2}-\d{2}$/i.test(model.id)) return false;
   return !/(?:image|audio|realtime|transcrib|tts|embedding|moderation|whisper)/.test(model.id.toLowerCase());
 }
 
@@ -134,13 +140,11 @@ function orderPersonalChatModels(models: ModelDefinition[], defaultModelId?: str
 
 function curatePersonalChatModels(
   providerId: string,
-  providerKind: ProviderKind,
   models: ModelDefinition[],
   defaultModelId?: string
 ): ModelDefinition[] {
   const ordered = orderPersonalChatModels(models.filter((model) => isPersonalChatModel(providerId, model)), defaultModelId);
-  if (providerKind === 'local' || providerId === 'anthropic') return ordered;
-  return ordered.slice(0, 6);
+  return ordered;
 }
 
 export class ProjectProviderRuntime {
@@ -274,7 +278,7 @@ export class ProjectProviderRuntime {
       let discoveryError: string | undefined;
       if (provider) {
         try {
-          models = curatePersonalChatModels(providerId, provider.kind, await provider.listModels(), settings.defaultModelId);
+          models = curatePersonalChatModels(providerId, await provider.listModels(), settings.defaultModelId);
         } catch (error) {
           discoveryError = error instanceof Error ? error.message : String(error);
         }
@@ -282,6 +286,16 @@ export class ProjectProviderRuntime {
       const ready = Boolean(provider) && !discoveryError && models.length > 0;
       providers.push({
         id: providerId,
+        providerFamily: providerId === (this.localProvider?.id ?? 'ollama') ? 'ollama' : providerId as 'anthropic' | 'openai',
+        auth: provider?.kind === 'local' ? 'local' : 'api-key',
+        billing: provider?.kind === 'local' ? 'local' : 'api',
+        label: providerId === (this.localProvider?.id ?? 'ollama')
+          ? 'Ollama local'
+          : providerId === 'anthropic'
+            ? 'Claude API'
+            : providerId === 'openai'
+              ? 'OpenAI API'
+              : undefined,
         kind: provider?.kind ?? (providerId === (this.localProvider?.id ?? 'ollama') ? 'local' : 'cloud'),
         ready,
         reason: ready ? undefined : discoveryError ?? resolution.reason ?? `No conversational models are available for ${providerId}.`,
@@ -301,6 +315,10 @@ export class ProjectProviderRuntime {
     for (const connection of await this.connections.catalogProviders()) {
       providers.push({
         id: connection.id,
+        label: connection.label,
+        providerFamily: connection.providerFamily,
+        auth: connection.auth,
+        billing: connection.billing,
         kind: connection.kind,
         ready: connection.ready,
         reason: connection.reason,
@@ -325,7 +343,7 @@ export class ProjectProviderRuntime {
     const resolution = this.personalChatProvider(providerId);
     if (!resolution.provider) throw new Error(resolution.reason ?? `Provider ${providerId} is unavailable for personal Chat.`);
     const settings = this.settings.get(providerId) ?? defaultSettings();
-    const models = curatePersonalChatModels(providerId, resolution.provider.kind, await resolution.provider.listModels(), settings.defaultModelId);
+    const models = curatePersonalChatModels(providerId, await resolution.provider.listModels(), settings.defaultModelId);
     const model = models.find((candidate) => candidate.id === modelId);
     if (!model) throw new Error(`Model ${providerId}/${modelId} is not available for personal Chat.`);
     return { provider: resolution.provider, model };

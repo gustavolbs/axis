@@ -60,7 +60,11 @@ export interface ClaudeInvokeOptions {
   cwd?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** Optional Claude model id or stable alias (for example `sonnet`). */
+  model?: string;
   allowedTools?: string[];
+  /** End a print-mode command as soon as stdout contains one complete JSON value. */
+  stopOnValidJson?: boolean;
   /** Official Claude Code print-mode structured output. */
   jsonSchema?: Record<string, unknown>;
 }
@@ -467,6 +471,7 @@ export class ClaudeAccountRuntime {
       '--permission-mode',
       'dontAsk'
     ];
+    if (options.model?.trim() && options.model !== 'default') args.push('--model', options.model.trim());
     if (options.jsonSchema) {
       const serialized = JSON.stringify(options.jsonSchema);
       if (serialized.length > 256_000) throw new Error('Claude JSON schema is too large.');
@@ -479,7 +484,8 @@ export class ClaudeAccountRuntime {
       cwd: options.cwd,
       env: this.profileEnv(profile),
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      signal: options.signal
+      signal: options.signal,
+      stopOnValidJson: options.stopOnValidJson
     });
   }
 
@@ -550,6 +556,7 @@ export class ClaudeAccountRuntime {
       timeoutMs: number;
       signal?: AbortSignal;
       stdio?: 'pipe' | 'inherit';
+      stopOnValidJson?: boolean;
     }
   ): Promise<ClaudeCommandResult> {
     const startedAt = Date.now();
@@ -568,6 +575,7 @@ export class ClaudeAccountRuntime {
       let stderr = '';
       let timedOut = false;
       let cancelled = false;
+      let completedFromOutput = false;
       let settled = false;
       let forceKillTimer: NodeJS.Timeout | undefined;
 
@@ -583,8 +591,8 @@ export class ClaudeAccountRuntime {
         resolve({
           stdout: sanitizeClaudeOutput(stdout.trim(), this.knownSensitiveValues),
           stderr: sanitizeClaudeOutput(stderr.trim(), this.knownSensitiveValues),
-          exitCode,
-          signal,
+          exitCode: completedFromOutput ? 0 : exitCode,
+          signal: completedFromOutput ? null : signal,
           durationMs: Date.now() - startedAt,
           timedOut,
           cancelled
@@ -610,7 +618,15 @@ export class ClaudeAccountRuntime {
       };
 
       if (stdio === 'pipe') {
-        child.stdout?.on('data', (chunk) => { stdout = appendBounded(stdout, chunk, this.outputLimit); });
+        child.stdout?.on('data', (chunk) => {
+          stdout = appendBounded(stdout, chunk, this.outputLimit);
+          if (!options.stopOnValidJson || completedFromOutput) return;
+          try {
+            JSON.parse(stdout.trim());
+            completedFromOutput = true;
+            terminate();
+          } catch { /* wait for the remaining JSON chunks */ }
+        });
         child.stderr?.on('data', (chunk) => { stderr = appendBounded(stderr, chunk, this.outputLimit); });
       }
       child.once('error', (error) => {

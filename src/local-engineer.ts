@@ -17,6 +17,7 @@ import {
   type LocalExecutionPlanResult
 } from './orchestrator.js';
 import type { ValidationCommand, ValidationResult } from './validation.js';
+import { reportProgress } from './progress-context.js';
 import {
   readWorkspaceFile,
   resolveWorkspace,
@@ -334,6 +335,12 @@ async function collectSearchEvidence(workspace: string, queries: string[], confi
   const sections: string[] = [];
   const matchedFiles: string[] = [];
   for (const query of queries.slice(0, 8)) {
+    reportProgress({
+      phase: 'investigation',
+      action: 'Searching the repository',
+      detail: query,
+      reasoningSummary: 'Searching local source files for the implementation context.'
+    });
     try {
       const result = await searchWorkspace(workspace, query, { maxResults: 12, maxFiles: 800, maxDepth: 10, maxFileBytes: config.maxFileBytes });
       sections.push(`## SEARCH ${JSON.stringify(query)}\n${result.matches.map((match) => `${match.path}:${match.line} ${match.preview}`).join('\n') || '[no matches]'}`);
@@ -352,6 +359,12 @@ async function collectFullEvidence(workspace: string, files: string[], config: L
   const budget = Math.min(config.maxContextBytes, 28_000);
   for (const file of dedupe(files).slice(0, 8)) {
     try {
+      reportProgress({
+        phase: 'investigation',
+        action: 'Reading repository file',
+        detail: file,
+        reasoningSummary: 'Reading a bounded file window before planning the change.'
+      });
       resolveWorkspacePath(workspace, file);
       const snapshot = await readWorkspaceFile(workspace, file, config.maxFileBytes);
       if (snapshot.content === null) continue;
@@ -513,6 +526,12 @@ function emptyResult(workspace: string, input: LocalEngineerInput, status: Local
 
 export async function executeLocalEngineer(model: EngineerChatClient, config: LocalCoderConfig, input: LocalEngineerInput): Promise<LocalEngineerExecution> {
   const workspace = await resolveWorkspace(input.workspace);
+  reportProgress({
+    phase: 'investigation',
+    action: 'Scanning the workspace',
+    detail: 'Building a repository map and locating relevant context.',
+    reasoningSummary: 'The agent is establishing the local evidence it needs before making changes.'
+  });
   const hardTags = hardGuidanceTags(input.goal);
   if (hardTags.length > 0 && !input.userGuidance?.trim()) {
     return emptyResult(workspace, input, 'needs-guidance', 'investigation', 'Explicit guidance is required before implementation for this high-risk request.', escalation('decision', `High-risk categories require an explicit bounded decision before execution: ${hardTags.join(', ')}.`, ['Resolve the risky behavior/contract and provide the bounded implementation decision.'], [], hardTags));

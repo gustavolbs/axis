@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
-import { ClaudeAccountProfileStore } from '../src/claude-account-profiles.js';
+import { ClaudeAccountProfileStore, ClaudeAccountRuntime } from '../src/claude-account-profiles.js';
 import { CodexAccountProfileStore } from '../src/codex-account-profiles.js';
 import { CredentialManager, CredentialProfileStore } from '../src/credential-store.js';
 import {
@@ -13,6 +14,8 @@ import {
   claudeAccountConnectionId,
   chatGptAccountConnectionId
 } from '../src/provider-connections.js';
+
+const fakeClaude = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 
 function temp(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -51,6 +54,32 @@ test('Claude and ChatGPT subscription profiles are different connection identiti
   assert.ok(views.some((item) => item.id === claudeAccountConnectionId('livenation')));
   assert.ok(views.some((item) => item.id === chatGptAccountConnectionId('personal')));
   assert.equal(new Set(views.map((item) => item.id)).size, views.length);
+});
+
+test('authenticated Claude accounts expose explicit stable model choices', async () => {
+  const claude = new ClaudeAccountProfileStore(temp('local-coder-models-claude-'));
+  claude.create({ id: 'personal', name: 'Claude Personal' });
+  const runtime = new ClaudeAccountRuntime(claude, {
+    claudeBinary: process.execPath,
+    commandPrefixArgs: [fakeClaude]
+  });
+  const connections = new ProviderConnectionRuntime({
+    credentials: credentials(),
+    claudeProfiles: claude,
+    claudeRuntime: runtime,
+    codexProfiles: new CodexAccountProfileStore(temp('local-coder-models-codex-'))
+  });
+
+  const catalog = await connections.catalogProviders();
+  const account = catalog.find((provider) => provider.id === claudeAccountConnectionId('personal'));
+  assert.ok(account);
+  assert.equal(account.ready, true);
+  assert.equal(account.label, 'Claude Personal');
+  assert.equal(account.providerFamily, 'anthropic');
+  assert.equal(account.auth, 'claude-account');
+  assert.equal(account.billing, 'subscription');
+  assert.deepEqual(account.models.map((model) => model.id), ['default', 'fable', 'opus', 'sonnet', 'haiku']);
+  assert.deepEqual(account.models.map((model) => model.displayName), ['Account default', 'Fable', 'Opus', 'Sonnet', 'Haiku']);
 });
 
 test('organization-scoped API credentials remain Project-only and do not enter personal Chat catalog', async () => {

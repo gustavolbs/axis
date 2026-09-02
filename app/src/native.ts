@@ -134,8 +134,13 @@ export interface WorkHubMessageView extends WorkHubItemBaseView {
 export interface WorkHubSourceStateView {
   sourceId: string;
   status: 'idle' | 'syncing' | 'ready' | 'error';
+  stage?: 'discovering' | 'collecting' | 'normalizing';
+  syncStartedAt?: string;
+  lastAttemptAt?: string;
   lastSyncedAt?: string;
+  durationMs?: number;
   itemCount: number;
+  systems?: string[];
   error?: string;
 }
 
@@ -192,6 +197,8 @@ export interface LocalCoderBridge {
     enabled?: boolean;
   }): Promise<WorkHubSourceView>;
   removeWorkHubSource(sourceId: string): Promise<boolean>;
+  markWorkHubMessageRead(sourceId: string, externalId: string): Promise<WorkHubSnapshotView>;
+  dismissWorkHubMessage(sourceId: string, externalId: string): Promise<WorkHubSnapshotView>;
   refreshWorkHub(sourceId?: string): Promise<WorkHubSnapshotView>;
 
   onRuntimeEvent(listener: (event: RuntimeEvent) => void): () => void;

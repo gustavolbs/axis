@@ -66,6 +66,7 @@ export interface ProjectChatHistoryTurn {
 export interface ProjectChatModelLimits {
   providerId: string;
   providerKind: ProviderKind;
+  modelId?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
 }
@@ -403,6 +404,7 @@ export class ProjectAwareEngineerBackend {
           chatModelLimits = {
             providerId: target.providerId,
             providerKind: definition.providerKind,
+            modelId: target.modelId,
             contextWindow: definition.model.contextWindow,
             maxOutputTokens: definition.model.maxOutputTokens
           };

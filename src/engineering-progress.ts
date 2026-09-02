@@ -7,6 +7,13 @@ export interface EngineeringProgress {
   files?: string[];
   validation?: string;
   completedSteps?: string[];
+  /** Safe stream telemetry for the UI; never contains model reasoning text. */
+  streamState?: 'waiting-response' | 'reasoning' | 'generating';
+  providerId?: string;
+  model?: string;
+  eventCount?: number;
+  outputChars?: number;
+  elapsedMs?: number;
   updatedAt?: string;
 }
 

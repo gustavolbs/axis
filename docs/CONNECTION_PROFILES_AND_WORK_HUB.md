@@ -239,7 +239,7 @@ The common inbox shape intentionally remains small:
 }
 ```
 
-It can represent Teams, Slack, email-like MCP sources or future messaging providers without putting vendor fields into the Work Hub UI.
+The current Messages source is intentionally scoped to Jira comments on the current account's assigned tickets and attention-worthy Slack messages. It does not crawl GitHub, email, Teams, calendars, or other connectors on the account. The normalized shape can still accommodate future messaging providers without putting vendor fields into the Work Hub UI.
 
 ## Work Hub source configuration
 
@@ -260,46 +260,21 @@ A source contains:
 
 The `connectionId` is the security/isolation boundary. A LiveNation Jira source cannot accidentally run through the Personal profile because the collector resolves the exact bound connection.
 
-### Explicit read-only tool allowlist
+### Connector discovery and bounded access
 
-No Work Hub source receives implicit access to all tools.
+The desktop discovers the healthy connectors owned by the source's exact account, selects only the servers relevant to the source kind, and exposes those servers to the collector. A calendar source does not initialize Jira, Slack, or every other connector on a large enterprise account.
 
-Claude example:
-
-```text
-mcp__claude_ai_LN_Jira__jira_search
-```
-
-Codex example:
-
-```text
-jira/search
-calendar/list_events
-```
-
-For Codex, the `server/tool` notation is converted to per-server `enabled_tools` configuration and an approval policy for those exact tools.
+For Claude, the selected provider-managed server name is converted to its MCP namespace (for example `Google Calendar` becomes `mcp__claude_ai_Google_Calendar__*`). The broad account-wide `mcp__*` pattern is never used. Legacy sources may still carry an explicit `toolAllowlist`, but users do not need to find or enter MCP tool names in the desktop UI.
 
 Collector prompts additionally prohibit remote mutations: create/update/delete/comment/send/transition/acknowledge operations are outside the Work Hub read path.
 
 Enterprise policy remains authoritative. If the remote organization requires an interactive approval or disables a connector, Local Coder records the source error rather than bypassing the restriction.
 
-## Retention
+## Retention and stale-while-revalidate
 
-Each Work Hub source chooses one of two data-retention modes:
+Work Hub keeps its latest normalized snapshot under `~/.local-coder-mcp/work-hub/cache/`. The desktop can therefore render meetings, tickets and messages immediately after it reopens, then refresh those sources in the background. A manual **Sync** requests the same revalidation immediately, which replaces the cached snapshot only after a successful collection.
 
-### `memory` — default
-
-- normalized data exists only in the running Local Coder process;
-- no normalized corporate calendar/ticket/message cache is written by Work Hub;
-- safest default for an unknown Enterprise policy.
-
-### `local`
-
-- normalized output is cached under `~/.local-coder-mcp/work-hub/cache/`;
-- files use owner-only permissions where the OS supports them;
-- cache contains normalized remote data only, never OAuth/API credentials.
-
-This is opt-in because storing corporate calendar/ticket/message content on a personal Mac can itself be a company-policy decision.
+Cache files use owner-only permissions where the OS supports them and contain normalized remote data only, never OAuth/API credentials. Failed or interrupted refreshes preserve the last successful snapshot. The former `memory` source value is accepted for compatibility and migrated to this local cache behavior.
 
 ## Desktop surfaces
 
@@ -320,10 +295,10 @@ Shows:
 A global launcher is mounted outside individual Chat/Project surfaces and contains:
 
 - **Today** — today's meetings + active work + attention messages;
-- **Calendar** — events from every configured calendar source;
+- **Calendar** — a weekly agenda with current-time indicator, overlapping event layout and meeting join actions on hover;
 - **My work** — active tickets grouped by normalized status;
 - **Inbox** — normalized message sources;
-- **Sources** — account binding, connector type, exact MCP tool allowlist, retention and sync state.
+- **Sources** — account binding, discovered connector systems, retention, live sync stage, duration, result count and actionable failure state.
 
 ## Security properties
 
@@ -358,7 +333,7 @@ Coverage includes:
 - organization API credentials staying Project-only;
 - ticket/calendar/message normalization;
 - provider/source provenance;
-- memory-only vs local normalized-data retention;
+- atomic normalized-data caching, restart restore and stale-while-revalidate behavior;
 - refusal to use model-only/API connections as Work Hub MCP sources;
 - explicit MCP allowlist requirement;
 - bounded desktop IPC contract.

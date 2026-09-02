@@ -56,7 +56,10 @@ export interface CodexCommandResult {
 
 export interface CodexMcpPolicy {
   serverId: string;
-  toolNames: string[];
+  /** Optional exact tool allow-list. Omit it to keep all tools on an enabled server. */
+  toolNames?: string[];
+  /** Explicitly enable or disable this server for the current invocation. */
+  enabled?: boolean;
 }
 
 export interface CodexInvokeOptions {
@@ -65,6 +68,8 @@ export interface CodexInvokeOptions {
   signal?: AbortSignal;
   model?: string;
   mcpPolicies?: CodexMcpPolicy[];
+  /** End an exec command as soon as stdout contains one complete JSON value. */
+  stopOnValidJson?: boolean;
   /** Official `codex exec --output-schema` structured result contract. */
   outputSchema?: Record<string, unknown>;
 }
@@ -282,12 +287,15 @@ function mcpConfigArgs(policies: CodexMcpPolicy[]): string[] {
   const result: string[] = [];
   for (const policy of policies) {
     const serverId = policy.serverId.trim();
-    const tools = [...new Set(policy.toolNames.map((tool) => tool.trim()).filter(Boolean))];
-    if (!serverId || tools.length === 0) continue;
+    const tools = [...new Set((policy.toolNames ?? []).map((tool) => tool.trim()).filter(Boolean))];
+    if (!serverId || (tools.length === 0 && policy.enabled === undefined)) continue;
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(serverId)) throw new Error(`Unsafe Codex MCP server id: ${serverId}`);
     const key = `mcp_servers.${tomlString(serverId)}`;
-    result.push('-c', `${key}.enabled_tools=[${tools.map(tomlString).join(',')}]`);
-    result.push('-c', `${key}.default_tools_approval_mode="approve"`);
+    if (policy.enabled !== undefined) result.push('-c', `${key}.enabled=${policy.enabled}`);
+    if (tools.length > 0) {
+      result.push('-c', `${key}.enabled_tools=[${tools.map(tomlString).join(',')}]`);
+      result.push('-c', `${key}.default_tools_approval_mode="approve"`);
+    }
   }
   return result;
 }
@@ -461,7 +469,8 @@ export class CodexAccountRuntime {
         cwd: options.cwd,
         env: this.profileEnv(profile),
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        signal: options.signal
+        signal: options.signal,
+        stopOnValidJson: options.stopOnValidJson
       });
     } finally {
       if (schemaDir) {
@@ -476,7 +485,7 @@ export class CodexAccountRuntime {
 
   private async run(
     args: string[],
-    options: { cwd?: string; env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal; stdio?: 'pipe' | 'inherit' }
+    options: { cwd?: string; env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal; stdio?: 'pipe' | 'inherit'; stopOnValidJson?: boolean }
   ): Promise<CodexCommandResult> {
     const startedAt = Date.now();
     const stdio = options.stdio ?? 'pipe';
@@ -493,6 +502,7 @@ export class CodexAccountRuntime {
       let stderr = '';
       let timedOut = false;
       let cancelled = false;
+      let completedFromOutput = false;
       let settled = false;
       let forceKillTimer: NodeJS.Timeout | undefined;
       const cleanup = () => {
@@ -507,8 +517,8 @@ export class CodexAccountRuntime {
         resolve({
           stdout: sanitizeCodexOutput(stdout.trim(), this.knownSensitiveValues),
           stderr: sanitizeCodexOutput(stderr.trim(), this.knownSensitiveValues),
-          exitCode,
-          signal,
+          exitCode: completedFromOutput ? 0 : exitCode,
+          signal: completedFromOutput ? null : signal,
           durationMs: Date.now() - startedAt,
           timedOut,
           cancelled
@@ -530,7 +540,15 @@ export class CodexAccountRuntime {
       };
       const onAbort = () => { cancelled = true; terminate(); };
       if (stdio === 'pipe') {
-        child.stdout?.on('data', (chunk) => { stdout = appendBounded(stdout, chunk, this.outputLimit); });
+        child.stdout?.on('data', (chunk) => {
+          stdout = appendBounded(stdout, chunk, this.outputLimit);
+          if (!options.stopOnValidJson || completedFromOutput) return;
+          try {
+            JSON.parse(stdout.trim());
+            completedFromOutput = true;
+            terminate();
+          } catch { /* wait for the remaining JSON chunks */ }
+        });
         child.stderr?.on('data', (chunk) => { stderr = appendBounded(stderr, chunk, this.outputLimit); });
       }
       child.once('error', (error) => fail(isMissingExecutableError(error) ? new CodexRuntimeNotFoundError(this.codexBinary) : error));

@@ -77,6 +77,8 @@ function outputFormat(
 function safeStreamProgress(
   startedAt: number,
   progress: {
+    providerId?: string;
+    model?: string;
     state: 'waiting-response' | 'reasoning' | 'generating';
     timestamp: string;
     eventCount: number;
@@ -88,7 +90,9 @@ function safeStreamProgress(
     chunkCount: progress.eventCount,
     thinkingChars: 0,
     outputChars: progress.outputChars,
-    state: progress.state === 'generating' ? 'generating' : 'thinking',
+    providerId: progress.providerId,
+    model: progress.model,
+    state: progress.state === 'waiting-response' ? 'waiting' : progress.state === 'generating' ? 'generating' : 'thinking',
     lastActivityAt: progress.timestamp
   };
 }

@@ -87,17 +87,41 @@ function accountPrompt(request: InferenceRequest): string {
   ].join('\n');
 }
 
-function accountModel(providerId: string, family: 'anthropic' | 'openai', label: string): ModelDefinition {
-  return {
+interface AccountModelSpec {
+  id: string;
+  label: string;
+  alias?: boolean;
+}
+
+/**
+ * Subscription CLIs do not expose the authenticated account's `/models`
+ * endpoint. Claude does expose stable aliases, however, and those aliases are
+ * intentionally used instead of versioned ids so a provider can move them to
+ * its latest model without a Local Coder release.
+ */
+const CLAUDE_ACCOUNT_MODELS: AccountModelSpec[] = [
+  { id: 'default', label: 'Account default' },
+  { id: 'fable', label: 'Fable', alias: true },
+  { id: 'opus', label: 'Opus', alias: true },
+  { id: 'sonnet', label: 'Sonnet', alias: true },
+  { id: 'haiku', label: 'Haiku', alias: true }
+];
+
+function accountModels(providerId: string, family: 'anthropic' | 'openai', label: string): ModelDefinition[] {
+  const specs = family === 'anthropic'
+    ? CLAUDE_ACCOUNT_MODELS
+    : [{ id: 'default', label: 'Account default' }];
+  return specs.map((spec) => ({
     providerId,
-    id: 'default',
-    displayName: `${label} · account default`,
+    id: spec.id,
+    displayName: spec.label,
     capabilities: ACCOUNT_CAPABILITIES,
     metadata: {
       connectionAuth: family === 'anthropic' ? 'claude-account' : 'chatgpt-account',
-      accountManagedModel: true
+      accountManagedModel: true,
+      ...(spec.alias ? { modelAlias: true } : {})
     }
-  };
+  }));
 }
 
 function aliasProvider(aliasId: string, label: string, inner: InferenceProvider): InferenceProvider {
@@ -136,7 +160,7 @@ class ClaudeAccountInferenceProvider implements InferenceProvider {
 
   async listModels(): Promise<ModelDefinition[]> {
     const status = await this.runtime.status(this.profileId);
-    return status.authenticated ? [accountModel(this.id, 'anthropic', this.label)] : [];
+    return status.authenticated ? accountModels(this.id, 'anthropic', this.label) : [];
   }
 
   async health(): Promise<ProviderHealth> {
@@ -147,7 +171,7 @@ class ClaudeAccountInferenceProvider implements InferenceProvider {
       ok: status.authenticated,
       checkedAt: new Date().toISOString(),
       latencyMs: Date.now() - startedAt,
-      modelsAvailable: status.authenticated ? 1 : 0,
+      modelsAvailable: status.authenticated ? accountModels(this.id, 'anthropic', this.label).length : 0,
       message: status.authenticated ? undefined : status.error ?? 'Claude account is not authenticated.'
     };
   }
@@ -156,6 +180,7 @@ class ClaudeAccountInferenceProvider implements InferenceProvider {
     const startedAt = Date.now();
     const result = await this.runtime.invoke(this.profileId, accountPrompt(request), {
       timeoutMs: request.timeoutMs,
+      model: request.model,
       allowedTools: ['mcp__*'],
       jsonSchema: request.output?.type === 'json_schema' ? request.output.schema : undefined
     });
@@ -185,7 +210,7 @@ class ChatGptAccountInferenceProvider implements InferenceProvider {
 
   async listModels(): Promise<ModelDefinition[]> {
     const status = await this.runtime.status(this.profileId);
-    return status.authenticated ? [accountModel(this.id, 'openai', this.label)] : [];
+    return status.authenticated ? accountModels(this.id, 'openai', this.label) : [];
   }
 
   async health(): Promise<ProviderHealth> {
@@ -196,7 +221,7 @@ class ChatGptAccountInferenceProvider implements InferenceProvider {
       ok: status.authenticated,
       checkedAt: new Date().toISOString(),
       latencyMs: Date.now() - startedAt,
-      modelsAvailable: status.authenticated ? 1 : 0,
+      modelsAvailable: status.authenticated ? accountModels(this.id, 'openai', this.label).length : 0,
       message: status.authenticated ? undefined : status.error ?? 'ChatGPT/Codex account is not authenticated.'
     };
   }
@@ -393,6 +418,10 @@ export class ProviderConnectionRuntime {
   async catalogProviders(): Promise<Array<{
     id: string;
     kind: 'cloud';
+    label: string;
+    providerFamily: ProviderFamily;
+    auth: ProviderConnectionAuth;
+    billing: ProviderConnectionBilling;
     ready: boolean;
     reason?: string;
     models: Array<ModelDefinition & { providerDefault: boolean; projectDefault: false; available: boolean }>;
@@ -400,6 +429,10 @@ export class ProviderConnectionRuntime {
     const results: Array<{
       id: string;
       kind: 'cloud';
+      label: string;
+      providerFamily: ProviderFamily;
+      auth: ProviderConnectionAuth;
+      billing: ProviderConnectionBilling;
       ready: boolean;
       reason?: string;
       models: Array<ModelDefinition & { providerDefault: boolean; projectDefault: false; available: boolean }>;
@@ -419,6 +452,10 @@ export class ProviderConnectionRuntime {
       results.push({
         id: view.id,
         kind: 'cloud',
+        label: view.label,
+        providerFamily: view.providerFamily,
+        auth: view.auth,
+        billing: view.billing,
         ready: view.available && models.length > 0,
         reason: view.available && models.length > 0 ? undefined : reason ?? `${view.label} is unavailable.`,
         models: models.map((model) => ({ ...model, available: true, providerDefault: false, projectDefault: false }))

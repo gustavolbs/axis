@@ -117,6 +117,16 @@ test('Codex timeout and AbortSignal terminate the child', async () => {
   assert.equal(cancelled.cancelled, true);
 });
 
+test('structured Codex collection finishes when complete JSON arrives even if MCP keeps the process open', async () => {
+  const { store, runtime } = fakeRuntime(tempRoot());
+  store.create({ id: 'personal', name: 'Personal' });
+  const result = await runtime.invoke('personal', 'JSON_THEN_HANG', { timeoutMs: 5_000, stopOnValidJson: true });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.timedOut, false);
+  assert.deepEqual(JSON.parse(result.stdout), { ok: true });
+  assert.ok(result.durationMs < 2_000);
+});
+
 test('missing Codex binary gives a clear error', async () => {
   const store = new CodexAccountProfileStore(tempRoot());
   store.create({ id: 'personal', name: 'Personal' });

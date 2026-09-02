@@ -41,6 +41,8 @@ const bridge = {
   workHubSnapshot: () => ipcRenderer.invoke('local-coder:work-hub-snapshot'),
   upsertWorkHubSource: (input) => ipcRenderer.invoke('local-coder:work-hub-source-upsert', input),
   removeWorkHubSource: (sourceId) => ipcRenderer.invoke('local-coder:work-hub-source-remove', String(sourceId)),
+  markWorkHubMessageRead: (sourceId, externalId) => ipcRenderer.invoke('local-coder:work-hub-message-read', String(sourceId), String(externalId)),
+  dismissWorkHubMessage: (sourceId, externalId) => ipcRenderer.invoke('local-coder:work-hub-message-dismiss', String(sourceId), String(externalId)),
   refreshWorkHub: (sourceId) => ipcRenderer.invoke('local-coder:work-hub-refresh', sourceId === undefined ? undefined : String(sourceId)),
 
   onRuntimeEvent: (listener) => {

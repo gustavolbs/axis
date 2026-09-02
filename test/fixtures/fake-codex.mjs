@@ -19,7 +19,15 @@ if (args[0] === 'login') {
 }
 
 if (args[0] === 'mcp' && args[1] === 'list') {
-  process.stdout.write(`profile=${configDir}\ncalendar: enabled\njira: enabled\n`);
+  if (args.includes('--json')) {
+    process.stdout.write(JSON.stringify([
+      { name: 'calendar', enabled: true, transport: { type: 'streamable_http', url: 'https://calendar.example.test/mcp' }, auth_status: 'authenticated' },
+      { name: 'jira', enabled: true, transport: { type: 'streamable_http', url: 'https://jira.example.test/mcp' }, auth_status: 'authenticated' },
+      { name: 'slack', enabled: true, transport: { type: 'streamable_http', url: 'https://slack.example.test/mcp' }, auth_status: 'authenticated' }
+    ]));
+  } else {
+    process.stdout.write(`profile=${configDir}\ncalendar  https://calendar.example.test/mcp  enabled\njira  https://jira.example.test/mcp  enabled\nslack  https://slack.example.test/mcp  enabled\n`);
+  }
   process.exit(0);
 }
 
@@ -32,6 +40,9 @@ const execIndex = args.indexOf('exec');
 if (execIndex >= 0) {
   const prompt = args.at(-1) ?? '';
   if (prompt === 'HANG') {
+    setInterval(() => {}, 1_000);
+  } else if (prompt === 'JSON_THEN_HANG') {
+    process.stdout.write('{"ok":true}');
     setInterval(() => {}, 1_000);
   } else if (prompt === 'LEAK') {
     process.stdout.write('sk-proj-example-secret-token-1234567890\n');

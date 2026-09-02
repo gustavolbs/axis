@@ -194,6 +194,31 @@ test('personal Chat discovers an available personal OpenAI credential and only c
   assert.equal(resolved.model.maxOutputTokens, 128_000);
 });
 
+test('personal Chat accepts a newly discovered OpenAI conversational model without a code update', async () => {
+  const futureModel: ModelDefinition = {
+    providerId: 'openai',
+    id: 'gpt-6-nova',
+    displayName: 'GPT-6 Nova',
+    createdAt: '2027-01-01T00:00:00.000Z'
+  };
+  const { credentials, runtime } = runtimeFixture({
+    openai: cloudFactory('openai', [...openAiModels, futureModel], [])
+  });
+  credentials.addOrReplaceKeychainCredential({
+    id: 'personal-openai',
+    providerId: 'openai',
+    label: 'Personal OpenAI',
+    secret: 'sk-personal-test-value'
+  });
+
+  const catalog = await runtime.personalChatCatalog();
+  const openai = catalog.providers.find((provider) => provider.id === 'openai');
+  assert.ok(openai);
+  assert.ok(openai.models.some((model) => model.id === futureModel.id));
+  const resolved = await runtime.personalModelDefinition('openai', futureModel.id);
+  assert.equal(resolved.model.id, futureModel.id);
+});
+
 test('Anthropic uses the same personal credential path as OpenAI', async () => {
   const { credentials, runtime, anthropicSecrets } = runtimeFixture();
   credentials.addOrReplaceKeychainCredential({

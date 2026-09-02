@@ -23,6 +23,8 @@ const CHANNELS = [
   'local-coder:work-hub-snapshot',
   'local-coder:work-hub-source-upsert',
   'local-coder:work-hub-source-remove',
+  'local-coder:work-hub-message-read',
+  'local-coder:work-hub-message-dismiss',
   'local-coder:work-hub-refresh'
 ];
 
@@ -237,6 +239,18 @@ export function installClaudeAccountBridge() {
   });
   ipcMain.handle('local-coder:work-hub-source-remove', async (_event, sourceId) =>
     (await resources()).workHub.removeSource(requiredString(sourceId, 'Source id'))
+  );
+  ipcMain.handle('local-coder:work-hub-message-read', async (_event, sourceId, externalId) =>
+    (await resources()).workHub.markMessageRead(
+      requiredString(sourceId, 'Source id'),
+      requiredString(externalId, 'Message id')
+    )
+  );
+  ipcMain.handle('local-coder:work-hub-message-dismiss', async (_event, sourceId, externalId) =>
+    (await resources()).workHub.dismissMessage(
+      requiredString(sourceId, 'Source id'),
+      requiredString(externalId, 'Message id')
+    )
   );
   ipcMain.handle('local-coder:work-hub-refresh', async (_event, sourceId) =>
     (await resources()).workHub.refresh(optionalString(sourceId))
