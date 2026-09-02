@@ -11,7 +11,7 @@ const REQUIRED_ENV = [
 ];
 
 function fail(message) {
-  console.error(`[local-coder release] ${message}`);
+  console.error(`[axis release] ${message}`);
   process.exit(1);
 }
 
