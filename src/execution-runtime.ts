@@ -287,10 +287,12 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
     private readonly config: LocalCoderConfig,
     ollama: OllamaClient,
     private readonly directChat: ChatClient,
-    personalLocalProvider?: InferenceProvider
+    personalLocalProvider?: InferenceProvider,
+    personalProviders?: ProjectProviderRuntime
   ) {
     this.engineer = new ProjectAwareEngineerBackend(config, ollama, legacy);
-    this.personalProviders = new ProjectProviderRuntime({ localProvider: personalLocalProvider });
+    this.personalProviders = personalProviders
+      ?? new ProjectProviderRuntime({ localProvider: personalLocalProvider });
   }
 
   async executeTask(input: AgenticCodeTask): Promise<AgenticExecutionResult> {
@@ -353,7 +355,7 @@ class ProjectAwareExecutionBackend implements ExecutionBackend {
       if (
         input.modelSelection !== undefined && input.modelSelection.mode !== 'auto'
       ) {
-        throw new Error('Personal Chat requires an explicit Ollama, Claude, or GPT model.');
+        throw new Error('Personal Chat requires an explicit available provider/model pair.');
       }
       if (input.reasoningEffort !== undefined && input.reasoningEffort !== 'auto') {
         throw new Error('Choose a model before overriding effort in personal Chat.');
@@ -408,14 +410,16 @@ function projectAware(
   config: LocalCoderConfig,
   ollama: OllamaClient,
   directChat: ChatClient,
-  personalLocalProvider?: InferenceProvider
+  personalLocalProvider?: InferenceProvider,
+  personalProviders?: ProjectProviderRuntime
 ): ExecutionBackend {
   return new ProjectAwareExecutionBackend(
     legacy,
     config,
     ollama,
     directChat,
-    personalLocalProvider
+    personalLocalProvider,
+    personalProviders
   );
 }
 
@@ -434,7 +438,8 @@ class UnconfiguredWorkerBackend implements ExecutionBackend, ChatClient {
 
 export function createExecutionRuntime(
   config: LocalCoderConfig,
-  ollama: OllamaClient
+  ollama: OllamaClient,
+  personalProviders?: ProjectProviderRuntime
 ): ExecutionRuntime {
   const localExecution = new LocalExecutionBackend(ollama, config);
 
@@ -443,7 +448,7 @@ export function createExecutionRuntime(
     return {
       mode: config.executionMode,
       chat: unconfigured,
-      execution: projectAware(unconfigured, config, ollama, unconfigured),
+      execution: projectAware(unconfigured, config, ollama, unconfigured, undefined, personalProviders),
       health: async () => ({
         executionMode: config.executionMode,
         workerConfigured: false,
@@ -457,7 +462,7 @@ export function createExecutionRuntime(
     return {
       mode: 'local',
       chat: ollama,
-      execution: projectAware(localExecution, config, ollama, ollama, localProvider),
+      execution: projectAware(localExecution, config, ollama, ollama, localProvider, personalProviders),
       health: async () => ({
         executionMode: 'local',
         ollama: await ollama.health()
@@ -472,7 +477,7 @@ export function createExecutionRuntime(
     return {
       mode: 'remote',
       chat: remote,
-      execution: projectAware(remote, config, ollama, remote, remoteLocalProvider),
+      execution: projectAware(remote, config, ollama, remote, remoteLocalProvider, personalProviders),
       health: async () => ({
         executionMode: 'remote',
         workerUrl: config.remoteWorkerUrl,
@@ -487,7 +492,7 @@ export function createExecutionRuntime(
   return {
     mode: 'auto',
     chat: autoChat,
-    execution: projectAware(autoExecution, config, ollama, autoChat, remoteLocalProvider),
+    execution: projectAware(autoExecution, config, ollama, autoChat, remoteLocalProvider, personalProviders),
     health: async () => {
       try {
         return {

@@ -129,11 +129,17 @@ function unique(values: Array<string | undefined>): string[] {
  * `/models` endpoint is unusually broad, so keep non-conversational assets out of Chat.
  * Other providers are expected to expose invokable text models from listModels().
  */
+const OPENAI_PERSONAL_CHAT_MODELS = new Set([
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  'gpt-5.4-mini',
+  'gpt-5.5-pro'
+]);
+
 function isPersonalChatModel(providerId: string, model: ModelDefinition): boolean {
-  if (providerId !== 'openai') return true;
-  const id = model.id.toLowerCase();
-  if (/(?:image|audio|realtime|transcrib|tts|embedding|moderation|whisper|dall-e)/.test(id)) return false;
-  return /^(?:gpt-(?:4|5)|chatgpt-|o[1-9](?:-|$))/.test(id);
+  if (providerId === 'openai') return OPENAI_PERSONAL_CHAT_MODELS.has(model.id.toLowerCase());
+  return !/(?:image|audio|realtime|transcrib|tts|embedding|moderation|whisper)/.test(model.id.toLowerCase());
 }
 
 function orderPersonalChatModels(
@@ -149,6 +155,21 @@ function orderPersonalChatModels(
     if (leftCreated !== rightCreated) return rightCreated - leftCreated;
     return left.id.localeCompare(right.id);
   });
+}
+
+function curatePersonalChatModels(
+  providerId: string,
+  providerKind: ProviderKind,
+  models: ModelDefinition[],
+  defaultModelId?: string
+): ModelDefinition[] {
+  const ordered = orderPersonalChatModels(
+    models.filter((model) => isPersonalChatModel(providerId, model)),
+    defaultModelId
+  );
+  // Installed local models are an intentional user choice. Remote catalogs are not:
+  // keep their menu concise and current even when an API returns years of snapshots.
+  return providerKind === 'local' ? ordered : ordered.slice(0, 6);
 }
 
 /**
@@ -277,8 +298,10 @@ export class ProjectProviderRuntime {
       let discoveryError: string | undefined;
       if (provider) {
         try {
-          models = orderPersonalChatModels(
-            (await provider.listModels()).filter((model) => isPersonalChatModel(providerId, model)),
+          models = curatePersonalChatModels(
+            providerId,
+            provider.kind,
+            await provider.listModels(),
             settings.defaultModelId
           );
         } catch (error) {
@@ -322,10 +345,14 @@ export class ProjectProviderRuntime {
     if (!resolution.provider) {
       throw new Error(resolution.reason ?? `Provider ${providerId} is unavailable for personal Chat.`);
     }
-    const models = await resolution.provider.listModels();
-    const model = models.find(
-      (candidate) => candidate.id === modelId && isPersonalChatModel(providerId, candidate)
+    const settings = this.settings.get(providerId) ?? defaultSettings();
+    const models = curatePersonalChatModels(
+      providerId,
+      resolution.provider.kind,
+      await resolution.provider.listModels(),
+      settings.defaultModelId
     );
+    const model = models.find((candidate) => candidate.id === modelId);
     if (!model) throw new Error(`Model ${providerId}/${modelId} is not available for personal Chat.`);
     return { provider: resolution.provider, model };
   }

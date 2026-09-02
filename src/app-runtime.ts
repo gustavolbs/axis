@@ -4,13 +4,17 @@ import path from 'node:path';
 
 import { readAppSettings, writeAppSettings, type AppSettingsFile } from './app-config.js';
 import { loadConfig } from './config.js';
+import { CredentialManager } from './credential-store.js';
 import { createExecutionRuntime } from './execution-runtime.js';
 import { createLocalInferenceProvider } from './local-inference-provider.js';
 import { OllamaClient } from './ollama.js';
 import { ProjectAdminService, type CreateCredentialInput } from './project-admin.js';
 import { ProjectProviderRuntime } from './project-provider-runtime.js';
 import type { ModelSelection, CreateProjectInput } from './project-store.js';
-import type { ProviderRuntimeSettingsPatch } from './provider-settings.js';
+import {
+  ProviderSettingsStore,
+  type ProviderRuntimeSettingsPatch
+} from './provider-settings.js';
 import {
   StandaloneJobManager,
   type StandaloneInteractionMode,
@@ -171,10 +175,25 @@ export class DesktopAppRuntime {
   private readonly listeners = new Set<AppRuntimeListener>();
   private readonly config = { ...loadConfig(), executionMode: 'remote' as const };
   private readonly ollama = new OllamaClient(this.config);
-  private readonly execution = createExecutionRuntime(this.config, this.ollama);
   private readonly localProvider = createLocalInferenceProvider(this.config, this.ollama);
-  private readonly personalProviders = new ProjectProviderRuntime({ localProvider: this.localProvider });
-  private readonly projects = new ProjectAdminService({ localProvider: this.localProvider });
+  private readonly credentials = new CredentialManager();
+  private readonly providerSettings = new ProviderSettingsStore();
+  private readonly personalProviders = new ProjectProviderRuntime({
+    localProvider: this.localProvider,
+    credentials: this.credentials,
+    settings: this.providerSettings
+  });
+  private readonly execution = createExecutionRuntime(
+    this.config,
+    this.ollama,
+    this.personalProviders
+  );
+  private readonly projects = new ProjectAdminService({
+    localProvider: this.localProvider,
+    credentials: this.credentials,
+    providerSettings: this.providerSettings,
+    providerRuntime: this.personalProviders
+  });
   private readonly usage = new UsageDashboard();
   private readonly jobs = new StandaloneJobManager(
     this.execution.execution,

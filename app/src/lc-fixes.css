@@ -1384,6 +1384,7 @@
 }
 
 .conversation-context-badge {
+  position: relative;
   display: inline-flex;
   height: 28px;
   flex: 0 0 auto;
@@ -1397,6 +1398,66 @@
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.conversation-context-tooltip {
+  position: absolute;
+  z-index: 500;
+  right: 0;
+  bottom: calc(100% + 10px);
+  display: grid;
+  width: max-content;
+  min-width: 168px;
+  max-width: 210px;
+  gap: 2px;
+  padding: 11px 13px;
+  border: 1px solid var(--lc-border-strong);
+  border-radius: 12px;
+  background: var(--lc-surface-3);
+  color: var(--lc-text);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, .38);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  visibility: hidden;
+  white-space: normal;
+  transition: opacity .12s ease, transform .12s ease, visibility .12s ease;
+}
+
+.conversation-context-tooltip::after {
+  position: absolute;
+  right: 17px;
+  bottom: -5px;
+  width: 8px;
+  height: 8px;
+  border-right: 1px solid var(--lc-border-strong);
+  border-bottom: 1px solid var(--lc-border-strong);
+  background: var(--lc-surface-3);
+  content: '';
+  transform: rotate(45deg);
+}
+
+.conversation-context-tooltip small,
+.conversation-context-tooltip em {
+  color: var(--lc-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 400;
+}
+
+.conversation-context-tooltip strong {
+  font-size: 13px;
+  font-weight: 580;
+}
+
+.conversation-context-badge:hover .conversation-context-tooltip,
+.conversation-context-badge:focus-visible .conversation-context-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
 }
 
 .conversation-context-badge:hover,

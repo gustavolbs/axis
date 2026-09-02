@@ -17,6 +17,7 @@ import {
 import type { AdminProject } from './app-types.js';
 import { App } from './App.js';
 import { ProjectGallery } from './ProjectGallery.js';
+import { ProjectDetail } from './ProjectDetail.js';
 import { RunInspector } from './RunInspector.js';
 import { SettingsModal } from './SettingsModal.js';
 import { ShellDialog, type ShellDialogRequest } from './ShellDialog.js';
@@ -24,7 +25,7 @@ import { displayProfileName, type DesktopCommand } from './native.js';
 
 /** Conversations live in the sidebar, under their project or in the
  *  project-less Chats section. Archived holds what has been hidden from it. */
-type Surface = 'agent' | 'projects' | 'runs' | 'archived';
+type Surface = 'agent' | 'projects' | 'project' | 'runs' | 'archived';
 
 interface SidebarJob {
   id: string;
@@ -43,7 +44,7 @@ function jobTitle(job: SidebarJob): string {
 
 function storedSurface(): Surface {
   const value = localStorage.getItem('local-coder.surface');
-  return value === 'projects' || value === 'runs' || value === 'archived' ? value : 'agent';
+  return value === 'projects' || value === 'project' || value === 'runs' || value === 'archived' ? value : 'agent';
 }
 
 const READ_KEY = 'local-coder.read-jobs';
@@ -98,6 +99,7 @@ export function AppRoot() {
   const [surface, setSurface] = useState<Surface>(storedSurface);
   const [jobs, setJobs] = useState<SidebarJob[]>([]);
   const [projects, setProjects] = useState<AdminProject[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(() => localStorage.getItem('local-coder.project') ?? '');
   const [userCollapsed, setUserCollapsed] = useState(() => localStorage.getItem('local-coder.sidebar-collapsed') === 'true');
   const [autoCollapsed, setAutoCollapsed] = useState(() => window.innerWidth < 900);
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('local-coder.sidebar-width') ?? 250));
@@ -167,6 +169,7 @@ export function AppRoot() {
     .filter((job) => job.archivedAt)
     .sort((a, b) => (b.archivedAt ?? '').localeCompare(a.archivedAt ?? '')), [jobs]);
   const archivedProjects = useMemo(() => projects.filter((project) => project.archived), [projects]);
+  const selectedProject = useMemo(() => projects.find((project) => project.id === selectedProjectId), [projects, selectedProjectId]);
 
   /** A conversation belongs to its project, or to the loose Chats section. */
   const jobsByProject = useMemo(() => {
@@ -339,8 +342,8 @@ export function AppRoot() {
     setSearchOpen(false);
     localStorage.removeItem('local-coder.open-job');
     localStorage.setItem('local-coder.project', project.id);
-    selectSurface('agent');
-    setAgentEpoch((value) => value + 1);
+    setSelectedProjectId(project.id);
+    selectSurface('project');
   }
 
   function openSettings(project?: AdminProject) {
@@ -476,7 +479,7 @@ export function AppRoot() {
     <aside className="lc-shell-sidebar" aria-label="Local Coder" data-collapsed={sidebarCollapsed ? 'true' : 'false'}>
       <nav className="lc-shell-primary-nav">
         <button className="lc-shell-new-chat" onClick={startNewTask} aria-label="New chat" data-tooltip={tooltip('New chat')}><i aria-hidden="true"><Plus size={15} /></i><span>New chat</span></button>
-        <button className={surface === 'projects' ? 'active' : ''} onClick={() => selectSurface('projects')} aria-label="Projects" data-tooltip={tooltip('Projects')}><Folder size={16} aria-hidden="true" /><span>Projects</span></button>
+        <button className={surface === 'projects' || surface === 'project' ? 'active' : ''} onClick={() => selectSurface('projects')} aria-label="Projects" data-tooltip={tooltip('Projects')}><Folder size={16} aria-hidden="true" /><span>Projects</span></button>
         <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')} aria-label="Runs" data-tooltip={tooltip('Runs')}><History size={16} aria-hidden="true" /><span>Runs</span></button>
         <button className={surface === 'archived' ? 'active' : ''} onClick={() => selectSurface('archived')} aria-label="Archived" data-tooltip={tooltip('Archived')}><Archive size={16} aria-hidden="true" /><span>Archived</span></button>
       </nav>
@@ -548,7 +551,16 @@ export function AppRoot() {
         <button onClick={() => setActionError(undefined)} aria-label="Dismiss">Dismiss</button>
       </div> : null}
       {surface === 'agent' ? <App key={agentEpoch} /> : null}
-      {surface === 'projects' ? <ProjectGallery onOpenProject={runProject} onAdvanced={openSettings} /> : null}
+      {surface === 'projects' ? <ProjectGallery onOpenProject={runProject} /> : null}
+      {surface === 'project' && selectedProject ? <ProjectDetail
+        project={selectedProject}
+        conversations={jobs}
+        onBack={() => selectSurface('projects')}
+        onOpenConversation={openJob}
+        onCreated={openJob}
+        onProjectChanged={(project) => setProjects((current) => current.map((item) => item.id === project.id ? project : item))}
+      /> : null}
+      {surface === 'project' && !selectedProject ? <ProjectGallery onOpenProject={runProject} /> : null}
       {surface === 'runs' ? <RunInspector /> : null}
       {surface === 'archived' ? <ArchivedView
         jobs={archivedJobs}

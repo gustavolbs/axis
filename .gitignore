@@ -7,3 +7,4 @@ release/
 .env
 benchmarks/results/
 eval/results/
+app-dist/

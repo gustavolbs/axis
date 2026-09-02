@@ -1,0 +1,139 @@
+import { useMemo, useState, type FormEvent } from 'react';
+import { ArrowUp, ChevronDown, Folder, MoreHorizontal, Pencil, Pin, Plus, Search } from 'lucide-react';
+
+import type { AdminProject } from './app-types.js';
+
+export interface ProjectConversation {
+  id: string;
+  status: string;
+  updatedAt: string;
+  title?: string;
+  input: { goal: string; projectId?: string };
+}
+
+async function api<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const response = await fetch(url, {
+    method: init?.method ?? 'GET',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: init?.body === undefined ? undefined : JSON.stringify(init.body)
+  });
+  const body = (await response.json()) as T & { error?: string };
+  if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+  return body;
+}
+
+function relative(value: string): string {
+  const hours = Math.floor((Date.now() - new Date(value).getTime()) / 3_600_000);
+  if (hours < 1) return 'now';
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? 'yesterday' : `${days}d ago`;
+}
+
+function folderName(workspace: string): string {
+  return workspace.split(/[\\/]/).filter(Boolean).at(-1) ?? workspace;
+}
+
+export function ProjectDetail(props: {
+  project: AdminProject;
+  conversations: ProjectConversation[];
+  onBack: () => void;
+  onOpenConversation: (job: ProjectConversation) => void;
+  onCreated: (job: ProjectConversation) => void;
+  onProjectChanged: (project: AdminProject) => void;
+}) {
+  const [goal, setGoal] = useState('');
+  const [mode, setMode] = useState<'chat' | 'cowork'>('chat');
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const [instructions, setInstructions] = useState(props.project.instructions ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const conversations = useMemo(() => props.conversations
+    .filter((job) => job.input.projectId === props.project.id)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [props.conversations, props.project.id]);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!goal.trim() || busy) return;
+    if (mode === 'cowork' && !props.project.workspace) {
+      setError('Choose a folder for this project before starting Cowork.');
+      return;
+    }
+    setBusy(true);
+    setError(undefined);
+    try {
+      const { job } = await api<{ job: ProjectConversation }>('/api/jobs', {
+        method: 'POST',
+        body: { projectId: props.project.id, goal: goal.trim(), interactionMode: mode, maxRepairRounds: 1, reasoningEffort: 'auto' }
+      });
+      props.onCreated(job);
+    } catch (next) {
+      setError(next instanceof Error ? next.message : String(next));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveInstructions() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const { project } = await api<{ project: AdminProject }>(`/api/projects/${encodeURIComponent(props.project.id)}`, {
+        method: 'PATCH', body: { instructions }
+      });
+      props.onProjectChanged(project);
+      window.dispatchEvent(new CustomEvent('local-coder:projects-changed'));
+      setInstructionsOpen(false);
+    } catch (next) {
+      setError(next instanceof Error ? next.message : String(next));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="project-detail-page">
+    <button className="project-detail-breadcrumb" onClick={props.onBack}>Projects <span>/</span> <strong>{props.project.name}</strong></button>
+    <header className="project-detail-header">
+      <h1><Folder size={29} />{props.project.name}</h1>
+      <div><button aria-label="Pin project"><Pin size={17} /></button><button aria-label="More project options"><MoreHorizontal size={19} /></button></div>
+    </header>
+
+    <div className="project-detail-layout">
+      <main>
+        <form className="project-detail-composer" onSubmit={(event) => void submit(event)}>
+          <textarea value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="How can I help you today?" aria-label="Project prompt" />
+          <div className="project-detail-composer-bar">
+            <button className="project-detail-plus" type="button" aria-label="Add context"><Plus size={18} /></button>
+            <div className="project-detail-mode"><button type="button" className={mode === 'chat' ? 'active' : ''} onClick={() => setMode('chat')}>Chat</button><button type="button" className={mode === 'cowork' ? 'active' : ''} onClick={() => setMode('cowork')}>Cowork</button></div>
+            <span className="project-detail-model">Auto <ChevronDown size={13} /></span>
+            <button className="project-detail-send" disabled={!goal.trim() || busy} aria-label="Send"><ArrowUp size={17} /></button>
+          </div>
+        </form>
+        {error ? <div className="lc-shell-inline-error project-detail-error">{error}</div> : null}
+        <section className="project-detail-recent">
+          <h2>Recent</h2>
+          {conversations.slice(0, 8).map((job) => <button key={job.id} onClick={() => props.onOpenConversation(job)}>
+            <span><strong>{job.title?.trim() || job.input.goal}</strong><small>{job.input.goal}</small></span><time>{relative(job.updatedAt)}</time>
+          </button>)}
+          {conversations.length === 0 ? <p>No conversations in this project yet.</p> : null}
+        </section>
+      </main>
+
+      <aside className="project-detail-panel">
+        <section className="project-detail-instructions">
+          <header><h2>Instructions</h2><button aria-label="Edit instructions" onClick={() => setInstructionsOpen(true)}><Pencil size={15} /></button></header>
+          {instructionsOpen ? <div className="project-detail-instruction-editor"><textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} autoFocus /><div><button onClick={() => setInstructionsOpen(false)}>Cancel</button><button onClick={() => void saveInstructions()} disabled={busy}>Save</button></div></div> : <p>{props.project.instructions || 'Add instructions that should apply to every conversation in this project.'}</p>}
+        </section>
+        <section className="project-detail-context">
+          <header><h2>Context</h2><span><button aria-label="Search context"><Search size={16} /></button><button aria-label="Add context"><Plus size={17} /></button></span></header>
+          <div className="project-detail-context-meter"><i /><span>{props.project.workspace ? 'Folder connected' : 'No project context added'}</span></div>
+          {props.project.workspace ? <div className="project-detail-folder-card"><strong>{folderName(props.project.workspace)}</strong><small>1 folder</small><Folder size={17} /></div> : null}
+        </section>
+        <section className="project-detail-scheduled">
+          <header><h2>Scheduled</h2><button aria-label="Add scheduled task"><Plus size={17} /></button></header>
+          <p>Configure recurring tasks for this project.</p>
+        </section>
+      </aside>
+    </div>
+  </section>;
+}

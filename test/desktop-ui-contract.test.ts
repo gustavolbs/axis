@@ -45,9 +45,11 @@ const css = [baseCss, appCss, fixesCss].join('\n');
 const agentSurface = read('app/src/AgentSurfaceV2.tsx');
 const appRoot = read('app/src/AppRoot.tsx');
 const projectGallery = read('app/src/ProjectGallery.tsx');
+const projectDetail = read('app/src/ProjectDetail.tsx');
 const folderField = read('app/src/FolderField.tsx');
 const settingsModal = read('app/src/SettingsModal.tsx');
 const settingsPanels = read('app/src/SettingsPanels.tsx');
+const usageSettings = read('app/src/UsageSettings.tsx');
 const uiSelect = read('app/src/UiSelect.tsx');
 const runInspector = read('app/src/RunInspectorV2.tsx');
 const native = read('app/src/native.ts');
@@ -169,7 +171,7 @@ test('sidebar rows use the reference scale, not a denser or larger one', () => {
 test('there is no Chats surface: conversations live in the sidebar tree', () => {
   // In the reference app a Chats screen would be the archive, which this app
   // does not have — the nav is New chat / Projects / Runs.
-  assert.match(appRoot, /type Surface = 'agent' \| 'projects' \| 'runs'/);
+  assert.match(appRoot, /type Surface = 'agent' \| 'projects' \| 'project' \| 'runs'/);
   assert.doesNotMatch(appRoot, /selectSurface\('chats'\)/);
   assert.doesNotMatch(appRoot, /<ChatHistory/);
   assert.equal(fs.existsSync(path.join(root, 'app/src/ChatHistory.tsx')), false);
@@ -381,13 +383,21 @@ test('workspace entry has native Browse and browser recent-folder fallback', () 
   assert.match(css, /\.path-browse-button/);
 });
 
-test('model menu exposes Ollama Claude GPT Local-first plus Effort and Thinking', () => {
+test('model menu is catalog-driven, keeps branded built-ins, and exposes Effort and Thinking', () => {
   assert.match(agentSurface, /className="model-effort-trigger"/);
-  assert.match(agentSurface, /type ProviderMode = 'ollama' \| 'anthropic' \| 'openai' \| 'local-first'/);
-  for (const label of ['Ollama', 'Claude', 'GPT', 'Local-first']) {
-    assert.match(agentSurface, new RegExp(`label: '${label}'`), `missing provider mode: ${label}`);
-  }
+  assert.match(agentSurface, /type ModelMenuView = 'closed' \| 'providers' \| 'models' \| 'effort'/);
+  assert.match(agentSurface, /modelMenu === 'closed' \? 'providers' : 'closed'/);
+  assert.match(agentSurface, /if \(props\.modelMenu === 'models'\)/);
+  assert.match(agentSurface, /setModelMenu\('providers'\).*models<\/strong>/s, 'the model list must have a back path to providers');
+  assert.match(agentSurface, /setModelMenu\('models'\)/, 'choosing a provider must open its model list');
+  assert.match(agentSurface, /\(catalog\?\.providers \?\? \[\]\)\.map\(\(provider\)/);
+  assert.match(agentSurface, /id: provider\.id/);
+  assert.doesNotMatch(agentSurface, /type ProviderMode = 'ollama'/, 'new providers must not require a hardcoded union');
+  for (const label of ['Ollama', 'Claude', 'GPT']) assert.match(agentSurface, new RegExp(`return '${label}'`));
+  assert.match(agentSurface, /label: 'Local-first'/);
   assert.match(agentSurface, /Start on Ollama; ask before bounded cloud escalation/);
+  assert.match(agentSurface, /mode\.reason \?\? 'unavailable'/, 'provider discovery failures must be visible');
+  assert.match(agentSurface, /catalogHasSelection\(next, current\)/, 'catalog refresh must preserve a valid explicit model');
   assert.doesNotMatch(agentSurface, /<strong>Auto<\/strong>/, 'Auto must not appear as a fifth provider mode');
   assert.match(agentSurface, /<strong>Effort<\/strong>/);
   assert.match(agentSurface, /<strong>Thinking<\/strong>/);
@@ -457,7 +467,9 @@ test('Projects uses real folder picker and consistent primary-secondary hierarch
   for (const required of ['lc-shell-projects-page', 'lc-shell-project-grid', 'lc-shell-project-card', 'lc-shell-project-modal', 'New project', 'Last updated', 'Create a project', 'Search projects']) {
     assert.equal(projectGallery.includes(required), true, `missing Projects primitive: ${required}`);
   }
-  assert.match(projectGallery, /<Info size=\{14\}/);
+  assert.match(projectGallery, /<FolderPlus size=\{15\}/);
+  assert.match(projectGallery, /What do you want to accomplish\?/);
+  assert.match(projectDetail, /project-detail-instructions/);
   assert.match(projectGallery, /btn-secondary/);
   assert.match(projectGallery, /btn-primary/);
   assert.match(css, /\.btn-primary/);
@@ -476,6 +488,19 @@ test('Settings has only real General Appearance Model routing and API keys tabs'
   assert.doesNotMatch(settingsPanels, /<select/);
   assert.match(uiSelect, /role="listbox"/);
   assert.match(css, /\.ui-select-popover/);
+});
+
+test('Usage renders through the CSP-compatible stylesheet and keeps the reference hierarchy', () => {
+  assert.doesNotMatch(usageSettings, /<style>/, "CSP blocks component-level inline styles");
+  for (const selector of ['.usage-shell', '.usage-toolbar', '.usage-chart-wrap', '.usage-row']) {
+    assert.match(appCss, new RegExp(selector.replace('.', '\\.')));
+  }
+  assert.match(usageSettings, /className="usage-chart"/);
+  assert.match(usageSettings, /className="usage-chart-tooltip"/);
+  assert.match(usageSettings, /onPointerEnter=\{\(\) => setHoveredKey/);
+  assert.match(usageSettings, /Spend: \{costLabel\(hoveredPoint\)\}/);
+  assert.match(usageSettings, /Show \{hiddenRows\} more/);
+  assert.match(usageSettings, /<progress className=\{`usage-budget-progress/);
 });
 
 test('appearance syncs with Electron nativeTheme and every preview has its own rule', () => {

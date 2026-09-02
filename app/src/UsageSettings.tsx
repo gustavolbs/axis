@@ -107,22 +107,34 @@ function updatedLabel(value: Date | undefined): string {
 }
 
 function UsageChart({ points }: { points: UsageTimelinePoint[] }) {
+  const [hoveredKey, setHoveredKey] = useState<string>();
   if (points.length === 0) return <div className="usage-empty">No token usage in this period yet.</div>;
   const width = 820;
-  const height = 260;
-  const top = 14;
-  const bottom = 34;
-  const left = 60;
-  const right = 10;
+  const height = 254;
+  const top = 8;
+  const bottom = 36;
+  const left = 66;
+  const right = 8;
   const baseline = height - bottom;
   const plotHeight = baseline - top;
   const max = Math.max(1, ...points.map((point) => point.totalTokens));
   const roundedMax = Math.max(1, Math.ceil(max / Math.pow(10, Math.floor(Math.log10(max)))) * Math.pow(10, Math.floor(Math.log10(max))));
   const slot = (width - left - right) / points.length;
-  const barWidth = Math.max(3, Math.min(22, slot * 0.72));
+  const barWidth = Math.max(3, Math.min(21, slot * 0.72));
   const labelEvery = Math.max(1, Math.ceil(points.length / 8));
   const ticks = [1, 0.75, 0.5, 0.25, 0];
-  return <svg className="usage-chart" viewBox={`0 0 ${width} ${height}`} width="100%" height="260" role="img" aria-label="Token usage over time">
+  const hoveredIndex = points.findIndex((point) => point.key === hoveredKey);
+  const hoveredPoint = hoveredIndex >= 0 ? points[hoveredIndex] : undefined;
+  const tooltipWidth = 210;
+  const tooltipHeight = 104;
+  const tooltipGeometry = hoveredPoint ? (() => {
+    const center = left + hoveredIndex * slot + slot / 2;
+    const totalHeight = ((hoveredPoint.inputTokens + hoveredPoint.outputTokens) / roundedMax) * plotHeight;
+    const x = Math.max(left, Math.min(width - right - tooltipWidth, center - tooltipWidth / 2));
+    const y = Math.max(top + 2, baseline - totalHeight - tooltipHeight - 10);
+    return { x, y, pointerX: Math.max(14, Math.min(tooltipWidth - 14, center - x)) };
+  })() : undefined;
+  return <svg className="usage-chart" viewBox={`0 0 ${width} ${height}`} width="100%" role="img" aria-label="Token usage over time">
     {ticks.map((fraction) => {
       const y = top + (1 - fraction) * plotHeight;
       return <g key={fraction}>
@@ -136,12 +148,24 @@ function UsageChart({ points }: { points: UsageTimelinePoint[] }) {
       const outputHeight = (point.outputTokens / roundedMax) * plotHeight;
       const totalHeight = inputHeight + outputHeight;
       const showLabel = index % labelEvery === 0 || index === points.length - 1;
-      return <g key={point.key}>
-        {outputHeight > 0 ? <rect x={x} y={baseline - outputHeight} width={barWidth} height={outputHeight} rx="2" className="usage-bar-output" /> : null}
-        {inputHeight > 0 ? <rect x={x} y={baseline - totalHeight} width={barWidth} height={inputHeight} rx="2" className="usage-bar-input" /> : null}
+      return <g className="usage-bar-group" key={point.key} onPointerEnter={() => setHoveredKey(point.key)} onPointerLeave={() => setHoveredKey((current) => current === point.key ? undefined : current)}>
+        <title>{`${point.label}: ${tokens(point.inputTokens)} input · ${tokens(point.outputTokens)} output`}</title>
+        {inputHeight > 0 ? <rect x={x} y={baseline - inputHeight} width={barWidth} height={inputHeight} rx="2" className="usage-bar-input" /> : null}
+        {outputHeight > 0 ? <rect x={x} y={baseline - totalHeight} width={barWidth} height={outputHeight} rx="2" className="usage-bar-output" /> : null}
         {showLabel ? <text x={x + barWidth / 2} y={height - 8} textAnchor="middle" className="usage-axis-label usage-x-label">{point.label}</text> : null}
       </g>;
     })}
+    {hoveredPoint && tooltipGeometry ? <g className="usage-chart-tooltip" transform={`translate(${tooltipGeometry.x} ${tooltipGeometry.y})`} aria-hidden="true">
+      <rect width={tooltipWidth} height={tooltipHeight} rx="9" className="usage-tooltip-surface" />
+      <path d={`M ${tooltipGeometry.pointerX - 6} ${tooltipHeight} L ${tooltipGeometry.pointerX + 6} ${tooltipHeight} L ${tooltipGeometry.pointerX} ${tooltipHeight + 6} Z`} className="usage-tooltip-surface" />
+      <text x="13" y="19" className="usage-tooltip-title">{hoveredPoint.label} (UTC)</text>
+      <circle cx="16" cy="37" r="3.5" className="usage-tooltip-input-dot" />
+      <text x="26" y="41" className="usage-tooltip-value">Input: {tokens(hoveredPoint.inputTokens)}</text>
+      <circle cx="16" cy="55" r="3.5" className="usage-tooltip-output-dot" />
+      <text x="26" y="59" className="usage-tooltip-value">Output: {tokens(hoveredPoint.outputTokens)}</text>
+      <text x="13" y="77" className="usage-tooltip-value">Total tokens: {tokens(hoveredPoint.totalTokens)}</text>
+      <text x="13" y="95" className="usage-tooltip-spend">Spend: {costLabel(hoveredPoint)}</text>
+    </g> : null}
   </svg>;
 }
 
@@ -162,6 +186,7 @@ export function UsageSettings() {
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>();
+  const [showAllRows, setShowAllRows] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -192,6 +217,7 @@ export function UsageSettings() {
   }, [period]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setShowAllRows(false); }, [period, tab]);
 
   async function saveBudget(providerId: string): Promise<void> {
     const provider = providers.find((item) => item.id === providerId);
@@ -223,6 +249,9 @@ export function UsageSettings() {
   const totalTokens = usage?.totals.totalTokens ?? 0;
   const modelRows = useMemo(() => usage?.models ?? [], [usage]);
   const providerRows = useMemo(() => usage?.providers ?? [], [usage]);
+  const activeRows = tab === 'models' ? modelRows : providerRows;
+  const visibleRows = showAllRows ? activeRows : activeRows.slice(0, 6);
+  const hiddenRows = activeRows.length - visibleRows.length;
   const monthByProvider = useMemo(() => new Map((monthUsage?.providers ?? []).map((provider) => [provider.providerId, provider])), [monthUsage]);
   const budgetProviders = useMemo(() => {
     const byId = new Map(providers.map((provider) => [provider.id, provider]));
@@ -239,50 +268,18 @@ export function UsageSettings() {
   }, [providers, monthUsage]);
 
   return <div className="focused-settings-page usage-settings-page">
-    <style>{`
-      .usage-settings-page { width: min(760px, calc(100% - 48px)); }
-      .usage-settings-page > header { align-items: flex-end; margin-bottom: 18px; }
-      .usage-page-meta { display: flex; align-items: center; gap: 9px; color: var(--lc-muted); font-size: 10.5px; white-space: nowrap; }
-      .usage-refresh { display: grid; place-items: center; width: 27px; height: 27px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--lc-muted); cursor: pointer; }
-      .usage-refresh:hover { background: var(--lc-surface-2); color: var(--lc-text); }
-      .usage-refresh:disabled { opacity: .5; cursor: default; }
-      .usage-refresh.loading svg { animation: usage-spin .8s linear infinite; }
-      @keyframes usage-spin { to { transform: rotate(360deg); } }
-      .usage-shell, .usage-budget-shell { overflow: hidden; border: 1px solid var(--lc-border); border-radius: 14px; background: var(--lc-surface); }
-      .usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 12px 9px 14px; }
-      .usage-tabs, .usage-periods { display: flex; align-items: center; gap: 3px; }
-      .usage-tabs button, .usage-periods button { border: 0; border-radius: 7px; background: transparent; color: var(--lc-muted); font: inherit; font-size: 11px; cursor: pointer; }
-      .usage-tabs button { padding: 7px 10px; }.usage-periods button { padding: 7px 9px; }
-      .usage-tabs button.active, .usage-periods button.active { background: var(--lc-surface-2); color: var(--lc-text); }
-      .usage-chart-wrap { padding: 10px 12px 0 4px; border-top: 1px solid color-mix(in srgb, var(--lc-border) 60%, transparent); }
-      .usage-chart { display: block; color: var(--lc-muted); }.usage-axis-label { fill: var(--lc-muted); font-size: 10px; }.usage-x-label { opacity: .78; }
-      .usage-grid-line { stroke: var(--lc-border); stroke-width: .7; opacity: .28; }.usage-bar-output { fill: #4f86dc; }.usage-bar-input { fill: #86aee9; }
-      .usage-summary-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; border-top: 1px solid var(--lc-border); background: var(--lc-border); }
-      .usage-summary-item { min-width: 0; padding: 10px 13px; background: var(--lc-surface); }.usage-summary-item small, .usage-summary-item strong { display: block; }
-      .usage-summary-item small { margin-bottom: 4px; color: var(--lc-muted); font-size: 9.5px; }.usage-summary-item strong { overflow: hidden; color: var(--lc-text); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-      .usage-list { border-top: 1px solid var(--lc-border); }.usage-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(180px, .9fr) 62px; gap: 12px; align-items: center; min-height: 39px; padding: 6px 15px; }
-      .usage-row + .usage-row { border-top: 1px solid color-mix(in srgb, var(--lc-border) 55%, transparent); }.usage-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
-      .usage-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 2px; background: #4f86dc; }.usage-row-main strong { overflow: hidden; color: var(--lc-text-soft); font-size: 11px; font-weight: 540; text-overflow: ellipsis; white-space: nowrap; }.usage-row-main small { color: var(--lc-muted); font-size: 9px; }
-      .usage-row-numbers { color: var(--lc-muted); font-size: 10px; text-align: right; white-space: nowrap; }.usage-row-cost { display: block; margin-top: 2px; color: var(--lc-text-soft); font-size: 9px; }.usage-share { color: var(--lc-text-soft); font-size: 10.5px; font-weight: 560; text-align: right; }
-      .usage-note { margin: 10px 3px 0; color: var(--lc-faint); font-size: 9.5px; line-height: 1.45; }.usage-empty { display: grid; min-height: 170px; place-items: center; color: var(--lc-muted); font-size: 11px; }.usage-error { margin-bottom: 12px; color: var(--lc-negative); font-size: 10.5px; }
-      .usage-budget-shell { margin-top: 22px; }.usage-budget-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 13px 15px; border-bottom: 1px solid var(--lc-border); }.usage-budget-heading strong, .usage-budget-heading small { display: block; }.usage-budget-heading strong { color: var(--lc-text); font-size: 11.5px; font-weight: 610; }.usage-budget-heading small { margin-top: 3px; color: var(--lc-muted); font-size: 9.5px; line-height: 1.4; }
-      .usage-budget-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(260px, 1.25fr); gap: 18px; align-items: center; padding: 12px 15px; }.usage-budget-row + .usage-budget-row { border-top: 1px solid color-mix(in srgb, var(--lc-border) 55%, transparent); }
-      .usage-budget-provider strong, .usage-budget-provider small { display: block; }.usage-budget-provider strong { color: var(--lc-text-soft); font-size: 11px; font-weight: 560; }.usage-budget-provider small { margin-top: 3px; color: var(--lc-muted); font-size: 9.5px; }.usage-budget-warning { color: var(--lc-negative) !important; }
-      .usage-budget-control { min-width: 0; }.usage-budget-fields { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }.usage-unlimited { display: flex; align-items: center; gap: 6px; color: var(--lc-text-soft); font-size: 10px; cursor: pointer; white-space: nowrap; }.usage-unlimited input { accent-color: var(--lc-accent); }
-      .usage-budget-input { display: flex; align-items: center; width: 116px; height: 29px; padding: 0 8px; border: 1px solid var(--lc-border); border-radius: 7px; background: var(--lc-surface-2); color: var(--lc-muted); }.usage-budget-input span { margin-right: 4px; font-size: 10px; }.usage-budget-input input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--lc-text); font: inherit; font-size: 10px; }.usage-budget-input.disabled { opacity: .42; }
-      .usage-budget-save { height: 29px; padding: 0 10px; border: 1px solid var(--lc-border); border-radius: 7px; background: var(--lc-surface-2); color: var(--lc-text-soft); font: inherit; font-size: 9.5px; cursor: pointer; }.usage-budget-save:hover:not(:disabled) { background: var(--lc-surface-3); }.usage-budget-save:disabled { opacity: .45; cursor: default; }
-      .usage-budget-progress { height: 3px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: var(--lc-surface-2); }.usage-budget-progress > i { display: block; height: 100%; border-radius: inherit; background: #4f86dc; }.usage-budget-progress > i.warn { background: var(--lc-negative); }.usage-budget-meta { display: flex; justify-content: flex-end; margin-top: 5px; color: var(--lc-muted); font-size: 9px; }.usage-budget-error { margin: 8px 15px 0; color: var(--lc-negative); font-size: 9.5px; }
-      @media (max-width: 720px) { .usage-settings-page { width: calc(100% - 28px); }.usage-settings-page > header { align-items: flex-start; flex-direction: column; }.usage-page-meta { align-self: flex-end; }.usage-toolbar { align-items: flex-start; flex-direction: column; }.usage-row { grid-template-columns: minmax(0, 1fr) auto; }.usage-row-numbers { grid-column: 1 / -1; grid-row: 2; text-align: left; }.usage-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }.usage-budget-row { grid-template-columns: 1fr; gap: 9px; }.usage-budget-fields, .usage-budget-meta { justify-content: flex-start; } }
-    `}</style>
-
     <header><div><h1>Usage</h1><p>Token usage and API spend across local and cloud providers.</p></div><div className="usage-page-meta"><span>{updatedLabel(lastUpdated)}</span><button className={`usage-refresh ${loading ? 'loading' : ''}`} onClick={() => void load()} disabled={loading} aria-label="Refresh usage" title="Refresh usage"><RefreshCw size={14} /></button></div></header>
     {error ? <div className="usage-error" role="alert">{error}</div> : null}
 
     <section className="usage-shell" aria-busy={loading}>
       <div className="usage-toolbar"><div className="usage-tabs" role="tablist" aria-label="Usage breakdown"><button role="tab" aria-selected={tab === 'overview'} className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>Overview</button><button role="tab" aria-selected={tab === 'models'} className={tab === 'models' ? 'active' : ''} onClick={() => setTab('models')}>Models</button></div><div className="usage-periods" role="radiogroup" aria-label="Usage period">{([['all', 'All'], ['month', 'Month'], ['30d', '30d'], ['7d', '7d']] as Array<[UsagePeriod, string]>).map(([value, label]) => <button key={value} className={period === value ? 'active' : ''} role="radio" aria-checked={period === value} onClick={() => setPeriod(value)}>{label}</button>)}</div></div>
       <div className="usage-chart-wrap">{usage ? <UsageChart points={usage.timeline.points} /> : <div className="usage-empty">Loading usage…</div>}</div>
-      {usage ? <><div className="usage-summary-strip"><div className="usage-summary-item"><small>Month spend</small><strong>{costLabel(usage.currentMonth)}</strong></div><div className="usage-summary-item"><small>Input</small><strong>{tokens(usage.totals.inputTokens)}</strong></div><div className="usage-summary-item"><small>Output</small><strong>{tokens(usage.totals.outputTokens)}</strong></div><div className="usage-summary-item"><small>Calls</small><strong>{usage.totals.calls.toLocaleString('en-US')}</strong></div></div>
-        <div className="usage-list">{tab === 'models' ? modelRows.map((model) => { const share = totalTokens === 0 ? 0 : model.totalTokens / totalTokens; return <div className="usage-row" key={`${model.providerId}:${model.modelId}`}><div className="usage-row-main"><span className="usage-dot" /><div><strong>{model.modelId}</strong><small>{providerLabel(model.providerId)}</small></div></div><div className="usage-row-numbers">{tokens(model.inputTokens)} in · {tokens(model.outputTokens)} out<span className="usage-row-cost">{model.providerKind === 'local' ? usd(0) : costLabel(model)}</span></div><Share value={share} /></div>; }) : providerRows.map((provider) => { const share = totalTokens === 0 ? 0 : provider.totalTokens / totalTokens; return <div className="usage-row" key={`${provider.providerId}:${provider.providerKind}`}><div className="usage-row-main"><span className="usage-dot" /><div><strong>{providerLabel(provider.providerId)}</strong><small>{provider.providerKind}</small></div></div><div className="usage-row-numbers">{tokens(provider.inputTokens)} in · {tokens(provider.outputTokens)} out<span className="usage-row-cost">{provider.providerKind === 'local' ? usd(0) : costLabel(provider)}</span></div><Share value={share} /></div>; })}{tab === 'models' && modelRows.length === 0 ? <div className="usage-empty">No model usage in this period.</div> : null}{tab === 'overview' && providerRows.length === 0 ? <div className="usage-empty">No provider usage in this period.</div> : null}</div></> : null}
+      {usage ? <div className="usage-list">{visibleRows.map((row, index) => {
+        const share = totalTokens === 0 ? 0 : row.totalTokens / totalTokens;
+        const key = 'modelId' in row ? `${row.providerId}:${row.modelId}` : `${row.providerId}:${row.providerKind}`;
+        const label = 'modelId' in row ? row.modelId : providerLabel(row.providerId);
+        return <div className={`usage-row usage-color-${index % 6}`} key={key}><div className="usage-row-main"><span className="usage-dot" /><strong>{label}</strong></div><div className="usage-row-numbers">{tokens(row.inputTokens)} in · {tokens(row.outputTokens)} out</div><Share value={share} /></div>;
+      })}{hiddenRows > 0 ? <button className="usage-show-more" onClick={() => setShowAllRows(true)}>Show {hiddenRows} more</button> : null}{showAllRows && activeRows.length > 6 ? <button className="usage-show-more" onClick={() => setShowAllRows(false)}>Show less</button> : null}{tab === 'models' && modelRows.length === 0 ? <div className="usage-empty">No model usage in this period.</div> : null}{tab === 'overview' && providerRows.length === 0 ? <div className="usage-empty">No provider usage in this period.</div> : null}</div> : null}
     </section>
 
     <section className="usage-budget-shell" aria-label="Provider budgets">
@@ -305,7 +302,7 @@ export function UsageSettings() {
           <div className="usage-budget-control">
             {local ? <div className="usage-budget-meta">Local inference · $0 API cost · no monetary cap required</div> : <>
               <div className="usage-budget-fields"><label className="usage-unlimited"><input type="checkbox" checked={unlimited} onChange={(event) => setUnlimitedDrafts((current) => ({ ...current, [provider.id]: event.target.checked }))} disabled={busy} />Unlimited</label><label className={`usage-budget-input ${unlimited ? 'disabled' : ''}`}><span>$</span><input type="number" min="0.01" step="0.01" inputMode="decimal" aria-label={`${providerLabel(provider.id)} monthly budget in USD`} placeholder="Monthly" value={draft} disabled={unlimited || busy} onChange={(event) => setBudgetDrafts((current) => ({ ...current, [provider.id]: event.target.value }))} /></label><button className="usage-budget-save" disabled={busy || !validDraft} onClick={() => void saveBudget(provider.id)}>{busy ? 'Saving…' : 'Save'}</button></div>
-              <div className="usage-budget-progress" aria-hidden="true"><i className={progress >= .9 ? 'warn' : ''} style={{ width: `${Math.round(progress * 100)}%` }} /></div>
+              <progress className={`usage-budget-progress ${progress >= .9 ? 'warn' : ''}`} value={progress} max={1} aria-label={`${providerLabel(provider.id)} monthly budget used`} />
               <div className="usage-budget-meta">{persistedUnlimited ? 'Unlimited' : persistedLimit === undefined ? 'Spend disabled — configure Unlimited or a monthly budget' : `${usd(spent)} / ${usd(persistedLimit)} this month · ${Math.round(progress * 100)}%`}</div>
             </>}
           </div>

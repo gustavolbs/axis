@@ -11,6 +11,7 @@ import {
   Check,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   CircleStop,
   Code,
   Copy,
@@ -37,8 +38,7 @@ import { displayProfileName } from './native.js';
 
 type ReasoningEffortSelection = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 type JobReasoningEffort = ReasoningEffortSelection | 'none';
-type ModelMenuView = 'closed' | 'models' | 'effort';
-type ProviderMode = 'ollama' | 'anthropic' | 'openai' | 'local-first';
+type ModelMenuView = 'closed' | 'providers' | 'models' | 'effort';
 
 const NEW_TASK_ID = '__new__';
 type ComposerMode = 'chat' | 'cowork';
@@ -182,6 +182,14 @@ interface ModelOption {
   providerDefault: boolean;
   reason?: string;
 }
+interface ProviderModeConfig {
+  id: string;
+  label: string;
+  description: string;
+  providerId: string;
+  ready: boolean;
+  reason?: string;
+}
 interface ConversationContextInfo {
   estimatedTokens: number;
   contextWindow?: number;
@@ -197,13 +205,6 @@ const effortOptions: Array<{ id: ReasoningEffortSelection; label: string; descri
   { id: 'high', label: 'High', description: 'More thorough reasoning for difficult work' },
   { id: 'xhigh', label: 'Extra high', description: 'Deep reasoning for long-running agentic tasks' },
   { id: 'max', label: 'Max', description: 'Maximum supported reasoning depth' }
-];
-
-const providerModes: Array<{ id: ProviderMode; label: string; description: string; providerId: string }> = [
-  { id: 'ollama', label: 'Ollama', description: 'Use Ollama only for every stage', providerId: 'ollama' },
-  { id: 'anthropic', label: 'Claude', description: 'Use the selected Anthropic model directly', providerId: 'anthropic' },
-  { id: 'openai', label: 'GPT', description: 'Use the selected OpenAI model directly', providerId: 'openai' },
-  { id: 'local-first', label: 'Local-first', description: 'Start on Ollama; ask before bounded cloud escalation', providerId: 'ollama' }
 ];
 
 function time(value?: string) {
@@ -227,7 +228,17 @@ function providerLabel(providerId: string): string {
   if (providerId === 'anthropic') return 'Claude';
   if (providerId === 'openai') return 'GPT';
   if (providerId === 'ollama') return 'Ollama';
-  return providerId;
+  return providerId
+    .split(/[-_.]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+}
+function providerDescription(provider: CatalogProvider): string {
+  if (provider.id === 'ollama') return 'Use Ollama only for every stage';
+  if (provider.id === 'anthropic') return 'Use the selected Anthropic model directly';
+  if (provider.id === 'openai') return 'Use the selected OpenAI model directly';
+  return `Use the selected ${providerLabel(provider.id)} model directly`;
 }
 function modelValue(selection: ModelSelection): string {
   if (selection.mode === 'auto') return 'auto';
@@ -244,28 +255,34 @@ function parseModelValue(value: string): ModelSelection {
     ? { mode: 'local-first', modelId }
     : { mode: 'explicit', providerId, modelId };
 }
-function providerMode(value: string): ProviderMode {
+function providerMode(value: string): string {
   if (value.startsWith('local-first\0')) return 'local-first';
-  if (value.startsWith('anthropic\0')) return 'anthropic';
-  if (value.startsWith('openai\0')) return 'openai';
-  return 'ollama';
+  const split = value.indexOf('\0');
+  return split > 0 ? value.slice(0, split) : 'ollama';
 }
-function modeValue(mode: ProviderMode, modelId: string): string {
+function modeValue(mode: string, modelId: string): string {
   return `${mode === 'local-first' ? 'local-first' : mode}\0${modelId}`;
 }
 function firstAvailableModel(catalog: ProjectCatalog, providerId: string): CatalogModel | undefined {
   const provider = catalog.providers.find((item) => item.id === providerId && item.ready);
   return provider?.models.find((model) => model.available);
 }
+function catalogHasSelection(catalog: ProjectCatalog, value: string): boolean {
+  const selection = parseModelValue(value);
+  if (selection.mode === 'auto') return false;
+  const providerId = selection.mode === 'local-first' ? 'ollama' : selection.providerId;
+  const provider = catalog.providers.find((item) => item.id === providerId && item.ready);
+  return Boolean(provider?.models.some((model) => model.id === selection.modelId && model.available));
+}
 function defaultComposerSelection(catalog: ProjectCatalog): string {
   const configured = modelValue(catalog.defaultModel);
   if (configured !== 'auto') return configured;
   const local = firstAvailableModel(catalog, 'ollama');
   if (local) return modeValue(catalog.scope === 'personal' ? 'ollama' : 'local-first', local.id);
-  const claude = firstAvailableModel(catalog, 'anthropic');
-  if (claude) return modeValue('anthropic', claude.id);
-  const gpt = firstAvailableModel(catalog, 'openai');
-  if (gpt) return modeValue('openai', gpt.id);
+  for (const provider of catalog.providers) {
+    const model = firstAvailableModel(catalog, provider.id);
+    if (model) return modeValue(provider.id, model.id);
+  }
   return 'auto';
 }
 function isWorking(status?: string) {
@@ -386,7 +403,11 @@ export function AgentSurfaceV2() {
         const activeSelection = active?.input.interactionMode === 'chat'
           ? active.input.modelSelection
           : undefined;
-        setModelSelection(activeSelection ? modelValue(activeSelection) : defaultComposerSelection(next));
+        setModelSelection((current) => activeSelection
+          ? modelValue(activeSelection)
+          : catalogHasSelection(next, current)
+            ? current
+            : defaultComposerSelection(next));
       })
       .catch((next) => {
         if (cancelled) return;
@@ -438,8 +459,39 @@ export function AgentSurfaceV2() {
     return options;
   }, [catalog]);
 
+  const providerModes = useMemo<ProviderModeConfig[]>(() => {
+    const modes = (catalog?.providers ?? []).map((provider) => ({
+      id: provider.id,
+      label: providerLabel(provider.id),
+      description: providerDescription(provider),
+      providerId: provider.id,
+      ready: provider.ready && provider.models.some((model) => model.available),
+      reason: provider.reason
+    }));
+    const localIndex = modes.findIndex((mode) => mode.providerId === 'ollama');
+    if (localIndex >= 0) {
+      modes.splice(localIndex + 1, 0, {
+        id: 'local-first',
+        label: 'Local-first',
+        description: 'Start on Ollama; ask before bounded cloud escalation',
+        providerId: 'ollama',
+        ready: modes[localIndex]!.ready,
+        reason: modes[localIndex]!.reason
+      });
+    }
+    return modes;
+  }, [catalog]);
+
   const selectedMode = providerMode(modelSelection);
-  const selectedModeConfig = providerModes.find((item) => item.id === selectedMode)!;
+  const selectedModeConfig = providerModes.find((item) => item.id === selectedMode)
+    ?? providerModes.find((item) => item.ready)
+    ?? {
+      id: selectedMode,
+      label: providerLabel(selectedMode),
+      description: '',
+      providerId: selectedMode === 'local-first' ? 'ollama' : selectedMode,
+      ready: false
+    };
   const selectedModelId = modelSelection.includes('\0') ? modelSelection.slice(modelSelection.indexOf('\0') + 1) : '';
   const selectedModel = modelOptions.find(
     (model) => model.providerId === selectedModeConfig.providerId && model.modelId === selectedModelId
@@ -761,6 +813,7 @@ export function AgentSurfaceV2() {
         modelMenu={modelMenu}
         setModelMenu={setModelMenu}
         modelOptions={modelOptions}
+        providerModes={providerModes}
         modelSelection={modelSelection}
         setModelSelection={setModelSelection}
         modelLabel={modelLabel}
@@ -828,22 +881,23 @@ function ConversationContextBadge({ info }: { info: ConversationContextInfo }) {
   const label = info.contextWindow
     ? `≈${compactTokens(info.estimatedTokens)} / ${compactTokens(info.contextWindow)}`
     : `≈${compactTokens(info.estimatedTokens)} tokens`;
-  const tooltip = [
-    `${info.providerLabel} · ${info.modelLabel}`,
-    `Visible conversation estimate: ~${info.estimatedTokens.toLocaleString()} tokens`,
-    info.contextWindow ? `Model context window: ${info.contextWindow.toLocaleString()} tokens` : 'Model context window: unavailable from provider metadata',
-    remaining !== undefined ? `Raw window headroom: ~${remaining.toLocaleString()} tokens before system instructions and output reserves` : undefined,
-    info.maxOutputTokens ? `Maximum configured/model output: ${info.maxOutputTokens.toLocaleString()} tokens` : undefined,
-    `Estimate uses visible conversation text at ~${APPROX_CHARS_PER_TOKEN} characters/token; provider tokenization may differ.`
-  ].filter(Boolean).join('\n');
+  const percent = info.contextWindow ? Math.min(100, Math.round(ratio * 100)) : undefined;
+  const accessible = `${info.providerLabel} ${info.modelLabel}. ${info.estimatedTokens.toLocaleString()} tokens used${info.contextWindow ? ` of ${info.contextWindow.toLocaleString()}` : ''}.`;
 
   return <span
     className="conversation-context-badge"
     data-level={level}
-    title={tooltip}
-    aria-label={tooltip.replace(/\n/g, '. ')}
+    aria-label={accessible}
     tabIndex={0}
-  >{label}</span>;
+  >
+    {label}
+    <span className="conversation-context-tooltip" role="tooltip">
+      <small>Context window</small>
+      <strong>{percent === undefined ? 'Usage estimate' : `${percent}% full`}</strong>
+      <span>{compactTokens(info.estimatedTokens)}{info.contextWindow ? ` / ${compactTokens(info.contextWindow)}` : ''} tokens used</span>
+      {remaining !== undefined ? <em>{compactTokens(remaining)} tokens available</em> : null}
+    </span>
+  </span>;
 }
 
 function Composer(props: {
@@ -867,6 +921,7 @@ function Composer(props: {
   modelMenu: ModelMenuView;
   setModelMenu: (value: ModelMenuView) => void;
   modelOptions: ModelOption[];
+  providerModes: ProviderModeConfig[];
   modelSelection: string;
   setModelSelection: (value: string) => void;
   modelLabel: string;
@@ -966,7 +1021,7 @@ function Composer(props: {
         <div className="composer-toolbar-right">
           {props.contextInfo ? <ConversationContextBadge info={props.contextInfo} /> : null}
           <div className="composer-menu-anchor model-menu-anchor">
-            <button className="model-effort-trigger" aria-haspopup="menu" aria-expanded={props.modelMenu !== 'closed'} onClick={() => { props.setExtrasOpen(false); props.setProjectMenu(false); props.setModelMenu(props.modelMenu === 'closed' ? 'models' : 'closed'); }}>
+            <button className="model-effort-trigger" aria-haspopup="menu" aria-expanded={props.modelMenu !== 'closed'} onClick={() => { props.setExtrasOpen(false); props.setProjectMenu(false); props.setModelMenu(props.modelMenu === 'closed' ? 'providers' : 'closed'); }}>
               <Zap size={13} strokeWidth={1.7} />
               <span>{props.modelLabel}</span>{props.selectedModelLabel ? <><span className="model-trigger-dot">·</span><span>{props.selectedModelLabel}</span></> : null}<span className="model-trigger-dot">·</span><span>{props.effortLabel}</span>
               <ChevronDown size={13} strokeWidth={1.6} />
@@ -986,6 +1041,7 @@ function ModelMenu(props: {
   modelMenu: ModelMenuView;
   setModelMenu: (value: ModelMenuView) => void;
   modelOptions: ModelOption[];
+  providerModes: ProviderModeConfig[];
   modelSelection: string;
   setModelSelection: (value: string) => void;
   allowLocalFirst: boolean;
@@ -997,9 +1053,9 @@ function ModelMenu(props: {
 }) {
   if (props.modelMenu === 'effort') {
     return <div className="lc-agent-popover model-popover effort-popover" role="menu">
-      <button className="popover-back" onClick={() => props.setModelMenu('models')}><ChevronLeft size={16} /><strong>Effort</strong></button>
+      <button className="popover-back" onClick={() => props.setModelMenu('providers')}><ChevronLeft size={16} /><strong>Effort</strong></button>
       <div className="popover-separator" />
-      {effortOptions.map((option) => <button key={option.id} className={props.effort === option.id ? 'selected' : ''} onClick={() => { props.setEffort(option.id); props.setModelMenu('models'); }}>
+      {effortOptions.map((option) => <button key={option.id} className={props.effort === option.id ? 'selected' : ''} onClick={() => { props.setEffort(option.id); props.setModelMenu('providers'); }}>
         <span><strong>{option.label}{option.id === 'auto' ? <em>Default</em> : null}</strong><small>{option.description}</small></span>
         {props.effort === option.id ? <Check size={16} /> : null}
       </button>)}
@@ -1007,48 +1063,60 @@ function ModelMenu(props: {
   }
 
   const currentMode = providerMode(props.modelSelection);
-  const currentModeConfig = providerModes.find((mode) => mode.id === currentMode)!;
+  const currentModeConfig = props.providerModes.find((mode) => mode.id === currentMode)
+    ?? props.providerModes.find((mode) => mode.ready)
+    ?? {
+      id: currentMode,
+      label: providerLabel(currentMode),
+      description: '',
+      providerId: currentMode === 'local-first' ? 'ollama' : currentMode,
+      ready: false
+    };
   const currentModels = props.modelOptions.filter((model) => model.providerId === currentModeConfig.providerId);
   const selectedModelId = props.modelSelection.includes('\0')
     ? props.modelSelection.slice(props.modelSelection.indexOf('\0') + 1)
     : '';
 
-  function modeReady(mode: ProviderMode): boolean {
-    if (mode === 'local-first' && !props.allowLocalFirst) return false;
-    const config = providerModes.find((item) => item.id === mode)!;
-    return props.modelOptions.some((model) => model.providerId === config.providerId && model.available);
+  function modeReady(mode: ProviderModeConfig): boolean {
+    if (mode.id === 'local-first' && !props.allowLocalFirst) return false;
+    return mode.ready && props.modelOptions.some((model) => model.providerId === mode.providerId && model.available);
   }
 
-  function chooseProviderMode(mode: ProviderMode) {
-    if (mode === 'local-first' && !props.allowLocalFirst) return;
-    const config = providerModes.find((item) => item.id === mode)!;
+  function chooseProviderMode(mode: ProviderModeConfig) {
+    if (mode.id === 'local-first' && !props.allowLocalFirst) return;
     const candidates = props.modelOptions.filter(
-      (option) => option.providerId === config.providerId && option.available
+      (option) => option.providerId === mode.providerId && option.available
     );
     const model = candidates.find((option) => option.providerDefault) ?? candidates[0];
     if (!model) return;
-    props.setModelSelection(modeValue(mode, model.modelId));
+    props.setModelSelection(modeValue(mode.id, model.modelId));
+    props.setModelMenu('models');
+  }
+
+  if (props.modelMenu === 'models') {
+    return <div className="lc-agent-popover model-popover model-list-popover" role="menu">
+      <button className="popover-back" onClick={() => props.setModelMenu('providers')}><ChevronLeft size={16} /><strong>{currentModeConfig.label} models</strong></button>
+      <div className="popover-separator" />
+      {currentModels.map((model) => <button key={`${currentMode}-${model.modelId}`} className={selectedModelId === model.modelId ? 'selected' : ''} disabled={!model.available} title={!model.available ? model.reason ?? 'Provider unavailable' : undefined} onClick={() => { props.setModelSelection(modeValue(currentMode, model.modelId)); props.setModelMenu('closed'); }}>
+        <span><strong>{model.label}</strong><small>{model.description}{model.available ? '' : ` · ${model.reason ?? 'unavailable'}`}</small></span>
+        {selectedModelId === model.modelId ? <Check size={16} /> : null}
+      </button>)}
+      {currentModels.length === 0 ? <div className="model-menu-note">{currentModeConfig.reason ?? 'No Chat models are available for this provider. Check its connection and API key.'}</div> : null}
+    </div>;
   }
 
   return <div className="lc-agent-popover model-popover" role="menu">
-    <div className="model-provider-label">Mode</div>
-    {providerModes.map((mode) => {
-      const ready = modeReady(mode.id);
+    <div className="model-provider-label">Provider</div>
+    {props.providerModes.map((mode) => {
+      const ready = modeReady(mode);
       const unavailable = mode.id === 'local-first' && !props.allowLocalFirst
         ? ' · requires a project'
-        : ready ? '' : ' · unavailable';
-      return <button key={mode.id} className={currentMode === mode.id ? 'selected' : ''} disabled={!ready} onClick={() => chooseProviderMode(mode.id)}>
+        : ready ? '' : ` · ${mode.reason ?? 'unavailable'}`;
+      return <button key={mode.id} className={currentMode === mode.id ? 'selected' : ''} disabled={!ready} title={!ready ? mode.reason : undefined} onClick={() => chooseProviderMode(mode)}>
         <span><strong>{mode.label}</strong><small>{mode.description}{unavailable}</small></span>
-        {currentMode === mode.id ? <Check size={16} /> : null}
+        {ready ? <ChevronRight size={16} /> : null}
       </button>;
     })}
-    <div className="popover-separator" />
-    <div className="model-provider-label">{currentModeConfig.label} model</div>
-    {currentModels.map((model) => <button key={`${currentMode}-${model.modelId}`} className={selectedModelId === model.modelId ? 'selected' : ''} disabled={!model.available} title={!model.available ? model.reason ?? 'Provider unavailable' : undefined} onClick={() => { props.setModelSelection(modeValue(currentMode, model.modelId)); props.setModelMenu('closed'); }}>
-      <span><strong>{model.label}</strong><small>{model.description}{model.available ? '' : ` · ${model.reason ?? 'unavailable'}`}</small></span>
-      {selectedModelId === model.modelId ? <Check size={16} /> : null}
-    </button>)}
-    {props.modelOptions.length === 0 ? <div className="model-menu-note">No Chat models are available. Check the Windows worker or add a personal API key in Settings → API keys.</div> : null}
     <div className="popover-separator" />
     <button className="popover-row-link" onClick={() => props.setModelMenu('effort')}>
       <span><strong>Effort</strong><small>Control how deeply the selected model reasons</small></span>

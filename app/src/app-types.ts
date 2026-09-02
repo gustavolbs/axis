@@ -7,6 +7,8 @@ export type ModelSelection =
 export interface AdminProject {
   id: string;
   name: string;
+  /** Short gallery description; unlike instructions, it is never sent to a model. */
+  description?: string;
   /** Presentation only: archived projects are hidden from the sidebar. */
   archived?: boolean;
   /** Optional default Cowork folder; empty means conversation-only until a folder is chosen. */

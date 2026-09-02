@@ -139,9 +139,12 @@ test('the provider runtime applies budget and capability gates to current and fu
   assert.match(runtime, /return \{ provider: this\.governed\(provider\) \}/);
 });
 
-test('project creation UI makes folder optional and exposes shared instructions', () => {
+test('project creation keeps folders optional while the project screen owns shared instructions', () => {
   const gallery = fs.readFileSync(path.join(process.cwd(), 'app/src/ProjectGallery.tsx'), 'utf8').replace(/\r\n/g, '\n');
-  assert.match(gallery, /Default Cowork folder <small>optional<\/small>/);
-  assert.match(gallery, /Project instructions <small>optional<\/small>/);
+  const detail = fs.readFileSync(path.join(process.cwd(), 'app/src/ProjectDetail.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(gallery, /Use a folder/);
+  assert.match(gallery, /name="description"/);
+  assert.match(detail, /Edit instructions/);
+  assert.match(detail, /body: \{ instructions \}/);
   assert.doesNotMatch(gallery, /disabled=\{busy \|\| !workspace\.trim\(\)\}/);
 });

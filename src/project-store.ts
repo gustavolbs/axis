@@ -37,6 +37,8 @@ export interface ProjectBudgetPolicy {
 export interface ProjectDefinition {
   id: string;
   name: string;
+  /** Short gallery description. It is presentation metadata, not an execution prompt. */
+  description?: string;
   /** Optional default folder. Empty means this Project is conversation-only. */
   workspace: string;
   /** Instructions injected into every Chat/Cowork execution explicitly scoped to this Project. */
@@ -59,6 +61,8 @@ export interface ProjectDefinition {
 export interface CreateProjectInput {
   id?: string;
   name: string;
+  /** Short human-readable summary shown in the Projects gallery. */
+  description?: string;
   /** Optional default folder. Cowork still requires some folder at execution time. */
   workspace?: string;
   /** Shared instructions for every conversation in this Project. */
@@ -84,6 +88,7 @@ const ROUTING_POLICIES = new Set<RoutingPolicy>([
   'auto', 'local-first', 'balanced', 'speed-first', 'deep', 'frontier-only'
 ]);
 const MAX_PROJECT_INSTRUCTIONS = 40_000;
+const MAX_PROJECT_DESCRIPTION = 2_000;
 
 function safeId(value: string, label: string): string {
   const trimmed = value.trim();
@@ -102,6 +107,15 @@ function optionalInstructions(value: string | undefined): string | undefined {
   if (!trimmed) return undefined;
   if (trimmed.length > MAX_PROJECT_INSTRUCTIONS) {
     throw new Error(`Project instructions must be at most ${MAX_PROJECT_INSTRUCTIONS} characters.`);
+  }
+  return trimmed;
+}
+
+function optionalDescription(value: string | undefined): string | undefined {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed) return undefined;
+  if (trimmed.length > MAX_PROJECT_DESCRIPTION) {
+    throw new Error(`Project description must be at most ${MAX_PROJECT_DESCRIPTION} characters.`);
   }
   return trimmed;
 }
@@ -198,6 +212,7 @@ function normalizeProject(
   return {
     id: safeId(input.id ?? existing?.id ?? randomUUID(), 'Project id'),
     name: text(input.name, 'Project name'),
+    description: optionalDescription(input.description ?? existing?.description),
     workspace: normalizeWorkspace(input.workspace ?? existing?.workspace),
     instructions: optionalInstructions(input.instructions ?? existing?.instructions),
     organizationId: safeId(input.organizationId, 'Organization id'),
@@ -221,6 +236,7 @@ function parseProject(value: unknown): ProjectDefinition | undefined {
     if (
       typeof item.id !== 'string' ||
       typeof item.name !== 'string' ||
+      (item.description !== undefined && typeof item.description !== 'string') ||
       (item.workspace !== undefined && typeof item.workspace !== 'string') ||
       (item.instructions !== undefined && typeof item.instructions !== 'string') ||
       typeof item.organizationId !== 'string' ||
@@ -240,6 +256,7 @@ function parseProject(value: unknown): ProjectDefinition | undefined {
     return normalizeProject({
       id: existing.id,
       name: existing.name,
+      description: existing.description,
       workspace: existing.workspace,
       instructions: existing.instructions,
       organizationId: existing.organizationId,
@@ -373,6 +390,7 @@ export class ProjectStore {
     const project = normalizeProject({
       id: current.id,
       name: patch.name ?? current.name,
+      description: patch.description ?? current.description,
       workspace: patch.workspace ?? current.workspace,
       instructions: patch.instructions ?? current.instructions,
       organizationId: patch.organizationId ?? current.organizationId,

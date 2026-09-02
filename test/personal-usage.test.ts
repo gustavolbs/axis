@@ -63,6 +63,22 @@ test('personal chat records priced cloud usage and zero-cost Ollama tokens', () 
   }
 });
 
+test('ships verified pricing for the curated OpenAI chat models', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-coder-built-in-pricing-'));
+  try {
+    const pricing = new PricingStore(path.join(root, 'pricing.json'));
+    assert.deepEqual(pricing.get('openai', 'gpt-5.6-luna'), {
+      inputPerMillionUsd: 0.2,
+      outputPerMillionUsd: 1.2,
+      cacheReadPerMillionUsd: 0.02,
+      source: 'https://developers.openai.com/api/docs/models/gpt-5.6-luna',
+      verifiedAt: '2026-09-01'
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('unpriced personal cloud usage stays explicit instead of pretending to cost zero', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-coder-personal-unpriced-'));
   try {

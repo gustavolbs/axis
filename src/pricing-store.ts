@@ -19,6 +19,49 @@ interface PricingFile {
   updatedAt: string;
 }
 
+const BUILT_IN_PRICING: PricingFile['providers'] = {
+  openai: {
+    'gpt-5.6-sol': {
+      inputPerMillionUsd: 4,
+      outputPerMillionUsd: 20,
+      cacheReadPerMillionUsd: 0.4,
+      source: 'https://developers.openai.com/api/docs/models/gpt-5.6-sol',
+      verifiedAt: '2026-09-01'
+    },
+    'gpt-5.6-terra': {
+      inputPerMillionUsd: 2,
+      outputPerMillionUsd: 12,
+      cacheReadPerMillionUsd: 0.2,
+      source: 'https://developers.openai.com/api/docs/models/gpt-5.6-terra',
+      verifiedAt: '2026-09-01'
+    },
+    'gpt-5.6-luna': {
+      inputPerMillionUsd: 0.2,
+      outputPerMillionUsd: 1.2,
+      cacheReadPerMillionUsd: 0.02,
+      source: 'https://developers.openai.com/api/docs/models/gpt-5.6-luna',
+      verifiedAt: '2026-09-01'
+    },
+    'gpt-5.4-mini': {
+      inputPerMillionUsd: 0.75,
+      outputPerMillionUsd: 4.5,
+      cacheReadPerMillionUsd: 0.075,
+      source: 'https://developers.openai.com/api/docs/models/gpt-5.4-mini',
+      verifiedAt: '2026-09-01'
+    },
+    'gpt-5.5-pro': {
+      inputPerMillionUsd: 30,
+      outputPerMillionUsd: 180,
+      source: 'https://developers.openai.com/api/docs/models/gpt-5.5-pro',
+      verifiedAt: '2026-09-01'
+    }
+  }
+};
+
+function builtInProviders(): PricingFile['providers'] {
+  return structuredClone(BUILT_IN_PRICING);
+}
+
 const SAFE_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 function providerId(value: string): string {
@@ -105,7 +148,7 @@ export class PricingStore {
 
   private read(): PricingFile {
     if (!fs.existsSync(this.file)) {
-      return { version: 1, providers: {}, updatedAt: new Date(0).toISOString() };
+      return { version: 1, providers: builtInProviders(), updatedAt: new Date(0).toISOString() };
     }
     let parsed: unknown;
     try {
@@ -120,13 +163,13 @@ export class PricingStore {
     if (value.version !== 1 || !value.providers || typeof value.providers !== 'object' || Array.isArray(value.providers)) {
       throw new Error(`Unsupported pricing settings version: ${String(value.version)}`);
     }
-    const providers: PricingFile['providers'] = {};
+    const providers: PricingFile['providers'] = builtInProviders();
     for (const [rawProvider, rawModels] of Object.entries(value.providers as Record<string, unknown>)) {
       if (!rawModels || typeof rawModels !== 'object' || Array.isArray(rawModels)) {
         throw new Error(`Invalid pricing model map for ${rawProvider}.`);
       }
       const providerKey = providerId(rawProvider);
-      providers[providerKey] = {};
+      providers[providerKey] ??= {};
       for (const [rawModel, rawPricing] of Object.entries(rawModels as Record<string, unknown>)) {
         if (!rawPricing || typeof rawPricing !== 'object' || Array.isArray(rawPricing)) {
           throw new Error(`Invalid pricing entry for ${rawProvider}/${rawModel}.`);

@@ -81,20 +81,40 @@ function cloudFactory(
 const openAiModels: ModelDefinition[] = [
   {
     providerId: 'openai',
-    id: 'gpt-5.6',
-    displayName: 'GPT-5.6',
+    id: 'gpt-5.6-sol',
+    displayName: 'GPT-5.6 Sol',
     createdAt: '2026-08-30T00:00:00.000Z',
     contextWindow: 1_050_000,
     maxOutputTokens: 131_072
   },
   {
     providerId: 'openai',
-    id: 'gpt-5.5',
-    displayName: 'GPT-5.5',
+    id: 'gpt-5.6-terra',
+    displayName: 'GPT-5.6 Terra',
+    createdAt: '2026-08-29T00:00:00.000Z'
+  },
+  {
+    providerId: 'openai',
+    id: 'gpt-5.6-luna',
+    displayName: 'GPT-5.6 Luna',
+    createdAt: '2026-08-28T00:00:00.000Z'
+  },
+  {
+    providerId: 'openai',
+    id: 'gpt-5.4-mini',
+    displayName: 'GPT-5.4 Mini',
+    createdAt: '2026-07-02T00:00:00.000Z'
+  },
+  {
+    providerId: 'openai',
+    id: 'gpt-5.5-pro',
+    displayName: 'GPT-5.5 Pro',
     createdAt: '2026-07-01T00:00:00.000Z',
     contextWindow: 400_000,
     maxOutputTokens: 64_000
   },
+  { providerId: 'openai', id: 'gpt-5.5-pro-2026-04-23', displayName: 'Old snapshot' },
+  { providerId: 'openai', id: 'gpt-4.1', displayName: 'GPT-4.1' },
   {
     providerId: 'openai',
     id: 'text-embedding-3-large',
@@ -147,14 +167,16 @@ test('personal Chat discovers an available personal OpenAI credential and only c
   const openai = catalog.providers.find((provider) => provider.id === 'openai');
   assert.ok(openai);
   assert.equal(openai.ready, true);
-  assert.deepEqual(openai.models.map((model) => model.id), ['gpt-5.6', 'gpt-5.5']);
+  assert.deepEqual(openai.models.map((model) => model.id), [
+    'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.4-mini', 'gpt-5.5-pro'
+  ]);
   assert.equal(openai.models.some((model) => model.id.includes('embedding')), false);
   assert.equal(openai.models[0]?.contextWindow, 1_050_000);
   assert.equal(openAiSecrets.includes('sk-personal-test-value'), true);
 
-  const resolved = await runtime.personalModelDefinition('openai', 'gpt-5.6');
+  const resolved = await runtime.personalModelDefinition('openai', 'gpt-5.6-sol');
   assert.equal(resolved.provider.id, 'openai');
-  assert.equal(resolved.model.id, 'gpt-5.6');
+  assert.equal(resolved.model.id, 'gpt-5.6-sol');
   assert.equal(resolved.model.maxOutputTokens, 131_072);
 });
 
@@ -206,7 +228,7 @@ test('personal Chat never uses organization-scoped credentials for any provider'
     await assert.rejects(
       runtime.personalModelDefinition(
         providerId,
-        providerId === 'openai' ? 'gpt-5.6' : 'claude-opus-4-1'
+        providerId === 'openai' ? 'gpt-5.6-sol' : 'claude-opus-4-1'
       ),
       new RegExp(`personal ${providerId} credential`)
     );
@@ -232,7 +254,7 @@ test('personal Chat fails closed when multiple personal credentials could match 
   assert.equal(openai.ready, false);
   assert.match(openai.reason ?? '', /Multiple personal openai credentials/);
   await assert.rejects(
-    runtime.personalModelDefinition('openai', 'gpt-5.6'),
+    runtime.personalModelDefinition('openai', 'gpt-5.6-sol'),
     /Multiple personal openai credentials/
   );
 });
@@ -295,6 +317,8 @@ test('projectless Chat exposes and submits exact personal provider models withou
   const surface = lf(fs.readFileSync(path.join(process.cwd(), 'app/src/AgentSurfaceV2.tsx'), 'utf8'));
 
   assert.match(appRuntime, /pathname === '\/chat\/catalog'/);
+  assert.match(appRuntime, /createExecutionRuntime\([\s\S]*this\.personalProviders/);
+  assert.match(appRuntime, /providerRuntime: this\.personalProviders/);
   assert.match(appRuntime, /interactionMode !== 'chat'/);
   assert.match(appRuntime, /Local-first requires a Project/);
   assert.match(executionRuntime, /personalModelDefinition\(/);
@@ -304,6 +328,8 @@ test('projectless Chat exposes and submits exact personal provider models withou
   assert.match(providerRuntime, /profile\.organizationId === undefined/);
 
   assert.match(surface, /'\/api\/chat\/catalog'/);
+  assert.match(surface, /\(catalog\?\.providers \?\? \[\]\)\.map\(\(provider\)/);
+  assert.doesNotMatch(surface, /type ProviderMode = 'ollama'/);
   assert.match(surface, /modelOverrideAllowed = Boolean\(selectedProject\) \|\| mode === 'chat'/);
   assert.match(surface, /allowLocalFirst=\{Boolean\(selectedProject\)\}/);
   assert.match(surface, /Use personal Chat credentials without repository access/);
