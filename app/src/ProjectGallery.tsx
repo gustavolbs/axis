@@ -12,7 +12,7 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 function slug(value: string): string {
-  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
+  return value.toLowerCase().trim().replace(/[^a-z0-9._:-]+/g, '-').replace(/^-|-$/g, '') || 'personal';
 }
 
 function relative(value: string): string {
@@ -67,22 +67,33 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
     const form = new FormData(event.currentTarget);
     const name = String(form.get('name') ?? '').trim();
     const description = String(form.get('description') ?? '').trim();
+    const organizationId = slug(String(form.get('organizationId') ?? '').trim() || 'personal');
+    const organizationName = String(form.get('organizationName') ?? '').trim() || (organizationId === 'personal' ? 'Personal' : organizationId);
     if (!name) return;
     setBusy(true);
     setError(undefined);
     try {
       const isEdit = Boolean(editing);
       const payload = isEdit ? {
-        name, description, workspace: folderOpen ? workspace.trim() : ''
+        name,
+        description,
+        workspace: folderOpen ? workspace.trim() : '',
+        organizationId,
+        organizationName
       } : {
         name,
         description: description || undefined,
         workspace: folderOpen ? workspace.trim() || undefined : undefined,
-        organizationId: slug(name),
-        organizationName: name,
+        organizationId,
+        organizationName,
         defaultRoutingPolicy: 'local-first',
         defaultModel: { mode: 'auto' },
         privacy: { cloudAllowed: false, allowedProviderIds: ['ollama'] },
+        connectionPolicy: {
+          chat: { defaultConnectionId: 'ollama', allowedConnectionIds: ['ollama'] },
+          inference: { allowedConnectionIds: ['ollama'], preferredConnectionId: 'ollama' },
+          workSourceIds: []
+        },
         concurrency: 1
       };
       const { project } = await api<{ project: AdminProject }>(isEdit ? `/api/projects/${encodeURIComponent(editing!.id)}` : '/api/projects', {
@@ -121,7 +132,7 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
         <button className="lc-shell-project-card-main" onClick={() => onOpenProject(project)}>
           <span className="lc-shell-project-card-title"><Folder size={16} /><strong>{project.name}</strong><Pin size={12} className="lc-shell-project-pin" /></span>
           {project.description ? <span className="lc-shell-project-card-description">{project.description}</span> : null}
-          <span className="lc-shell-project-card-time">{relative(project.updatedAt)}</span>
+          <span className="lc-shell-project-card-time">{project.organizationName ?? project.organizationId} · {relative(project.updatedAt)}</span>
         </button>
         <button className="lc-shell-project-more" aria-label={`Edit ${project.name}`} onClick={() => openModal(project)}><MoreHorizontal size={17} /></button>
       </article>)}
@@ -133,6 +144,8 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
         <div className="lc-shell-modal-title"><h2 className="dialog-title">{editing ? 'Edit project' : 'Create a project'}</h2><button type="button" onClick={closeModal} aria-label="Close"><X size={18} /></button></div>
         <label><span>What are you working on?</span><input name="name" required autoFocus defaultValue={editing?.name} placeholder="Give your project a name" /></label>
         <label><span>What do you want to accomplish?</span><textarea name="description" rows={4} defaultValue={editing?.description} placeholder="Describe your project, goals, topic, etc…" /></label>
+        <label><span>Organization boundary</span><input name="organizationId" required defaultValue={editing?.organizationId ?? 'personal'} placeholder="personal or company-id" /><small>Connections from another organization cannot be newly bound to this Project. Use <code>personal</code> for your own projects.</small></label>
+        <label><span>Organization name</span><input name="organizationName" defaultValue={editing?.organizationName ?? 'Personal'} placeholder="Personal, LiveNation, Company B…" /></label>
         <button className="lc-shell-use-folder" type="button" onClick={() => setFolderOpen((value) => !value)}><FolderPlus size={15} />{folderOpen ? 'Remove folder' : 'Use a folder'}</button>
         {folderOpen ? <div className="lc-shell-project-folder-field"><FolderField value={workspace} onChange={setWorkspace} name="workspace" /></div> : null}
         {error ? <div className="lc-shell-inline-error lc-shell-modal-error">{error}</div> : null}
