@@ -1,35 +1,38 @@
 # macOS release checklist
 
-The normal CI pipeline intentionally produces **unsigned** development artifacts. Distribution outside the Mac App Store must use the separate manual **macOS Signed Release** workflow.
+Axis publishes macOS releases automatically from `main`. Distribution uses a stable self-signed **Axis Code Signing** certificate so Squirrel.Mac can validate updates without a paid Apple Developer Program membership.
 
-## Release prerequisites
+The normal CI pipeline still produces unsigned development artifacts. The separate release workflow performs the signed distribution build and publishes only after all release gates pass.
 
-Required Apple setup:
+## One-time release setup
 
-- active Apple Developer Program membership;
-- valid **Developer ID Application** certificate exported as a password-protected `.p12`;
-- Apple ID with an app-specific password for notarization;
-- Apple Team ID.
+Create the signing identity once on a Mac:
 
-Required GitHub Actions secrets:
+```bash
+bash scripts/create-macos-signing-cert.sh
+```
+
+Back up the generated `.p12` and its password outside the repository. The certificate is part of the automatic-update trust chain; losing or rotating it means existing installations need another manual transition install.
+
+Configure these GitHub Actions secrets:
 
 ```text
 MAC_CSC_LINK
 MAC_CSC_KEY_PASSWORD
-APPLE_ID
-APPLE_APP_SPECIFIC_PASSWORD
-APPLE_TEAM_ID
 ```
 
-`MAC_CSC_LINK` may contain the base64-encoded `.p12` value accepted by electron-builder. Do not commit the certificate, password, Apple ID credentials, or generated temporary keychains.
+`MAC_CSC_LINK` contains the base64-encoded `.p12`. Never commit the certificate, private key, password, or temporary keychains.
 
-The release workflow is fail-closed: if any required secret is absent, it exits before packaging.
+No Apple ID, Team ID, app-specific password, Developer ID certificate, or notarization credential is required for this update channel.
 
-## Before running the workflow
+## Before merging to main
 
-- [ ] `main` CI is green on Linux, Windows, and macOS packaging.
-- [ ] The intended commit is reviewed and immutable for the release.
-- [ ] `package.json` version reflects the version you intend to distribute.
+- [ ] Linux, Windows, and macOS CI are green.
+- [ ] `package.json` has a new unreleased stable SemVer version.
+- [ ] The newest `CHANGELOG.md` entry has exactly the same version and the current date.
+- [ ] `npm run release:validate` passes.
+- [ ] `npm run check` passes.
+- [ ] `MAC_CSC_LINK` and `MAC_CSC_KEY_PASSWORD` are configured in repository secrets.
 - [ ] A new Project defaults to `cloudAllowed: false` and `ollama` only.
 - [ ] Standalone settings are stored under `~/.local-coder/settings.json` and do not contain raw worker bearer tokens.
 - [ ] Worker credentials use an explicit environment token or `remoteWorkerCredentialRef` backed by macOS Keychain.
@@ -38,62 +41,75 @@ The release workflow is fail-closed: if any required secret is absent, it exits 
 - [ ] Real Anthropic/OpenAI smoke validation has been run when credentials are available and the release changes provider transport behavior.
 - [ ] Comparative evals have been reviewed when the release changes routing heuristics or quality profiles.
 
-## Run the signed release
+## Automatic release
 
-1. Open **Actions → macOS Signed Release**.
-2. Choose **Run workflow**.
-3. Supply the exact branch, tag, or commit SHA to package.
-4. Run the workflow.
+A push to `main` starts **macOS Automatic Release**. There is also a `workflow_dispatch` trigger for recovery/retry after infrastructure or secret setup problems.
 
-The workflow uses `electron-builder.release.yml`, not the unsigned CI config.
+The workflow uses `electron-builder.release.yml`, not the unsigned development config.
 
-Expected release gates:
+Release gates are:
 
 ```text
-Developer ID signing
-  → Apple notarization
-  → stapler ticket validation
-  → Gatekeeper assessment
-  → DMG mounted and packaged app re-verified
-  → SHA-256 checksums
-  → artifact upload
+version + changelog validation
+  -> reject an already-published version
+  -> full build and tests
+  -> import/trust Axis Code Signing on the ephemeral runner
+  -> build x64 + arm64 DMG/ZIP
+  -> codesign strict validation
+  -> require certificate-pinned designated requirement
+  -> reject ad-hoc cdhash signing
+  -> SHA-256 checksums
+  -> release notes extracted from CHANGELOG.md
+  -> GitHub Release v<version>
 ```
 
-A packaging step that merely creates a DMG/ZIP is not sufficient for distribution.
+Nothing is published until the previous gates pass.
 
 ## Required automated verification
 
-The release workflow must pass all of these checks:
+Every packaged `Axis.app` must pass:
 
 ```bash
-codesign --verify --deep --strict <Local Coder.app>
-xcrun stapler validate <Local Coder.app>
-spctl --assess --type execute <Local Coder.app>
+codesign --verify --deep --strict <Axis.app>
+codesign -d -r- <Axis.app>
 ```
 
-It also mounts the generated DMG and repeats signature, stapler, and Gatekeeper checks against the copy users will install.
+The designated requirement must be certificate-pinned (`certificate root = H...` or equivalent). A `cdhash` requirement means the build fell back to ad-hoc signing and must fail because the next version would not satisfy the same Squirrel.Mac identity.
 
-The workflow additionally verifies that `codesign` reports a `Developer ID Application` authority. This prevents electron-builder's permissive "no certificate found, skip signing" behavior from being mistaken for a successful release.
+The expected public artifacts are:
+
+```text
+Axis-mac-<version>-arm64.dmg
+Axis-mac-<version>-x64.dmg
+Axis-mac-<version>-arm64.zip
+Axis-mac-<version>-x64.zip
+SHA256SUMS.txt
+```
+
+The ZIP files are the automatic-update payloads. DMGs remain available for first/manual installation.
+
+## Bootstrap and Gatekeeper
+
+`0.16.0` is the first Axis release that contains the official updater and the stable self-signed identity. Installs older than `0.16.0` need one final manual installation of the bootstrap release.
+
+The self-signed certificate is not Apple notarization. A first browser download can still require right-click -> **Open** or the normal Gatekeeper quarantine override. This first-install limitation is independent from the Squirrel.Mac update identity.
+
+After the bootstrap release is installed, compatible future releases can be downloaded and installed by the app without repeating the DMG workflow.
 
 ## Artifact review
 
-Download `local-coder-macos-signed-notarized` and verify it contains:
+For the bootstrap release, and after meaningful packaging/updater changes:
 
-- [ ] one DMG;
-- [ ] one ZIP;
-- [ ] `SHA256SUMS.txt`.
-
-Before wider distribution:
-
-- [ ] install the DMG on a separate/current macOS user environment;
-- [ ] launch without Gatekeeper bypasses such as disabling Gatekeeper or removing quarantine attributes;
-- [ ] verify `Local Coder.app` starts its in-process `DesktopAppRuntime` without a localhost control service;
+- [ ] install the DMG on a current macOS user account;
+- [ ] verify `Axis.app` starts its in-process `DesktopAppRuntime` without a localhost control service;
+- [ ] verify the sidebar reports the expected Axis version;
 - [ ] create a new local-only Project and run a small validated task;
 - [ ] verify the native folder picker, theme synchronization, keyboard shortcuts and restored window bounds;
 - [ ] verify a configured cloud Project can discover models and run direct-to-cloud without Ollama pre-inference;
 - [ ] verify cancellation and Runs inspection from the desktop UI;
 - [ ] verify an authenticated Windows worker can provide local inference when configured;
-- [ ] verify external HTTPS links open in the system browser rather than navigating the renderer.
+- [ ] verify external HTTPS links open in the system browser rather than navigating the renderer;
+- [ ] after publishing the next patch version, verify the installed bootstrap detects it, downloads it, and can restart into the new version.
 
 ## Standalone state and isolation checks
 
@@ -111,33 +127,10 @@ Release verification must preserve these rules:
 
 ## Credential safety checks
 
-Never include secret values in:
+Never include secret values in release workflow inputs, build arguments visible in process listings, artifact names, release notes, Git commits, Project JSON, app settings, telemetry, or eval reports.
 
-- release workflow inputs;
-- build arguments visible in process listings;
-- artifact names;
-- release notes;
-- Git commits;
-- Project JSON;
-- app settings;
-- telemetry or eval reports.
+GitHub Actions secrets are injected only into the signing build. Preflight errors may print missing **variable names**, never their values.
 
-GitHub Actions secrets are injected only into the signing/notarization steps. The workflow's preflight prints missing **variable names** only, never their values.
+If the self-signed private key is exposed, stop distribution. Replacing it breaks the update chain, so certificate recovery/rotation must be treated as an explicit migration rather than routine secret rotation.
 
-If a signing or provider credential is suspected to be exposed, stop distribution and rotate/revoke it before producing another artifact.
-
-## References verified 2026-08-31
-
-Apple:
-
-- https://developer.apple.com/support/developer-id/
-- https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution
-- https://developer.apple.com/documentation/security/customizing-the-notarization-workflow
-
-Electron Builder:
-
-- https://www.electron.build/docs/features/code-signing/
-- https://www.electron.build/docs/features/code-signing/code-signing-mac/
-- https://www.electron.build/docs/notarization/
-
-The repository is pinned to electron-builder `26.15.7`; release configuration should be revalidated before upgrading to a major version with signing-schema changes.
+See `docs/AUTO_UPDATES.md` for the updater architecture and signing rationale.

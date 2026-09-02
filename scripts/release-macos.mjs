@@ -2,13 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 
-const REQUIRED_ENV = [
-  'CSC_LINK',
-  'CSC_KEY_PASSWORD',
-  'APPLE_ID',
-  'APPLE_APP_SPECIFIC_PASSWORD',
-  'APPLE_TEAM_ID'
-];
+const REQUIRED_ENV = ['CSC_LINK', 'CSC_KEY_PASSWORD'];
 
 function fail(message) {
   console.error(`[axis release] ${message}`);
@@ -26,16 +20,15 @@ function run(command, args) {
 }
 
 if (process.platform !== 'darwin') {
-  fail('Signed macOS distribution packages must be built on macOS.');
+  fail('macOS distribution packages must be built on macOS.');
 }
 
 const missing = REQUIRED_ENV.filter((name) => !process.env[name]?.trim());
 if (missing.length > 0) {
-  fail(`Missing required signing/notarization environment variables: ${missing.join(', ')}`);
+  fail(`Missing required self-signed release environment variables: ${missing.join(', ')}`);
 }
 
-// Secrets stay in inherited environment variables. They are never copied into command-line
-// arguments, artifact names, or release logs by this wrapper.
+run('node', ['scripts/release-metadata.mjs', 'validate']);
 run('npm', ['run', 'build']);
 run('npx', [
   'electron-builder',
@@ -44,6 +37,8 @@ run('npx', [
   '--mac',
   'dmg',
   'zip',
+  '--x64',
+  '--arm64',
   '--publish',
   'never'
 ]);
