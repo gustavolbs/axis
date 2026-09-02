@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 const desktopBootstrap = fs.readFileSync('desktop/bootstrap.mjs', 'utf8');
+const desktopExecutablePath = fs.readFileSync('desktop/user-executable-path.mjs', 'utf8');
 const desktopMain = fs.readFileSync('desktop/main.mjs', 'utf8');
 const desktopPreload = fs.readFileSync('desktop/preload.cjs', 'utf8');
 const desktopLauncher = fs.readFileSync('scripts/run-desktop.mjs', 'utf8');
@@ -30,10 +31,14 @@ test('desktop uses a narrow macOS updater bootstrap before the existing main pro
   assert.equal(packageJson.productName, 'Axis');
   assert.equal(packageJson.dependencies?.['update-electron-app'], '^3.3.0');
   assert.match(desktopBootstrap, /from 'update-electron-app'/);
+  assert.match(desktopBootstrap, /from '\.\/user-executable-path\.mjs'/);
   assert.match(desktopBootstrap, /process\.platform === 'darwin'/);
-  assert.match(desktopBootstrap, /repo:\s*'gustavolbs\/local-coder-mcp'/);
+  assert.match(desktopBootstrap, /installDesktopExecutablePath\(process\.env\)/);
+  assert.match(desktopBootstrap, /repo:\s*'gustavolbs\/axis'/);
   assert.match(desktopBootstrap, /updateInterval:\s*'30 minutes'/);
   assert.match(desktopBootstrap, /await import\('\.\/main\.mjs'\)/);
+  assert.match(desktopExecutablePath, /\.local', 'bin'/);
+  assert.match(desktopExecutablePath, /\/opt\/homebrew\/bin/);
 });
 
 test('desktop main finishes ESM evaluation before waiting for Electron readiness', () => {

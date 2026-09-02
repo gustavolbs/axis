@@ -2,6 +2,13 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.16.1] - 2026-09-02
+
+### Fixed
+- Packaged macOS builds now discover Claude Code, Codex, and other user-installed CLIs from common Homebrew, local-bin, Volta, npm, pnpm, Bun, asdf, mise, nvm, and fnm locations instead of relying on the minimal Finder/Dock `PATH`.
+- The automatic updater now targets the renamed `gustavolbs/axis` repository.
+- The package repository metadata now points to `gustavolbs/axis`.
+
 ## [0.16.0] - 2026-09-02
 
 ### Added

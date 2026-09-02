@@ -1,14 +1,14 @@
 {
   "name": "axis",
   "productName": "Axis",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "private": true,
   "description": "Local-first, provider-agnostic AI engineering and work command center for macOS.",
   "type": "module",
   "main": "desktop/bootstrap.mjs",
   "repository": {
     "type": "git",
-    "url": "https://github.com/gustavolbs/local-coder-mcp.git"
+    "url": "https://github.com/gustavolbs/axis.git"
   },
   "engines": {
     "node": ">=20"
