@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { apiCredentialConnectionId } from '../src/connection-identity.js';
 import { loadConfig, type LocalCoderConfig } from '../src/config.js';
 import {
   CredentialManager,
@@ -265,7 +266,10 @@ test('registered speed-first Project invokes cloud directly from desktop app age
   assert.equal(result.projectExecution?.agentHost, 'desktop-app');
   assert.equal(result.projectExecution?.projectId, project.id);
   assert.equal(result.projectExecution?.routingTrace[0]?.stage, 'planning');
-  assert.equal(result.projectExecution?.routingTrace[0]?.providerId, 'anthropic');
+  assert.equal(
+    result.projectExecution?.routingTrace[0]?.providerId,
+    apiCredentialConnectionId('anthropic', 'company-a-anthropic')
+  );
   assert.equal(result.projectExecution?.routingTrace[0]?.fallbackUsed, false);
 });
 
@@ -304,7 +308,6 @@ test('registered Local-only Project runs desktop app agent with Qwen chat on Win
   assert.equal(result.modelCalls[0]?.model, 'qwen3.8:27b');
   assert.equal(result.projectExecution?.agentHost, 'desktop-app');
   assert.equal(result.projectExecution?.localInference, 'windows-worker');
-  // Strict Local-only bypass intentionally avoids router overhead.
   assert.deepEqual(result.projectExecution?.routingTrace, []);
 });
 
