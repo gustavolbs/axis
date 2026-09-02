@@ -63,6 +63,8 @@ export interface CodexInvokeOptions {
   signal?: AbortSignal;
   model?: string;
   mcpPolicies?: CodexMcpPolicy[];
+  /** Official `codex exec --output-schema` structured result contract. */
+  outputSchema?: Record<string, unknown>;
 }
 
 export interface CodexRuntimeOptions {
@@ -221,12 +223,12 @@ export class CodexAccountProfileStore {
 
   private write(state: CodexAccountProfilesFile): void {
     fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(this.root, 0o700); } catch { /* best effort */ }
+    try { fs.chmodSync(this.root, 0o700); } catch { /* best effort on non-POSIX */ }
     const temp = `${this.metadataFile}.tmp-${process.pid}-${Date.now()}`;
     fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     try {
       fs.renameSync(temp, this.metadataFile);
-      try { fs.chmodSync(this.metadataFile, 0o600); } catch { /* best effort */ }
+      try { fs.chmodSync(this.metadataFile, 0o600); } catch { /* best effort on non-POSIX */ }
     } catch (error) {
       try { fs.unlinkSync(temp); } catch { /* best effort */ }
       throw error;
@@ -390,22 +392,37 @@ export class CodexAccountRuntime {
     const profile = this.profiles.get(profileIdValue);
     const cleanPrompt = prompt.trim();
     if (!cleanPrompt || /\0/.test(cleanPrompt)) throw new Error('Codex prompt must be non-empty and cannot contain NUL bytes.');
-    const args = [
-      '-a', 'never',
-      ...mcpConfigArgs(options.mcpPolicies ?? []),
-      'exec',
-      '--sandbox', 'read-only',
-      '--skip-git-repo-check',
-      '--ephemeral'
-    ];
-    if (options.model?.trim() && options.model !== 'default') args.push('--model', options.model.trim());
-    args.push(cleanPrompt);
-    return await this.run(args, {
-      cwd: options.cwd,
-      env: this.profileEnv(profile),
-      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      signal: options.signal
-    });
+    let schemaDir: string | undefined;
+    try {
+      const args = [
+        '-a', 'never',
+        ...mcpConfigArgs(options.mcpPolicies ?? []),
+        'exec',
+        '--sandbox', 'read-only',
+        '--skip-git-repo-check',
+        '--ephemeral'
+      ];
+      if (options.model?.trim() && options.model !== 'default') args.push('--model', options.model.trim());
+      if (options.outputSchema) {
+        schemaDir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-coder-codex-schema-'));
+        const schemaPath = path.join(schemaDir, 'schema.json');
+        const serialized = JSON.stringify(options.outputSchema);
+        if (serialized.length > 256_000) throw new Error('Codex output schema is too large.');
+        fs.writeFileSync(schemaPath, serialized, { encoding: 'utf8', mode: 0o600 });
+        args.push('--output-schema', schemaPath);
+      }
+      args.push(cleanPrompt);
+      return await this.run(args, {
+        cwd: options.cwd,
+        env: this.profileEnv(profile),
+        timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        signal: options.signal
+      });
+    } finally {
+      if (schemaDir) {
+        try { fs.rmSync(schemaDir, { recursive: true, force: true }); } catch { /* best effort */ }
+      }
+    }
   }
 
   private profileEnv(profile: CodexAccountProfile): NodeJS.ProcessEnv {
