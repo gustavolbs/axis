@@ -9,6 +9,7 @@ import { createExecutionRuntime } from './execution-runtime.js';
 import { createLocalInferenceProvider } from './local-inference-provider.js';
 import { OllamaClient } from './ollama.js';
 import { ProjectAdminService, type CreateCredentialInput } from './project-admin.js';
+import { projectChatDefaultModelSelection } from './project-chat-default.js';
 import { ProjectProviderRuntime } from './project-provider-runtime.js';
 import type { ModelSelection, CreateProjectInput } from './project-store.js';
 import {
@@ -126,17 +127,10 @@ function createCredentialInput(body: JsonObject): CreateCredentialInput {
   throw new Error('backend must be macos-keychain or environment.');
 }
 
-/** The slice of ~/.local-coder/settings.json that Settings can edit. */
 type RuntimeSettings = Pick<AppSettingsFile, 'remoteWorkerUrl' | 'workerHealthPath'>;
 
-/** What the worker health check answers on, if nothing is configured. */
 export const DEFAULT_WORKER_HEALTH_PATH = '/v1/health';
 
-/**
- * Exported for tests. The route is user-supplied because it is not ours to
- * assume: a different deployment can serve health anywhere, and probing a
- * hardcoded path returned 404.
- */
 export function normalizeHealthPath(value: string): string {
   const raw = value.trim();
   if (!raw) throw new Error('workerHealthPath is required.');
@@ -259,11 +253,13 @@ export class DesktopAppRuntime {
       const body = objectBody(request.body);
       const projectId = optionalString(body, 'projectId');
       const interactionMode = parseInteractionMode(body.interactionMode);
-      const workspace = projectId
-        ? this.projects.getProject(projectId).workspace
+      const project = projectId ? this.projects.getProject(projectId) : undefined;
+      const workspace = project
+        ? project.workspace
         : interactionMode === 'chat'
           ? optionalString(body, 'workspace') ?? ''
           : requiredString(body, 'workspace');
+      const requestedModelSelection = parseModelSelection(body.modelSelection);
       const input: StandaloneJobInput = {
         projectId,
         workspace,
@@ -278,7 +274,11 @@ export class DesktopAppRuntime {
             ? Math.max(0, Math.min(body.maxRepairRounds, 2))
             : 1,
         interactionMode,
-        modelSelection: parseModelSelection(body.modelSelection),
+        modelSelection: requestedModelSelection ?? (
+          project && interactionMode === 'chat'
+            ? projectChatDefaultModelSelection(project)
+            : undefined
+        ),
         reasoningEffort: parseReasoningEffort(body.reasoningEffort)
       };
       if (
