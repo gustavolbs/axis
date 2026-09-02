@@ -6,17 +6,45 @@ const CHANNELS = [
   'local-coder:claude-account-create',
   'local-coder:claude-account-status',
   'local-coder:claude-account-login',
-  'local-coder:claude-account-mcps'
+  'local-coder:claude-account-mcps',
+  'local-coder:codex-discover',
+  'local-coder:codex-accounts',
+  'local-coder:codex-account-create',
+  'local-coder:codex-account-status',
+  'local-coder:codex-account-login',
+  'local-coder:codex-account-mcps',
+  'local-coder:connections',
+  'local-coder:work-hub-snapshot',
+  'local-coder:work-hub-source-upsert',
+  'local-coder:work-hub-source-remove',
+  'local-coder:work-hub-refresh'
 ];
 
 let resourcesPromise;
 
 async function resources() {
   if (!resourcesPromise) {
-    resourcesPromise = import('../dist/claude-account-profiles.js').then((module) => {
-      const profiles = new module.ClaudeAccountProfileStore();
-      const runtime = new module.ClaudeAccountRuntime(profiles);
-      return { profiles, runtime };
+    resourcesPromise = Promise.all([
+      import('../dist/claude-account-profiles.js'),
+      import('../dist/codex-account-profiles.js'),
+      import('../dist/provider-connections.js'),
+      import('../dist/work-hub.js')
+    ]).then(([claude, codex, connectionsModule, workHubModule]) => {
+      const claudeProfiles = new claude.ClaudeAccountProfileStore();
+      const claudeRuntime = new claude.ClaudeAccountRuntime(claudeProfiles);
+      const codexProfiles = new codex.CodexAccountProfileStore();
+      const codexRuntime = new codex.CodexAccountRuntime(codexProfiles);
+      const connections = new connectionsModule.ProviderConnectionRuntime({
+        claudeProfiles,
+        claudeRuntime,
+        codexProfiles,
+        codexRuntime
+      });
+      const workHub = new workHubModule.WorkHubService(
+        new workHubModule.WorkHubSourceStore(),
+        { connections, claudeProfiles, claudeRuntime, codexProfiles, codexRuntime }
+      );
+      return { claudeProfiles, claudeRuntime, codexProfiles, codexRuntime, connections, workHub };
     });
   }
   return await resourcesPromise;
@@ -31,6 +59,11 @@ function optionalString(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+function object(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object.`);
+  return value;
+}
+
 function assertSuccessful(result, action) {
   if (result.cancelled) throw new Error(`${action} was cancelled.`);
   if (result.timedOut) throw new Error(`${action} timed out.`);
@@ -43,52 +76,88 @@ function assertSuccessful(result, action) {
 export function installClaudeAccountBridge() {
   for (const channel of CHANNELS) ipcMain.removeHandler(channel);
 
-  ipcMain.handle('local-coder:claude-discover', async () => {
-    const { runtime } = await resources();
-    return await runtime.discover();
-  });
-
-  ipcMain.handle('local-coder:claude-accounts', async () => {
-    const { profiles } = await resources();
-    return profiles.list();
-  });
-
-  ipcMain.handle('local-coder:claude-account-create', async (_event, input) => {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) {
-      throw new Error('Claude account input must be an object.');
-    }
-    const { profiles } = await resources();
-    return profiles.create({
+  ipcMain.handle('local-coder:claude-discover', async () => (await resources()).claudeRuntime.discover());
+  ipcMain.handle('local-coder:claude-accounts', async () => (await resources()).claudeProfiles.list());
+  ipcMain.handle('local-coder:claude-account-create', async (_event, raw) => {
+    const input = object(raw, 'Claude account input');
+    return (await resources()).claudeProfiles.create({
       id: requiredString(input.id, 'Profile id'),
       name: requiredString(input.name, 'Profile name'),
       organizationLabel: optionalString(input.organizationLabel)
     });
   });
-
-  ipcMain.handle('local-coder:claude-account-status', async (_event, profileId) => {
-    const { runtime } = await resources();
-    return await runtime.status(requiredString(profileId, 'Profile id'));
-  });
-
+  ipcMain.handle('local-coder:claude-account-status', async (_event, profileId) =>
+    (await resources()).claudeRuntime.status(requiredString(profileId, 'Profile id'))
+  );
   ipcMain.handle('local-coder:claude-account-login', async (_event, profileId, sso) => {
-    const { runtime } = await resources();
+    const { claudeRuntime } = await resources();
     const id = requiredString(profileId, 'Profile id');
     assertSuccessful(
-      await runtime.login(id, { sso: sso === true }),
+      await claudeRuntime.login(id, { sso: sso === true }),
       sso === true ? 'Claude SSO login' : 'Claude login'
     );
-    return await runtime.status(id);
+    return await claudeRuntime.status(id);
   });
-
   ipcMain.handle('local-coder:claude-account-mcps', async (_event, profileId) => {
-    const { runtime } = await resources();
     const result = assertSuccessful(
-      await runtime.listMcp(requiredString(profileId, 'Profile id')),
+      await (await resources()).claudeRuntime.listMcp(requiredString(profileId, 'Profile id')),
       'Claude MCP discovery'
     );
-    return {
-      output: result.stdout || result.stderr,
-      durationMs: result.durationMs
-    };
+    return { output: result.stdout || result.stderr, durationMs: result.durationMs };
   });
+
+  ipcMain.handle('local-coder:codex-discover', async () => (await resources()).codexRuntime.discover());
+  ipcMain.handle('local-coder:codex-accounts', async () => (await resources()).codexProfiles.list());
+  ipcMain.handle('local-coder:codex-account-create', async (_event, raw) => {
+    const input = object(raw, 'ChatGPT account input');
+    return (await resources()).codexProfiles.create({
+      id: requiredString(input.id, 'Profile id'),
+      name: requiredString(input.name, 'Profile name'),
+      organizationLabel: optionalString(input.organizationLabel)
+    });
+  });
+  ipcMain.handle('local-coder:codex-account-status', async (_event, profileId) =>
+    (await resources()).codexRuntime.status(requiredString(profileId, 'Profile id'))
+  );
+  ipcMain.handle('local-coder:codex-account-login', async (_event, profileId, deviceAuth) => {
+    const { codexRuntime } = await resources();
+    const id = requiredString(profileId, 'Profile id');
+    assertSuccessful(
+      await codexRuntime.login(id, { deviceAuth: deviceAuth === true }),
+      deviceAuth === true ? 'ChatGPT device login' : 'ChatGPT login'
+    );
+    return await codexRuntime.status(id);
+  });
+  ipcMain.handle('local-coder:codex-account-mcps', async (_event, profileId) => {
+    const result = assertSuccessful(
+      await (await resources()).codexRuntime.listMcp(requiredString(profileId, 'Profile id')),
+      'Codex MCP discovery'
+    );
+    return { output: result.stdout || result.stderr, durationMs: result.durationMs };
+  });
+
+  ipcMain.handle('local-coder:connections', async () => (await resources()).connections.list());
+
+  ipcMain.handle('local-coder:work-hub-snapshot', async () => (await resources()).workHub.snapshot());
+  ipcMain.handle('local-coder:work-hub-source-upsert', async (_event, raw) => {
+    const input = object(raw, 'Work Hub source input');
+    return (await resources()).workHub.upsertSource({
+      id: requiredString(input.id, 'Source id'),
+      label: requiredString(input.label, 'Source label'),
+      connectionId: requiredString(input.connectionId, 'Connection id'),
+      kind: requiredString(input.kind, 'Source kind'),
+      system: requiredString(input.system, 'Source system'),
+      toolAllowlist: Array.isArray(input.toolAllowlist)
+        ? input.toolAllowlist.filter((value) => typeof value === 'string')
+        : [],
+      retention: optionalString(input.retention),
+      enabled: input.enabled !== false
+    });
+  });
+  ipcMain.handle('local-coder:work-hub-source-remove', async (_event, sourceId) =>
+    (await resources()).workHub.removeSource(requiredString(sourceId, 'Source id'))
+  );
+  ipcMain.handle('local-coder:work-hub-refresh', async (_event, sourceId) =>
+    (await resources()).workHub.refresh(optionalString(sourceId))
+  );
 }
