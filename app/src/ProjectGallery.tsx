@@ -67,8 +67,8 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
     const form = new FormData(event.currentTarget);
     const name = String(form.get('name') ?? '').trim();
     const description = String(form.get('description') ?? '').trim();
-    const organizationId = slug(String(form.get('organizationId') ?? '').trim() || 'personal');
-    const organizationName = String(form.get('organizationName') ?? '').trim() || (organizationId === 'personal' ? 'Personal' : organizationId);
+    const companyId = slug(String(form.get('companyId') ?? '').trim() || 'personal');
+    const companyName = String(form.get('companyName') ?? '').trim() || (companyId === 'personal' ? 'Personal' : companyId);
     if (!name) return;
     setBusy(true);
     setError(undefined);
@@ -78,14 +78,14 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
         name,
         description,
         workspace: folderOpen ? workspace.trim() : '',
-        organizationId,
-        organizationName
+        companyId,
+        companyName
       } : {
         name,
         description: description || undefined,
         workspace: folderOpen ? workspace.trim() || undefined : undefined,
-        organizationId,
-        organizationName,
+        companyId,
+        companyName,
         defaultRoutingPolicy: 'local-first',
         defaultModel: { mode: 'auto' },
         privacy: { cloudAllowed: false, allowedProviderIds: ['ollama'] },
@@ -132,7 +132,7 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
         <button className="lc-shell-project-card-main" onClick={() => onOpenProject(project)}>
           <span className="lc-shell-project-card-title"><Folder size={16} /><strong>{project.name}</strong><Pin size={12} className="lc-shell-project-pin" /></span>
           {project.description ? <span className="lc-shell-project-card-description">{project.description}</span> : null}
-          <span className="lc-shell-project-card-time">{project.organizationName ?? project.organizationId} · {relative(project.updatedAt)}</span>
+          <span className="lc-shell-project-card-time">{project.companyName ?? project.companyId} · {relative(project.updatedAt)}</span>
         </button>
         <button className="lc-shell-project-more" aria-label={`Edit ${project.name}`} onClick={() => openModal(project)}><MoreHorizontal size={17} /></button>
       </article>)}
@@ -144,8 +144,8 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
         <div className="lc-shell-modal-title"><h2 className="dialog-title">{editing ? 'Edit project' : 'Create a project'}</h2><button type="button" onClick={closeModal} aria-label="Close"><X size={18} /></button></div>
         <label><span>What are you working on?</span><input name="name" required autoFocus defaultValue={editing?.name} placeholder="Give your project a name" /></label>
         <label><span>What do you want to accomplish?</span><textarea name="description" rows={4} defaultValue={editing?.description} placeholder="Describe your project, goals, topic, etc…" /></label>
-        <label><span>Organization boundary</span><input name="organizationId" required defaultValue={editing?.organizationId ?? 'personal'} placeholder="personal or company-id" /><small>Connections from another organization cannot be newly bound to this Project. Use <code>personal</code> for your own projects.</small></label>
-        <label><span>Organization name</span><input name="organizationName" defaultValue={editing?.organizationName ?? 'Personal'} placeholder="Personal, LiveNation, Company B…" /></label>
+        <label><span>Company identifier</span><input name="companyId" required defaultValue={editing?.companyId ?? 'personal'} placeholder="personal or company-id" /><small>This is the Project's company isolation identity. A workspace is only a folder and never changes this Company.</small></label>
+        <label><span>Company name</span><input name="companyName" defaultValue={editing?.companyName ?? 'Personal'} placeholder="Personal, LiveNation, Company B…" /></label>
         <button className="lc-shell-use-folder" type="button" onClick={() => setFolderOpen((value) => !value)}><FolderPlus size={15} />{folderOpen ? 'Remove folder' : 'Use a folder'}</button>
         {folderOpen ? <div className="lc-shell-project-folder-field"><FolderField value={workspace} onChange={setWorkspace} name="workspace" /></div> : null}
         {error ? <div className="lc-shell-inline-error lc-shell-modal-error">{error}</div> : null}
