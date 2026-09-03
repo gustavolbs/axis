@@ -124,6 +124,7 @@ async function screenshot(cdp, name) {
   console.log(`captured ${path.relative(root, targetPath)}`);
 }
 async function openPersonalConnections(cdp) {
+  await waitFor(cdp, `document.querySelector('.lc-shell-primary-nav button[data-company-id="personal"]') !== null`, 'Personal context navigation');
   await evaluate(cdp, `(() => { const personal = document.querySelector('.lc-shell-primary-nav button[data-company-id="personal"]'); if (!personal) throw new Error('Personal context not found'); personal.click(); return true; })()`);
   await waitFor(cdp, `document.querySelector('.company-hub[data-company-id="personal"]') !== null`, 'Personal Company Hub');
   await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.company-hub-rail > button')].find((item) => item.textContent?.trim() === 'Connections'); if (!button) throw new Error('Company Connections section not found'); button.click(); return true; })()`);
