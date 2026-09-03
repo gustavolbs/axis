@@ -85,9 +85,14 @@ export class BrowserSessionManager {
       metadata: { backendId: this.backend.id }
     });
     let pending!: Promise<BrowserBackendSession>;
-    pending = this.backend.openSession(scope, context).then((opened) => {
-      assertBackendSessionScope(scope, opened);
-      return opened;
+    pending = this.backend.openSession(scope, context).then(async (opened) => {
+      try {
+        assertBackendSessionScope(scope, opened);
+        return opened;
+      } catch (error) {
+        await opened.close?.().catch(() => undefined);
+        throw error;
+      }
     }).catch((error) => {
       const current = this.sessions.get(scope.sessionId);
       if (current?.session === pending) this.sessions.delete(scope.sessionId);
