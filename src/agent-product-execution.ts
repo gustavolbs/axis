@@ -28,11 +28,15 @@ function resolutionFromGuidance(
 ): AgentDecisionResolution | undefined {
   if (!guidance?.trim()) return undefined;
   const match = new RegExp(
-    `^-\\s+${escapeRegExp(request.id)}:\\s+([^\\s]+)`,
+    `^-\\s+${escapeRegExp(request.id)}:\\s+(.+)$`,
     'm'
   ).exec(guidance);
-  const optionId = match?.[1]?.trim();
-  return optionId ? { requestId: request.id, optionId } : undefined;
+  const value = match?.[1]?.trim();
+  if (!value) return undefined;
+  const knownOption = request.options?.some((option) => option.id === value) ?? false;
+  return knownOption
+    ? { requestId: request.id, optionId: value }
+    : { requestId: request.id, text: value };
 }
 
 function legacyDecision(request: AgentDecisionRequest): PremiumDecisionRequest {
