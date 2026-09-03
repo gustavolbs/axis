@@ -158,7 +158,7 @@ export function runtimePolicySubject(request: ToolPermissionRequest): RuntimePol
     { maxChars: 2_000 }
   );
   const executable = command?.split(/\s+/)[0]?.toLowerCase();
-  const destructive = request.tool.mutationRisk === 'definite' ||
+  const destructive =
     Boolean(executable && DESTRUCTIVE_COMMANDS.has(path.basename(executable))) ||
     /(?:^|[_-])(delete|remove|destroy|reset|clean|purge)(?:$|[_-])/i.test(name) ||
     (gitDomain && /\bgit\s+(?:reset\s+--hard|clean\b)/i.test(command ?? ''));
