@@ -97,12 +97,15 @@ export function buildEffectiveRuntimeContext(input: {
   const companyPolicy = policyEngine.store.company(session.companyId);
   const projectPolicy = session.project ? policyEngine.store.project(session.companyId, session.project.id) : undefined;
   const boundMcp = new Set(session.resources.filter((resource) => resource.kind === 'mcp').map((resource) => resource.id));
-  const mcp = (input.mcpCandidates ?? session.resources.filter((resource) => resource.kind === 'mcp').map((resource) => ({
-    id: resource.id,
-    companyId: resource.companyId,
-    projectId: resource.projectId,
-    enabled: true
-  }))).map((server) => {
+  const candidates: readonly EffectiveContextMcpCandidate[] = input.mcpCandidates ?? session.resources
+    .filter((resource) => resource.kind === 'mcp')
+    .map((resource): EffectiveContextMcpCandidate => ({
+      id: resource.id,
+      companyId: resource.companyId,
+      ...(resource.projectId ? { projectId: resource.projectId } : {}),
+      enabled: true
+    }));
+  const mcp = candidates.map((server) => {
     const scopeAllowed = server.companyId === session.companyId && (server.projectId === undefined || server.projectId === session.project?.id);
     const status = !server.enabled ? 'disabled' as const : scopeAllowed && boundMcp.has(server.id) ? 'enabled' as const : 'policy-denied' as const;
     return Object.freeze({ id: redactRuntimeText(server.id, { maxChars: 256 }), ...(server.name ? { name: redactRuntimeText(server.name, { maxChars: 256 }) } : {}), status });
