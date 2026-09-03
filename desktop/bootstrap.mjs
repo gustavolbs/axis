@@ -38,6 +38,13 @@ if (process.platform === 'darwin') {
 const { installCompanyConnectionOwnership } = await import('../dist/company-connection-ownership.js');
 installCompanyConnectionOwnership();
 
+// Work Hub remains a global aggregate, but every source and normalized item
+// crossing the desktop boundary must carry its canonical Company provenance.
+// Install after connection ownership so companyId never comes from mutable
+// provider/account labels.
+const { installWorkHubCompanyProvenance } = await import('../dist/work-hub-company-provenance.js');
+installWorkHubCompanyProvenance();
+
 // API endpoint selection is connection-scoped, not provider-scoped. Install it
 // after Company canonicalization so every API-key view can carry independent
 // transport metadata without changing Account/Ollama behavior.
