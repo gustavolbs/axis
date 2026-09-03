@@ -168,10 +168,15 @@ export class InferenceProviderAgentAdapter implements AgentProviderAdapter {
       connectionId: string;
       providerFamily: string;
       modelId: string;
-      /** Explicit assertion from composition that this invocation cannot run hidden provider tools. */
-      providerManagedToolExecution: 'disabled';
+      /** Composition must prove that no provider-managed tool can execute outside Axis. */
+      providerManagedToolExecution: 'disabled' | 'uncontrolled';
     }
   ) {
+    if (input.providerManagedToolExecution !== 'disabled') {
+      throw new AgentProviderProtocolError(
+        `Connection ${input.connectionId} cannot use the generic inference bridge while provider-managed tool execution is uncontrolled. Disable hidden provider tools or implement a dedicated AgentProviderAdapter.`
+      );
+    }
     this.connectionId = input.connectionId;
     this.providerFamily = input.providerFamily;
     this.modelId = input.modelId;
