@@ -174,9 +174,9 @@ try {
   cdp = new Cdp(page.webSocketDebuggerUrl);
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
-  await waitFor(cdp, "document.querySelector('.lc-shell-sidebar') !== null", 'Axis shell');
-  await waitFor(cdp, "document.querySelector('.axis-company-scope[data-placement=\\"chrome\\"]') !== null", 'chrome Company selector');
-  await waitFor(cdp, "document.querySelector('.axis-company-scope[data-placement=\\"composer\\"]') !== null", 'composer Company selector');
+  await waitFor(cdp, `document.querySelector('.lc-shell-sidebar') !== null`, 'Axis shell');
+  await waitFor(cdp, `document.querySelector('.axis-company-scope[data-placement="chrome"]') !== null`, 'chrome Company selector');
+  await waitFor(cdp, `document.querySelector('.axis-company-scope[data-placement="composer"]') !== null`, 'composer Company selector');
   await assertSelector(cdp, 'chrome');
   await assertSelector(cdp, 'composer');
   await screenshot(cdp, 'company-scope-composer');
@@ -189,9 +189,9 @@ try {
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   })()`);
-  await waitFor(cdp, "!document.querySelector('.lc-agent-send-button')?.disabled", 'enabled send button');
-  await evaluate(cdp, "document.querySelector('.lc-agent-send-button')?.click(); true");
-  await waitFor(cdp, "document.querySelector('.axis-company-scope[data-placement=\\"approval\\"]') !== null", 'approval Company selector');
+  await waitFor(cdp, `!document.querySelector('.lc-agent-send-button')?.disabled`, 'enabled send button');
+  await evaluate(cdp, `document.querySelector('.lc-agent-send-button')?.click(); true`);
+  await waitFor(cdp, `document.querySelector('.axis-company-scope[data-placement="approval"]') !== null`, 'approval Company selector');
   await assertSelector(cdp, 'approval');
   await screenshot(cdp, 'company-scope-approval');
 
@@ -202,7 +202,7 @@ try {
     button.click();
     return true;
   })()`);
-  await waitFor(cdp, "document.querySelector('.axis-company-scope[data-placement=\\"result\\"]') !== null", 'result Company selector');
+  await waitFor(cdp, `document.querySelector('.axis-company-scope[data-placement="result"]') !== null`, 'result Company selector');
   await assertSelector(cdp, 'result');
   await screenshot(cdp, 'company-scope-result');
 } finally {
