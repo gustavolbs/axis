@@ -143,19 +143,27 @@ function CompanyScopeController() {
   </>;
 }
 
-installRuntimeTransport();
-installChatPlatformEnhancements();
-installDiffReviewEnhancements();
-
 const storedTheme = localStorage.getItem('local-coder.theme');
 const theme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : 'system';
 document.documentElement.dataset.lcTheme = theme;
 void window.localCoder?.setTheme(theme);
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <AppRoot />
-    <SidebarVersion />
-    <CompanyScopeController />
-  </React.StrictMode>
-);
+const root = ReactDOM.createRoot(document.getElementById('root')!);
+const runtimeUiPreview = new URLSearchParams(window.location.search).has('runtime-ui-preview');
+
+if (runtimeUiPreview) {
+  void import('./RuntimeUiPreview.js').then(({ RuntimeUiPreview }) => {
+    root.render(<React.StrictMode><RuntimeUiPreview /></React.StrictMode>);
+  });
+} else {
+  installRuntimeTransport();
+  installChatPlatformEnhancements();
+  installDiffReviewEnhancements();
+  root.render(
+    <React.StrictMode>
+      <AppRoot />
+      <SidebarVersion />
+      <CompanyScopeController />
+    </React.StrictMode>
+  );
+}
