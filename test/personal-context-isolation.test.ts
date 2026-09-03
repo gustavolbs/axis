@@ -14,20 +14,28 @@ test('new conversations receive server-owned Company scope instead of trusting t
   assert.match(source, /const input: StandaloneJobInput & \{ companyId: string \} = \{/);
   assert.match(source, /companyId: project\?\.organizationId \?\? PERSONAL_COMPANY_ID/);
   assert.doesNotMatch(source, /companyId:\s*optionalString\(body, 'companyId'\)/);
+  assert.match(source, /this\.assertPersonalModelSelection\(input\.modelSelection\)/);
 });
 
 test('Personal history hides legacy projectless corporate conversations without deleting them', () => {
   const source = fs.readFileSync('src/app-runtime.ts', 'utf8');
-  assert.match(source, /job\.input\.modelSelection\?\.mode === 'explicit'/);
+  assert.match(source, /const selection = job\.input\.modelSelection;/);
+  assert.match(source, /selection\?\.mode === 'explicit'/);
   assert.match(source, /connection && connection\.auth !== 'local'/);
   assert.match(source, /scoped\.input\.projectId \|\| scoped\.input\.companyId === PERSONAL_COMPANY_ID/);
   assert.match(source, /this\.jobs\.list\(\)\.map\(\(job\) => this\.personalVisibleJob\(job\)\)\.filter\(Boolean\)/);
   assert.match(source, /belongs to company scope .* and is not available in Personal/);
 });
 
-test('corporate projectless jobs cannot re-enter Personal through live events or follow-up', () => {
+test('corporate projectless jobs cannot re-enter Personal through live events, follow-up or direct mutation', () => {
   const source = fs.readFileSync('src/app-runtime.ts', 'utf8');
   assert.match(source, /const visible = runtime\.personalVisibleJob\(job\);\s*if \(visible\) runtime\.emit/);
   assert.match(source, /const current = this\.requirePersonalJobAccess\(followUpMatch\[1\]\)/);
   assert.match(source, /const current = this\.requirePersonalJobAccess\(turnRetryMatch\[1\]\)/);
+  assert.match(source, /this\.requirePersonalJobAccess\(id\);/);
+  assert.match(source, /this\.requirePersonalJobAccess\(jobMatch\[1\]\);/);
+  assert.match(source, /this\.requirePersonalJobAccess\(cancelMatch\[1\]\);/);
+  assert.match(source, /this\.requirePersonalJobAccess\(decisionMatch\[1\]\);/);
+  assert.match(source, /this\.requirePersonalJobAccess\(guidanceMatch\[1\]\);/);
+  assert.match(source, /this\.requirePersonalJobAccess\(escalationMatch\[1\]\);/);
 });
