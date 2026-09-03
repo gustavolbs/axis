@@ -24,6 +24,10 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added local atomic persistence and bounded task-ranked recovery partitioned by Company + Project + repository/root identity, so a later authorized agent or provider can continue the same Project without replaying a full transcript.
 - Added a Project Memory retrieval API that composes lifecycle handoff state with the existing evidence-backed Repo Intelligence capsule instead of creating a second durable repository-knowledge system.
 - Added retention and compaction for completed history while preserving active and paused sessions, plus restart, cross-provider sharing, multi-root isolation and structured-handoff coverage.
+- Added a provider-agnostic Axis MCP host that discovers Company/Project-bound MCP servers and exposes their tools as canonical `AxisTool` definitions guarded by `axis.mcp.invoke` plus read/mutation permissions.
+- Added native MCP JSON-RPC clients for local stdio, Streamable HTTP, and legacy SSE transports, including initialize lifecycle, paginated tool/resource discovery, invocation, progress notifications, cancellation, timeout propagation, session cleanup, and safe stdio environment construction.
+- Added a bridge from the existing Claude/Codex MCP connector discovery model into Axis-owned MCP server configuration without routing execution back through either provider loop.
+- Added MCP runtime tests covering successful invocation, resources, unavailable capability refusal, Company isolation, source Connection ownership, provider-independent auth provenance, timeout/cancellation, mutation status/lifecycle, secret-safe configuration, and canonical MCP error mapping.
 
 ### Changed
 - The renderer can enter an isolated `runtime-ui-preview` fixture surface for visual verification; normal Chat/Cowork composition and runtime transport installation are unchanged when the preview is not requested.
@@ -40,6 +44,9 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Project Memory ownership never includes provider, model, authentication method, API key or conversation identity; those values are retained only as non-secret provenance inside a scoped handoff.
 - Lifecycle persistence is allowlisted and redacted: tool arguments and result payloads, provider progress payloads and reasoning fields are not stored, while common secret/token/private-key patterns are removed from retained text.
 - The same physical repository remains isolated across Companies and Projects, and ambiguous multi-root tool activity is not copied into another root's memory.
+- MCP authority is resolved from the immutable session Company/Project resource set and canonical source Connection ownership; an MCP source may differ from the inference Connection but cannot cross Company or Project boundaries.
+- Sensitive MCP headers and environment variables must be stored as secret references. Ambient sensitive process environment variables are not inherited by stdio MCP servers, and arbitrary persisted cwd paths are replaced by session-authorized root IDs.
+- MCP tools without an explicit read-only annotation are treated as potentially mutating, and failed or uncertain mutations remain non-retryable without confirmation through the common runtime mutation-safety contract.
 
 ## [0.19.0] - 2026-09-03
 
