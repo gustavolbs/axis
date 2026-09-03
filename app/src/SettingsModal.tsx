@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Activity, KeyRound, Palette, Route, Settings2, ShieldCheck, UsersRound, X } from 'lucide-react';
+import { Activity, Building2, KeyRound, Palette, Route, Settings2, ShieldCheck, UsersRound, X } from 'lucide-react';
 
 import type { AdminProject } from './app-types.js';
+import { CompaniesSettings } from './CompaniesSettings.js';
 import { ConnectionsSettings } from './ConnectionsSettings.js';
 import { FolderField } from './FolderField.js';
 import { ProviderCapabilitiesSettings } from './ProviderCapabilitiesSettings.js';
@@ -9,7 +10,7 @@ import { ApiKeySettings, ModelRoutingSettings, WorkerConnectionSetting } from '.
 import { UsageSettings } from './UsageSettings.js';
 import type { ThemeMode } from './native.js';
 
-type SettingsTab = 'general' | 'appearance' | 'routing' | 'capabilities' | 'usage' | 'connections' | 'keys';
+type SettingsTab = 'general' | 'appearance' | 'companies' | 'routing' | 'capabilities' | 'usage' | 'connections' | 'keys';
 
 function applyTheme(mode: ThemeMode) {
   const root = document.documentElement;
@@ -77,6 +78,7 @@ export function SettingsModal({
         <div className="settings-rail-title">Settings</div>
         <button className={tab === 'general' ? 'active' : ''} onClick={() => setTab('general')}><Settings2 size={15} /><span>General</span></button>
         <button className={tab === 'appearance' ? 'active' : ''} onClick={() => setTab('appearance')}><Palette size={15} /><span>Appearance</span></button>
+        <button className={tab === 'companies' ? 'active' : ''} onClick={() => setTab('companies')}><Building2 size={15} /><span>Companies</span></button>
         <button className={tab === 'routing' ? 'active' : ''} onClick={() => setTab('routing')}><Route size={15} /><span>Model routing</span></button>
         <button className={tab === 'capabilities' ? 'active' : ''} onClick={() => setTab('capabilities')}><ShieldCheck size={15} /><span>Capabilities</span></button>
         <button className={tab === 'usage' ? 'active' : ''} onClick={() => setTab('usage')}><Activity size={15} /><span>Usage</span></button>
@@ -114,6 +116,7 @@ export function SettingsModal({
           </div>
         </div> : null}
 
+        {tab === 'companies' ? <CompaniesSettings /> : null}
         {tab === 'routing' ? <ModelRoutingSettings /> : null}
         {tab === 'capabilities' ? <ProviderCapabilitiesSettings /> : null}
         {tab === 'usage' ? <UsageSettings /> : null}
