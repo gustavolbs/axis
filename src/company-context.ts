@@ -125,11 +125,6 @@ export function companyContextPath(): string {
 export class CompanyContextStore {
   constructor(private readonly file = companyContextPath()) {}
 
-  snapshotState(): CompanyContextFile {
-    const state = this.read();
-    return structuredClone(state);
-  }
-
   reconcile(input: CompanyContextServiceInput): CompanyContextSnapshot {
     const state = this.read();
     let dirty = false;
@@ -168,7 +163,10 @@ export class CompanyContextStore {
     const connectionCompanies = new Map<string, string>();
     const sharedConnectionIds: string[] = [];
     for (const connection of input.connections) {
-      if (connection.auth === 'local' || connection.organizationId === LOCAL_ORGANIZATION_ID) {
+      // Execution locality is defined by the connection kind, never by a label
+      // or a legacy company-looking string. A corporate account called "Local"
+      // must not be mistaken for Ollama/local execution.
+      if (connection.auth === 'local') {
         sharedConnectionIds.push(connection.id);
         continue;
       }
@@ -178,6 +176,9 @@ export class CompanyContextStore {
         `Connection ${connection.id} persisted company id`
       );
       const explicit = cleanCompanyId(connection.companyId, `Connection ${connection.id} company id`);
+      if (persisted && explicit && persisted !== explicit) {
+        throw new Error(`Connection ${connection.id} explicit company conflicts with its persisted company binding.`);
+      }
       const legacy = cleanCompanyId(
         connection.organizationId,
         `Connection ${connection.id} legacy organization id`
