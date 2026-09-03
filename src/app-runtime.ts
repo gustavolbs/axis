@@ -3,7 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { readAppSettings, writeAppSettings, type AppSettingsFile } from './app-config.js';
-import { CompanyContextStore } from './company-context.js';
+import {
+  CompanyContextStore,
+  type CreateCompanyInput,
+  type UpdateCompanyInput
+} from './company-context.js';
 import { loadConfig } from './config.js';
 import { CredentialManager } from './credential-store.js';
 import { createExecutionRuntime } from './execution-runtime.js';
@@ -250,7 +254,51 @@ export class DesktopAppRuntime {
     const url = new URL(request.path, 'app://local-coder');
     const pathname = url.pathname.replace(/^\/api(?=\/|$)/, '') || '/';
 
-    if (method === 'GET' && pathname === '/jobs') return { jobs: this.jobs.list() };
+    if (method === 'GET' && pathname === '/companies') {
+      return {
+        companies: this.companyContext.listCompanies({
+          includeArchived: url.searchParams.get('archived') === 'all',
+          query: url.searchParams.get('q') ?? undefined
+        })
+      };
+    }
+    if (method === 'POST' && pathname === '/companies') {
+      return {
+        company: this.companyContext.createCompany(
+          objectBody(request.body) as unknown as CreateCompanyInput
+        )
+      };
+    }
+    if (method === 'POST' && pathname === '/companies/order') {
+      const body = objectBody(request.body);
+      if (!Array.isArray(body.ids) || body.ids.some((id) => typeof id !== 'string')) {
+        throw new Error('ids must be an array of company ids.');
+      }
+      return { companies: this.companyContext.reorderCompanies(body.ids as string[]) };
+    }
+    const companyMatch = /^\/companies\/([^/]+)$/.exec(pathname);
+    if (companyMatch && method === 'GET') {
+      return { company: this.companyContext.getCompany(decodeURIComponent(companyMatch[1])) };
+    }
+    if (companyMatch && method === 'PATCH') {
+      return {
+        company: this.companyContext.updateCompany(
+          decodeURIComponent(companyMatch[1]),
+          objectBody(request.body) as unknown as UpdateCompanyInput
+        )
+      };
+    }
+    const companyArchiveMatch = /^\/companies\/([^/]+)\/archive$/.exec(pathname);
+    if (companyArchiveMatch && method === 'POST') {
+      const body = objectBody(request.body);
+      if (typeof body.archived !== 'boolean') throw new Error('archived must be a boolean.');
+      return {
+        company: this.companyContext.setCompanyArchived(
+          decodeURIComponent(companyArchiveMatch[1]),
+          body.archived
+        )
+      };
+    }
     if (method === 'GET' && pathname === '/companies/context') {
       return {
         context: this.companyContext.reconcile({
@@ -260,6 +308,8 @@ export class DesktopAppRuntime {
         })
       };
     }
+
+    if (method === 'GET' && pathname === '/jobs') return { jobs: this.jobs.list() };
     if (method === 'POST' && pathname === '/jobs') {
       const body = objectBody(request.body);
       const projectId = optionalString(body, 'projectId');
