@@ -80,6 +80,9 @@ export type WorkHubRetention = 'memory' | 'local';
 export interface WorkHubSourceView {
   id: string;
   label: string;
+  /** Canonical owner derived from the stable connection → Company binding. */
+  companyId: string;
+  companyName: string;
   connectionId: string;
   kind: WorkHubSourceKind;
   system: string;
@@ -93,6 +96,9 @@ export interface WorkHubSourceView {
 interface WorkHubItemBaseView {
   sourceId: string;
   connectionId: string;
+  /** Provenance is carried on every aggregated item; filtering never changes ownership. */
+  companyId: string;
+  companyName: string;
   providerFamily: 'anthropic' | 'openai';
   system: string;
   externalId: string;
