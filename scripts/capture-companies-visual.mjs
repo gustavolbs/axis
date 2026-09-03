@@ -233,10 +233,12 @@ try {
     return {
       visible: Boolean(rect && rect.width > 0 && rect.height > 0),
       withinViewport: Boolean(rect && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight),
+      dialogRect: rect ? [rect.left, rect.top, rect.right, rect.bottom] : null,
+      closeRect: closeRect ? [closeRect.left, closeRect.top, closeRect.right, closeRect.bottom] : null,
       closeTopRight: Boolean(
         rect && closeRect &&
-        closeRect.right <= rect.right && closeRect.right >= rect.right - 18 &&
-        closeRect.top >= rect.top && closeRect.top <= rect.top + 36
+        closeRect.right <= rect.right - 8 && closeRect.right >= rect.right - 48 &&
+        closeRect.top >= rect.top + 8 && closeRect.top <= rect.top + 52
       ),
       text: dialog?.textContent?.replace(/\s+/g, ' ').trim()
     };
