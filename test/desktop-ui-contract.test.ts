@@ -169,9 +169,10 @@ test('sidebar rows use the reference scale, not a denser or larger one', () => {
 });
 
 test('there is no Chats surface: conversations live in the sidebar tree', () => {
-  // In the reference app a Chats screen would be the archive, which this app
-  // does not have — the nav is New chat / Projects / Runs.
-  assert.match(appRoot, /type Surface = 'agent' \| 'projects' \| 'project' \| 'runs'/);
+  // Company Hub and Work Hub are first-class surfaces, while chat history still
+  // remains a nested sidebar tree rather than becoming a separate Chats route.
+  assert.match(appRoot, /type Surface = [^;]*'company'[^;]*'work-hub'/);
+  assert.doesNotMatch(appRoot, /type Surface = [^;]*'chats'/);
   assert.doesNotMatch(appRoot, /selectSurface\('chats'\)/);
   assert.doesNotMatch(appRoot, /<ChatHistory/);
   assert.equal(fs.existsSync(path.join(root, 'app/src/ChatHistory.tsx')), false);
@@ -277,9 +278,10 @@ test('one profile-name formatter feeds both the sidebar and the greeting', () =>
 });
 
 test('desktop chrome uses persistent responsive sidebar and safe native drag regions', () => {
-  for (const required of ['lc-shell-app-shell', 'lc-shell-sidebar', 'lc-shell-window-chrome', 'lc-shell-sidebar-resizer', 'New chat', 'Search', 'Chats', 'Projects', 'Runs']) {
+  for (const required of ['lc-shell-app-shell', 'lc-shell-sidebar', 'lc-shell-window-chrome', 'lc-shell-sidebar-resizer', 'New chat', 'Search', 'Contexts', 'Work Hub', 'Runs', 'Archived', 'Chats', 'Projects']) {
     assert.equal(appRoot.includes(required), true, `missing global shell primitive: ${required}`);
   }
+  assert.match(appRoot, /data-company-id=\{company\.id\}/);
   assert.match(appRoot, /data-shell=/);
   assert.match(appRoot, /data-platform=/);
   assert.match(appRoot, /local-coder\.sidebar-width/);
@@ -297,9 +299,10 @@ test('desktop chrome uses persistent responsive sidebar and safe native drag reg
 });
 
 test('collapsed rail has accessible names delayed tooltips and persistent profile footer', () => {
-  for (const label of ['New chat', 'Search', 'Projects', 'Runs']) {
+  for (const label of ['New chat', 'Search', 'Work Hub', 'Runs', 'Archived']) {
     assert.match(appRoot, new RegExp(`aria-label=\\"${label}\\"`));
   }
+  assert.match(appRoot, /aria-label=\{company\.name\}/);
   assert.match(appRoot, /data-tooltip=/);
   assert.match(css, /transition:\s*opacity 120ms ease 400ms/);
   assert.match(appRoot, /lc-shell-account-avatar/);
@@ -494,14 +497,13 @@ test('Projects uses real folder picker and consistent primary-secondary hierarch
   assert.match(css, /\.btn-secondary/);
 });
 
-test('Settings has only real General Appearance Model routing and API keys tabs', () => {
-  for (const label of ['General', 'Appearance', 'Model routing', 'API keys']) assert.match(settingsModal, new RegExp(label));
-  assert.doesNotMatch(settingsModal, /Advanced/);
-  assert.doesNotMatch(settingsModal, /<AdminPanel/);
+test('global Settings contains only app-wide General Appearance and Usage tabs', () => {
+  for (const label of ['General', 'Appearance', 'Usage']) assert.match(settingsModal, new RegExp(label));
+  assert.doesNotMatch(settingsModal, /Model routing|API keys|Connections|Companies|Advanced/);
+  assert.doesNotMatch(settingsModal, /<AdminPanel|<ModelRoutingSettings|<ApiKeySettings/);
+  assert.match(settingsModal, /Only app-wide settings live here/);
   assert.match(settingsModal, /Default workspace/);
   assert.match(settingsModal, /Start on login/);
-  assert.match(settingsModal, /<ModelRoutingSettings/);
-  assert.match(settingsModal, /<ApiKeySettings/);
   assert.match(settingsPanels, /<UiSelect/);
   assert.doesNotMatch(settingsPanels, /<select/);
   assert.match(uiSelect, /role="listbox"/);
