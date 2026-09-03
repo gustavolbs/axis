@@ -2,35 +2,44 @@
 
 Date: 2026-09-03
 
-This document marks the **Parallel Development Ready Gate** for the shared agent-runtime architecture introduced after PR #75.
+This document is the authoritative handoff for the **Parallel Development Ready Gate** introduced after PR #75.
 
-It freezes the central extension boundary needed for multiple branches to build tools, execution targets, lifecycle consumers and provider adapters without redefining the core protocol. It does **not** claim that the remaining P1.1–P1.6 product surfaces are finished or already wired through Chat/Cowork. Those integrations are intentionally left to the parallel workstreams below.
+Its purpose is to freeze the shared runtime protocol before filesystem, process, Git, Project Memory, MCP, browser, UI and additional provider work is distributed across independent branches.
 
-## Gate status
-
-The central architecture now provides:
-
-1. a provider-agnostic `AgentRuntime` loop for `model → tool call → Axis execution → tool result → model`;
-2. canonical tool definition/call/result/error contracts;
-3. exact, immutable `AgentSessionContext` scope for Company, Project, connection, model, execution target, roots, permissions, capabilities and resources;
-4. explicit capability negotiation with fail-closed unavailable capabilities;
-5. a provider adapter boundary with no auth-kind branching in the runtime;
-6. a compatibility `InferenceProviderAgentAdapter` usable by existing Account and API-key `InferenceProvider` connections through the same runtime;
-7. an execution-target registry that resolves the exact selected target and never falls back silently;
-8. a replaceable permission gate;
-9. central cancellation, timeout, progress, error, retry-eligibility and mutation-status semantics;
-10. provider-independent lifecycle events sufficient for future Project Memory/tracing consumers; and
-11. architecture tests for provider/auth/tool independence, Company isolation, capability negotiation, lifecycle, cancellation, mutation safety and no-fallback selection.
-
-The user-facing filesystem, shell/process, Git/worktree, Project Memory, MCP, browser and UI implementations remain intentionally incomplete.
+The gate freezes contracts and extension points. It does **not** claim that those product areas are already implemented or that Chat/Cowork have completed their final migration to the new runtime.
 
 ---
 
-## Frozen contracts
+## Gate criteria
 
-Future parallel branches should treat the following exports from `src/agent-runtime/index.ts` as stable unless a coordinated architecture change is explicitly approved.
+The gate is considered reached when the PR containing this document has green required CI on its final head.
 
-### Session and authority
+The code now satisfies the architectural criteria required for parallel work:
+
+1. `AgentRuntime` is provider-agnostic.
+2. Tool definition/call/result/error contracts are canonical.
+3. New tools do not require edits to Claude/OpenAI/Ollama/Codex adapters.
+4. New provider adapters do not require edits to tool implementations.
+5. `AgentSessionContext` explicitly carries the Company/Project/Connection/model/execution authority established after PR #75.
+6. `authKind` is provenance, not a separate runtime architecture.
+7. Effective capabilities are explicitly negotiated and unavailable capabilities fail closed.
+8. Lifecycle events are common to all providers and sufficient for future Project Memory/tracing.
+9. Cancellation, timeout, progress, errors, retry eligibility and mutation state are central contracts.
+10. Pause/decision, reasoning-summary, attachment-metadata and error shapes are part of the canonical transcript protocol.
+11. The shared contracts have architecture-focused automated coverage.
+12. The next workstreams can own separate directories and avoid continuous edits to the runtime core.
+
+---
+
+# Contratos congelados
+
+All exports below are available through:
+
+`src/agent-runtime/index.ts`
+
+Parallel feature branches must treat them as stable unless a coordinated architecture change is explicitly approved.
+
+## Session and authority
 
 - `AgentSessionContext`
 - `AgentConnectionContext`
@@ -43,11 +52,63 @@ Future parallel branches should treat the following exports from `src/agent-runt
 - `assertAgentSessionContext()`
 - `freezeAgentSessionContext()`
 
-Important invariant: a session is constructed before execution and is immutable thereafter. Runtime code must not look up an ambient active Company, alternate Project, alternate connection, alternate model, broader root or different execution target while a turn is running.
+A running session is an immutable authority snapshot.
 
-`connection.companyId === null` is reserved for intentionally shared local capabilities. Every Company-owned connection/root/resource must match `session.companyId`. Project-owned roots/resources must also match `session.project.id`.
+It explicitly fixes:
 
-### Tool protocol
+- Company;
+- optional Project;
+- exact Connection;
+- provider family;
+- `authKind`;
+- exact model;
+- exact execution target;
+- authorized roots;
+- permissions;
+- effective capabilities;
+- effective resources.
+
+The runtime must never query an ambient active Company, silently widen filesystem roots, choose another Project, substitute a Connection/model, or fall back to another execution target during a turn.
+
+Company-owned Projects, Connections, roots and resources must match `session.companyId`.
+
+Project-owned roots/resources must also match `session.project.id`.
+
+`connection.companyId === null` is reserved for intentionally shared local capabilities, not as a fallback Company.
+
+## Canonical transcript and turns
+
+- `AgentMessage`
+- `AgentTurn`
+- `AgentAttachment`
+- `AgentDecisionRequest`
+- `AgentDecisionResolution`
+- `AgentRuntimeFailure`
+
+`AgentMessage` is provider-neutral and can carry:
+
+- textual content;
+- summarized reasoning;
+- attachment metadata/references;
+- canonical tool calls;
+- canonical tool results/errors;
+- decision requests;
+- decision resolutions.
+
+`reasoningSummary` is intentionally summary-only. Raw provider chain-of-thought is not part of the Axis contract.
+
+`AgentAttachment` freezes attachment metadata/reference shape only. Binary transport, multimodal model upload and storage are intentionally future work.
+
+A turn may end as:
+
+- `completed`;
+- `paused`;
+- `failed`;
+- `cancelled`.
+
+A pause carries an `AgentDecisionRequest` instead of forcing provider/UI-specific decision protocols.
+
+## Tool protocol
 
 - `ToolDefinition`
 - `ToolCall`
@@ -60,20 +121,27 @@ Important invariant: a session is constructed before execution and is immutable 
 - `ToolExecutionOutput`
 - `ToolRegistry`
 
-A tool owns input validation and implementation. It does not parse Claude/OpenAI/Ollama/Codex protocols and does not select a provider.
+An Axis tool receives canonical Axis context only.
+
+It must not know whether the model came from Claude Account, ChatGPT Account, API Key, Ollama or a future provider.
 
 Every tool declares:
 
-- `requiredCapabilities`;
-- `requiredPermissions`;
-- semantic `effect` (`read`, `mutation`, `command`, `validation`, `external`);
-- `mutationRisk`;
-- retry policy; and
+- JSON Schema input;
+- required capabilities;
+- required permissions;
+- semantic effect (`read`, `mutation`, `command`, `validation`, `external`);
+- mutation risk;
+- retry policy;
 - optional timeout.
 
-Potentially mutating operations that fail without proving rollback/commit are represented as `mutationStatus: unknown`. The runtime will not label them automatically safe to retry.
+Potentially mutating work that fails without proving rollback/commit is represented as:
 
-### Provider protocol
+`mutationStatus: 'unknown'`
+
+The runtime therefore cannot classify an uncertain mutation as automatically safe to retry.
+
+## Provider protocol
 
 - `AgentProviderAdapter`
 - `AgentProviderRequest`
@@ -82,13 +150,42 @@ Potentially mutating operations that fail without proving rollback/commit are re
 - `AgentProviderAdapterCapabilities`
 - `InferenceProviderAgentAdapter`
 
-An adapter is constructed for **one exact already-resolved connection + model**. The runtime verifies those identities against the session context before invoking it.
+Provider-specific wire protocols terminate at `AgentProviderAdapter`.
 
-`authKind` is session provenance. It is not part of the adapter dispatch contract. Claude Account, ChatGPT/Codex Account, API Key and local/provider connections therefore use the same agent-runtime architecture.
+The runtime sees only canonical messages, tool definitions, tool calls, decision requests, progress and provider results.
 
-Existing `InferenceProvider` implementations can participate through `InferenceProviderAgentAdapter`, which uses the common structured-output contract as a safe compatibility tool loop. Provider-specific native tool-calling adapters may replace that bridge later without changing tools or `AgentRuntime`.
+Every adapter is bound to one exact:
 
-### Capability protocol
+- `connectionId`;
+- `providerFamily`;
+- `modelId`.
+
+The runtime verifies those identities against `AgentSessionContext` before invocation.
+
+No adapter may silently choose another Connection or model.
+
+### Provider-managed tool safety
+
+The generic `InferenceProviderAgentAdapter` is intentionally fail-closed.
+
+It can only be constructed when composition asserts:
+
+`providerManagedToolExecution: 'disabled'`
+
+This is appropriate for inference paths where filesystem/shell/MCP or other provider-managed tools cannot execute invisibly outside Axis.
+
+If provider-managed tool execution is uncontrolled, the generic bridge rejects the connection.
+
+Subscription CLIs such as Claude Code/Codex that can execute their own tools must therefore do one of the following before entering the canonical Axis runtime:
+
+1. provide a verified no-tools invocation mode; or
+2. implement a dedicated `AgentProviderAdapter` that translates every relevant provider tool interaction into canonical Axis calls/results.
+
+This prevents reads, commands or mutations from bypassing Axis permissions, lifecycle and Project Memory instrumentation.
+
+`authKind` does not change this architecture. Account and API Key connections still enter through `AgentProviderAdapter`; they may simply require different adapter implementations to enforce the same boundary safely.
+
+## Capability protocol
 
 - `CapabilityOffer`
 - `CapabilityRestriction`
@@ -96,9 +193,9 @@ Existing `InferenceProvider` implementations can participate through `InferenceP
 - `negotiateEffectiveCapabilities()`
 - `capabilityUnavailableReason()`
 
-Capability IDs are strings, not a central provider enum. A new feature should introduce a namespaced capability ID in its own module and require it from the relevant tool. Session composition supplies offers from native Axis features, the selected provider/model/resources and the exact execution target, then applies Company/Project/session/admin restrictions.
+Capability IDs are namespaced strings rather than a provider enum.
 
-Recommended namespace examples:
+Recommended namespaces include:
 
 - `axis.filesystem.read`
 - `axis.filesystem.write`
@@ -110,58 +207,87 @@ Recommended namespace examples:
 - `target.workspace.read`
 - `target.workspace.write`
 
-No new capability should require adding a provider-specific branch to `AgentRuntime`.
+Offers can come from Axis-native features, the selected connection/model, configured resources and the exact execution target.
 
-### Permission boundary
+Company/Project/session/provider-admin constraints are applied as restrictions.
+
+Unavailable capabilities are explicit failures. They must not trigger a provider/model/Company fallback.
+
+## Permission boundary
 
 - `ToolPermissionGate`
 - `ToolPermissionRequest`
 - `ToolPermissionDecision`
 - `StaticToolPermissionGate`
 
-A future approval UI or policy service replaces the gate implementation; tools and provider adapters remain unchanged.
+A permission gate can:
 
-### Execution-target boundary
+- allow;
+- deny;
+- require interactive approval.
+
+Interactive approval produces a canonical `AgentDecisionRequest` and pauses before the tool executes.
+
+A subsequent run records `AgentDecisionResolution`; composition may rebuild the immutable session permission set for the resumed turn when approval changes effective authority.
+
+Future approval UI/policy implementations replace or wrap the permission gate. They do not require changes to provider adapters or tools.
+
+## Execution-target boundary
 
 - `AgentExecutionTarget`
 - `LocalAgentExecutionTarget`
 - `ExecutionTargetRegistry`
 
-A target receives the canonical `AxisTool`, `ToolCall` and immutable `ToolExecutionContext`. The local target invokes the tool directly. A future Local Worker target may serialize the same canonical call to the worker.
+An execution target receives a canonical `AxisTool` + `ToolExecutionContext`.
 
-The registry resolves only `session.executionTarget.id`. A missing target is an explicit failure, never a local/remote fallback decision.
+The desktop target executes locally.
 
-### Lifecycle protocol
+A future Local Worker target can transport the same canonical tool call to another machine/runtime without changing tool/provider contracts.
+
+`ExecutionTargetRegistry` resolves only `session.executionTarget.id`.
+
+A missing target is an explicit failure. There is no desktop/worker fallback.
+
+## Lifecycle protocol
 
 - `AgentLifecycleEvent`
 - `AgentLifecycleSink`
 
-Canonical lifecycle includes:
+The common lifecycle contains:
 
-- `session.started` / `session.completed`;
-- `turn.started` / `turn.completed`;
+- `session.started`;
+- `turn.started`;
 - `user.input`;
-- `provider.started` / `provider.progress` / `provider.completed`;
-- `permission.requested` / `permission.resolved`;
-- `tool.call` / `tool.progress` / `tool.result`;
+- `provider.started`;
+- `provider.progress`;
+- `provider.completed`;
+- `permission.requested`;
+- `permission.resolved`;
+- `decision.requested`;
+- `decision.resolved`;
+- `tool.call`;
+- `tool.progress`;
+- `tool.result`;
 - `read`;
 - `mutation`;
 - `command`;
 - `validation`;
-- `error`; and
-- `cancelled`.
+- `error`;
+- `cancelled`;
+- `turn.completed`;
+- `session.completed`.
 
-Project Memory/tracing must consume these events instead of instrumenting Claude, Codex, OpenAI API, Anthropic API or Ollama separately.
+Future Project Memory and tracing consume these events instead of instrumenting Claude, Codex, OpenAI API, Anthropic API and Ollama separately.
 
-Lifecycle sinks are observers. A sink failure is isolated from the active operation so persistence/tracing cannot cause a completed provider or mutating tool call to be retried accidentally.
+Lifecycle sinks are observational. A sink failure must not cause replay/retry of an already-started provider/tool mutation.
 
 ---
 
-## Central files
+# Arquivos centrais
 
-The following files are central contracts. Parallel feature branches should not modify them without coordination:
+Parallel workstreams must not modify these files without coordination.
 
-### New runtime boundary
+## Frozen runtime core
 
 - `src/agent-runtime/contracts.ts`
 - `src/agent-runtime/capabilities.ts`
@@ -170,7 +296,7 @@ The following files are central contracts. Parallel feature branches should not 
 - `src/agent-runtime/runtime.ts`
 - `src/agent-runtime/index.ts`
 
-### Existing Company/provider foundation from PR #75 and earlier
+## Existing multi-company/provider foundation
 
 - `src/company-context.ts`
 - `src/company-connection-ownership.ts`
@@ -180,190 +306,198 @@ The following files are central contracts. Parallel feature branches should not 
 - `src/providers/types.ts`
 - `src/cancellation.ts`
 
-### Existing legacy/product wiring
+## Integration-sensitive composition files
 
-The following are integration-sensitive rather than extension contracts. Avoid broad parallel rewrites of them:
+Avoid broad parallel rewrites of:
 
 - `src/execution-runtime.ts`
 - `src/project-engineer-backend.ts`
 - `src/project-routed-chat.ts`
 - `src/app-runtime.ts`
 
-Parallel branches should implement modules behind the frozen contracts first. A later integration pass can wire completed modules into Chat/Cowork without forcing each feature branch to edit the same composition files.
+Feature branches should implement/export modules behind the frozen contracts first.
 
-`package.json` and `CHANGELOG.md` remain required release metadata and may require a small rebase-time conflict resolution when several PRs are merged sequentially. This is expected release bookkeeping, not a runtime-contract dependency.
+A narrow integration pass can later wire them into Chat/Cowork without every branch editing the same composition files.
+
+`package.json` and `CHANGELOG.md` remain required release metadata and may have small sequential merge conflicts. Those are release-bookkeeping conflicts, not architecture dependencies.
 
 ---
 
-## Extension points
+# Extension points
 
-### Create a new tool
+## Como criar uma nova tool
 
-1. Create a module outside `src/agent-runtime/`, preferably under `src/agent-tools/<area>/`.
-2. Export an object/class implementing `AxisTool`.
-3. Define its `ToolDefinition` with JSON Schema input, capability/permission requirements, effect, mutation risk and retry policy.
-4. Validate arguments inside the tool.
-5. Use only `ToolExecutionContext.session` for Company/Project/connection/root/resource scope.
+1. Create the implementation outside `src/agent-runtime/`, preferably under `src/agent-tools/<area>/`.
+2. Implement `AxisTool`.
+3. Declare its `ToolDefinition`.
+4. Validate canonical arguments in the tool implementation.
+5. Use only `ToolExecutionContext.session` for authority/scope.
 6. Respect `ToolExecutionContext.signal`.
-7. Report long-running work through `reportProgress()`.
-8. Report concrete reads/mutations/commands/validations through `reportActivity()` when richer lifecycle metadata is available.
-9. Return `mutationStatus` explicitly for potentially mutating work.
-10. Register the tool in a `ToolRegistry` at composition time. Do not modify `AgentRuntime` or provider adapters.
+7. Report progress through `reportProgress()`.
+8. Report meaningful read/mutation/command/validation details through `reportActivity()`.
+9. Return explicit mutation status for potentially mutating work.
+10. Register through `ToolRegistry` at composition time.
 
-### Create a new provider adapter
+Do not edit provider adapters or `AgentRuntime` to add a tool.
 
-1. Implement `AgentProviderAdapter` outside `src/agent-runtime/`, preferably under `src/agent-provider-adapters/<provider>/`.
-2. Construct it for one selected `connectionId`, `providerFamily` and `modelId`.
-3. Translate canonical `AgentMessage[]` + `ToolDefinition[]` to the provider protocol.
-4. Translate provider tool calls back to canonical `ToolCall[]`.
-5. Translate provider streaming/progress into `AgentProgress`.
-6. Honor the supplied `AbortSignal` and timeout.
-7. Never select another connection, Company, model or execution target as fallback.
-8. Do not import filesystem/shell/Git tool implementations.
+## Como criar um novo provider adapter
 
-If the existing provider already implements `InferenceProvider`, use `InferenceProviderAgentAdapter` until a native tool-calling adapter adds material value.
+1. Create it outside `src/agent-runtime/`, preferably under `src/agent-provider-adapters/<provider>/`.
+2. Implement `AgentProviderAdapter`.
+3. Bind it to the selected Connection + model exactly.
+4. Translate canonical transcript/tools into the provider protocol.
+5. Translate provider tool calls back into `ToolCall`.
+6. Translate provider decision requests, reasoning summaries and attachment metadata into canonical fields when supported.
+7. Translate streaming/progress into `AgentProgress`.
+8. Honor the provided `AbortSignal` and timeout.
+9. Ensure provider-managed tools cannot execute invisibly outside Axis.
+10. Never choose an alternate Company/Connection/model/execution target.
 
-### Create a lifecycle consumer
+Do not import native filesystem/process/Git tool implementations into the provider adapter.
 
-1. Implement `AgentLifecycleSink` outside the runtime, for example under `src/project-memory/` or `src/tracing/`.
+## Como criar um lifecycle consumer
+
+1. Implement `AgentLifecycleSink` under a feature-owned directory such as `src/project-memory/` or `src/tracing/`.
 2. Consume `AgentLifecycleEvent` only.
-3. Partition persisted state using the event/session Company + Project + repository/root identity required by `docs/PROJECT_MEMORY.md`.
-4. Never infer Company from a provider account label or workspace path.
-5. Keep the sink observational. Queue durable writes if persistence is asynchronous or expensive.
-6. Do not instrument provider adapters separately for events already present in the common lifecycle.
+3. Persist using the canonical Company + Project + repository/root identity required by `docs/PROJECT_MEMORY.md`.
+4. Never infer Company from provider account labels or workspace paths.
+5. Keep persistence observational/idempotent.
+6. Do not instrument individual provider adapters for events already represented by the common lifecycle.
 
-### Create a capability
+## Como criar uma capability
 
-1. Pick a namespaced string ID owned by the feature module.
-2. Add it to the relevant session capability offers during composition.
-3. Add Company/Project/session/admin restrictions as `CapabilityRestriction` layers where required.
-4. Put the ID in the tool's `requiredCapabilities`.
-5. Add tests for both available and unavailable negotiation.
-6. Do not add a provider switch statement to the runtime.
+1. Create a namespaced capability ID in the feature module.
+2. Add it to session capability offers during composition.
+3. Apply restrictions at Company/Project/session/admin layers when needed.
+4. Add the ID to relevant `ToolDefinition.requiredCapabilities`.
+5. Test both available and unavailable negotiation.
+6. Do not add provider-specific branches to `AgentRuntime`.
 
 ---
 
-## Recommended parallel workstreams
+# Frentes paralelas recomendadas
 
-### Chat A — Filesystem tools
+## Chat A — Filesystem
 
-- Suggested branch: `feat/runtime-filesystem-tools`
-- Ownership: `src/agent-tools/filesystem/**`, focused tests under `test/agent-filesystem-*.test.ts`.
-- Consumes: `AxisTool`, `ToolExecutionContext`, `AgentRoot`, capability/permission contracts.
-- Do not modify: `src/agent-runtime/**`, provider adapters, Company/Project stores.
-- Dependencies: none beyond this gate.
-- Completion criteria:
-  - scoped list/read/search/stat/write/edit primitives as intentionally chosen for P1.2;
-  - path traversal/symlink/root enforcement;
+- Branch: `feat/runtime-filesystem-tools`
+- Ownership: `src/agent-tools/filesystem/**`, filesystem-focused tests.
+- Consumes: `AxisTool`, `ToolExecutionContext`, roots, capabilities, permissions, mutation lifecycle.
+- Must not modify: `src/agent-runtime/**`, provider adapters, Company/Project stores.
+- Dependencies: gate only.
+- Completion:
+  - scoped list/read/search/stat/write/edit primitives selected for P1.2;
+  - root/path traversal/symlink enforcement;
   - cancellation/timeouts;
-  - lifecycle read/mutation metadata;
-  - explicit mutation status;
-  - tests for read/write permissions and Company/Project root isolation.
+  - read/mutation activity metadata;
+  - mutation status;
+  - Company/Project isolation tests.
 
-### Chat B — Shell/process runtime
+## Chat B — Shell/process
 
-- Suggested branch: `feat/runtime-process-tools`
-- Ownership: `src/agent-tools/process/**`, process-specific tests.
-- Consumes: `AxisTool`, `ToolExecutionContext.signal`, command lifecycle, execution-target boundary.
-- Do not modify: `src/agent-runtime/**`, provider adapters.
-- Dependencies: none beyond this gate.
-- Completion criteria:
-  - `run_command`/process semantics chosen for P1.3;
-  - stdout/stderr/progress and exit metadata;
-  - cancellation/timeout/kill semantics;
+- Branch: `feat/runtime-process-tools`
+- Ownership: `src/agent-tools/process/**`, process tests.
+- Consumes: canonical tool, command lifecycle, execution target, cancellation.
+- Must not modify: runtime core or provider adapters.
+- Dependencies: gate only.
+- Completion:
+  - P1.3 process/run-command semantics;
+  - stdout/stderr/progress/exit metadata;
+  - cancellation/timeout/kill;
   - cwd restricted to session roots;
-  - command permission + mutation safety tests.
+  - permission and mutation-safety tests.
 
-### Chat C — Git/worktrees/review
+## Chat C — Git/worktrees/review
 
-- Suggested branch: `feat/runtime-git-worktrees`
-- Ownership: `src/agent-tools/git/**`, focused extensions to `src/project-git-review.ts` only when needed, Git tests.
-- Consumes: canonical tool/lifecycle/session contracts; may reuse existing project Git review parsing.
-- Do not modify: `src/agent-runtime/**`, provider adapters, Company/Project identity stores.
-- Dependencies: none for read/review/worktree tool implementation. Optional reuse of Chat B helpers should be done only after that helper API lands; do not block the branch on it.
-- Completion criteria:
-  - Company/Project-root-scoped Git status/diff/worktree operations;
-  - mutation permission boundaries;
-  - review output compatible with existing review UI data;
-  - lifecycle command/mutation/validation events;
-  - no arbitrary renderer-supplied repository path.
+- Branch: `feat/runtime-git-worktrees`
+- Ownership: `src/agent-tools/git/**`; narrow reuse/extensions of existing Git-review code only when necessary.
+- Consumes: tool/lifecycle/session contracts.
+- Must not modify: runtime core, provider adapters, Company/Project identity stores.
+- Dependencies: gate only. Process-helper reuse is optional post-merge integration.
+- Completion:
+  - scoped status/diff/worktree operations;
+  - explicit mutation permissions;
+  - existing review representation reused where practical;
+  - lifecycle command/mutation/validation metadata;
+  - no arbitrary renderer-supplied repo path.
 
-### Chat D — Project Memory and structured handoff
+## Chat D — Project Memory/handoff
 
-- Suggested branch: `feat/runtime-project-memory`
-- Ownership: `src/project-memory/**`, memory-specific tests; reuse existing repo-intelligence storage through an adapter rather than replacing it wholesale.
+- Branch: `feat/runtime-project-memory`
+- Ownership: `src/project-memory/**`, memory tests.
 - Consumes: `AgentLifecycleEvent`, `AgentLifecycleSink`, immutable session scope.
-- Do not modify: provider adapters, native tools, `src/agent-runtime/**`.
-- Dependencies: none for the lifecycle consumer. Richer memories can benefit later from A/B/C event metadata.
-- Completion criteria:
+- Must not modify: providers, native tools, runtime core.
+- Dependencies: gate only; richer A/B/C metadata may be consumed later.
+- Completion:
   - durable Company + Project + repository/root partitioning;
-  - event-driven extraction of useful reads/mutations/commands/validations/errors/completion;
-  - provider-independent handoff representation;
-  - no provider/auth/session as memory owner;
-  - cross-Company and cross-Project isolation tests.
+  - event-driven capture of reads/mutations/commands/validations/errors/decisions/completion;
+  - structured provider-neutral handoff;
+  - no provider/auth/session ownership of memory;
+  - cross-Company/Project isolation tests.
 
-### Chat E — MCP host/runtime tools
+## Chat E — MCP host
 
-- Suggested branch: `feat/runtime-mcp-host`
-- Ownership: `src/agent-tools/mcp/**` and MCP-specific adapter/tests; avoid rewriting existing `src/mcp-connectors.ts` unless required for a narrow bridge.
-- Consumes: `AxisTool`, `ToolRegistry`, session resources/capabilities, permission boundary.
-- Do not modify: `src/agent-runtime/**`, provider-specific adapters.
-- Dependencies: none for MCP discovery/invocation as canonical Axis tools.
-- Completion criteria:
-  - session-scoped MCP catalog → `ToolDefinition` bridge;
-  - connection/company/resource isolation;
+- Branch: `feat/runtime-mcp-host`
+- Ownership: `src/agent-tools/mcp/**`, narrow bridge code/tests.
+- Consumes: tool registry, resources, capabilities, permission/lifecycle contracts.
+- Must not modify: runtime core or provider-specific adapters.
+- Dependencies: gate only.
+- Completion:
+  - session-scoped MCP catalog → canonical tool-definition bridge;
+  - resource/Company isolation;
   - explicit capability/permission failure;
-  - MCP call/result lifecycle through the common runtime;
-  - no provider-specific MCP instrumentation in Project Memory.
+  - MCP invocation through common tool lifecycle;
+  - no provider-specific Project Memory instrumentation.
 
-### Chat F — Browser tools
+## Chat F — Browser
 
-- Suggested branch: `feat/runtime-browser-tools`
-- Ownership: `src/agent-tools/browser/**`, browser-specific tests.
-- Consumes: tool, permission, target, cancellation, lifecycle contracts.
-- Do not modify: `src/agent-runtime/**`, provider adapters.
-- Dependencies: none for the initial browser tool contract/implementation.
-- Completion criteria:
-  - browser lifecycle scoped to the session;
+- Branch: `feat/runtime-browser-tools`
+- Ownership: `src/agent-tools/browser/**`, browser tests.
+- Consumes: tool/permission/target/cancellation/lifecycle contracts.
+- Must not modify: runtime core or provider adapters.
+- Dependencies: gate only.
+- Completion:
+  - session-scoped browser lifetime;
   - navigation/read/action capabilities separated;
-  - cancellation/timeout;
-  - mutation/external-action permission semantics;
-  - tool-level tests without provider dependencies.
+  - cancellation/timeouts;
+  - external/mutation permissions;
+  - provider-independent tool tests.
 
-### Chat G — Additional/native provider adapters
+## Chat G — Provider adapters
 
-- Suggested branch: `feat/runtime-native-provider-adapters`
-- Ownership: `src/agent-provider-adapters/**` and provider-adapter tests. Existing files under `src/providers/**` should be changed only when the provider wire protocol itself requires it.
-- Consumes: `AgentProviderAdapter` and canonical messages/tools/progress.
-- Do not modify: native tool implementations, `AgentRuntime`, Company/Project stores.
-- Dependencies: none beyond this gate.
-- Completion criteria:
-  - native tool-call translation where supported;
-  - structured fallback retained where native tool calling is unavailable/unreliable;
-  - exact connection/model identity;
+- Branch: `feat/runtime-native-provider-adapters`
+- Ownership: `src/agent-provider-adapters/**`, provider-adapter tests; narrow provider wire-protocol changes only when required.
+- Consumes: `AgentProviderAdapter` and canonical transcript/tool/decision/progress contracts.
+- Must not modify: native tools, `AgentRuntime`, Company/Project stores.
+- Dependencies: gate only.
+- Completion:
+  - dedicated safe Account adapters/no-tools modes for Claude/Codex where needed;
+  - native tool-call translation where beneficial;
+  - structured fallback where safe/reliable;
+  - exact Connection/model identity;
   - cancellation/progress/error mapping;
-  - parity tests across Ollama, API-key and Account paths where practical.
+  - no hidden provider-managed filesystem/shell/MCP execution;
+  - parity tests across Account/API/local paths as applicable.
 
-### Chat H — UI panes and approvals
+## Chat H — UI panes/approvals
 
-- Suggested branch: `feat/runtime-ui-panes`
-- Ownership: `app/src/**` for panes/approval/progress/transcript presentation and UI tests.
-- Consumes: serialized runtime lifecycle/result/permission concepts; existing Axis/Claude visual system.
-- Do not modify: `src/agent-runtime/**` as part of visual work.
-- Dependencies: can build UI states in parallel. Final live wiring depends on the selected backend composition/endpoints after tool/provider branches land.
-- Completion criteria:
-  - tool call/result/progress/error/cancellation presentation;
-  - permission request/decision UX;
-  - review/terminal panes only to the depth assigned to this branch;
-  - required real-Electron visual verification from `AGENTS.md`.
+- Branch: `feat/runtime-ui-panes`
+- Ownership: `app/src/**`, UI tests.
+- Consumes: serialized canonical transcript/lifecycle/result/decision/permission shapes.
+- Must not modify: runtime core as part of visual work.
+- Dependencies: UI states can be developed from the gate; final live backend wiring follows composition integration.
+- Completion:
+  - tool call/result/progress/error/cancellation UI;
+  - pause/decision/approval UI;
+  - reasoning-summary/attachment presentation where assigned;
+  - required Axis/Claude visual validation from `AGENTS.md`.
 
 ---
 
-## Conflict matrix
+# Matriz de conflitos
 
-Legend: **Yes** = safe to develop concurrently from this gate; **Integrate** = implementation can proceed concurrently but final wiring/reuse should wait; **Sequence** = avoid simultaneous ownership of the same integration file.
+All feature implementations A–H may be developed simultaneously after this gate is merged.
 
-| Workstream | A FS | B Process | C Git | D Memory | E MCP | F Browser | G Providers | H UI |
+| Workstream | A FS | B Proc | C Git | D Memory | E MCP | F Browser | G Provider | H UI |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | A Filesystem | — | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | B Process | Yes | — | Yes | Yes | Yes | Yes | Yes | Yes |
@@ -374,41 +508,52 @@ Legend: **Yes** = safe to develop concurrently from this gate; **Integrate** = i
 | G Providers | Yes | Yes | Yes | Yes | Yes | Yes | — | Yes |
 | H UI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | — |
 
-The remaining intentional sequential point is **product composition/integration**, not contract invention. Once parallel PRs are ready, a narrow integration branch should wire their exported modules into Chat/Cowork/runtime endpoints. That integration pass must consume the frozen interfaces rather than redesign them.
+The remaining intentional sequential point is **product composition/integration**.
 
-If Chat C elects to reuse a process helper produced by Chat B, that particular refactor is an optional post-merge integration and should not make the Git implementation depend on an unmerged branch.
+Once feature PRs are ready, a narrow integration branch should register tools/adapters/lifecycle consumers and migrate Chat/Cowork entrypoints using the frozen interfaces.
+
+That integration pass must consume the contracts above rather than redesign them.
 
 ---
 
-## Validation
+# Validação
 
-Required repository validation for this gate and every merge-intended follow-up remains:
+Required validation for this gate and follow-up mergeable PRs:
 
 ```bash
 npm run release:validate
 npm run check
 ```
 
-`npm run check` includes:
+`npm run check` covers:
 
-- TypeScript build (`tsc -p tsconfig.json`);
-- app build (`vite build`);
-- all Node/tsx tests.
+- release metadata validation;
+- TypeScript build;
+- Vite app build;
+- full Node/tsx test suite.
 
-The gate-specific architecture coverage is in:
+Gate-specific architecture coverage lives in:
 
 - `test/agent-runtime.test.ts`
+- `test/agent-runtime-decisions.test.ts`
 
-It verifies:
+Together they cover:
 
-- two different provider adapters with one runtime/tool protocol;
-- Account and API-key auth through the same `InferenceProviderAgentAdapter` architecture;
-- Company isolation and fail-closed mixed scopes;
-- a provider-neutral tool implementation;
-- explicit unavailable-capability behavior;
+- two distinct provider adapters with one runtime/tool protocol;
+- Account/API-key auth kinds under the same architectural boundary;
+- rejection of the generic inference bridge when provider-managed tools are uncontrolled;
+- provider-neutral tools;
+- Company isolation;
+- immutable exact Connection/model/execution-target selection;
+- explicit capability refusal;
 - provider-independent lifecycle events;
-- canonical cancellation;
-- timeout + mutation retry safety; and
-- no silent provider/model/execution-target fallback.
+- cancellation;
+- timeout and mutation retry safety;
+- provider-originated decision pauses;
+- permission-originated approval pauses before mutation;
+- decision resolution lifecycle;
+- reasoning-summary and attachment transcript metadata.
 
-CI remains the source of truth when local execution is unavailable. PR CI must be green before this gate is considered merge-ready.
+PR CI is the source of truth for the final branch head.
+
+The gate is merge-ready only when required CI is green on that head.
