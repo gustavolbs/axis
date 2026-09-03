@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Cloud, Database, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Check, Database, RefreshCw, ShieldCheck } from 'lucide-react';
 
 import type {
   AdminProject,
@@ -41,6 +41,25 @@ async function api<T>(url: string, init?: { method?: string; body?: unknown }): 
   return body;
 }
 
+function canonicalProject(project: AdminProject): AdminProject {
+  const companyId = project.companyId || project.organizationId || 'personal';
+  return {
+    ...project,
+    companyId,
+    companyName: project.companyName ?? project.organizationName ?? (companyId === 'personal' ? 'Personal' : companyId)
+  };
+}
+
+function canonicalConnection(connection: ProviderConnectionView): ProviderConnectionView {
+  if (connection.auth === 'local') return { ...connection, companyId: undefined, companyName: undefined };
+  const companyId = connection.companyId ?? connection.organizationId;
+  return {
+    ...connection,
+    companyId,
+    companyName: connection.companyName ?? connection.organizationLabel ?? companyId
+  };
+}
+
 function legacyPolicy(project: AdminProject): ProjectConnectionPolicy {
   const allowed = project.privacy.allowedProviderIds.length ? project.privacy.allowedProviderIds : ['ollama'];
   const explicit = project.defaultModel.mode === 'explicit' ? project.defaultModel : undefined;
@@ -78,16 +97,17 @@ export function ProjectConnectionsPanel({
   project: AdminProject;
   onProjectChanged: (project: AdminProject) => void;
 }) {
+  const scopedProject = canonicalProject(project);
   const [connections, setConnections] = useState<ProviderConnectionView[]>([]);
   const [sources, setSources] = useState<WorkHubSourceSummary[]>([]);
   const [catalog, setCatalog] = useState<ProjectCatalog>();
-  const [policy, setPolicy] = useState<ProjectConnectionPolicy>(() => structuredClone(project.connectionPolicy ?? legacyPolicy(project)));
+  const [policy, setPolicy] = useState<ProjectConnectionPolicy>(() => structuredClone(scopedProject.connectionPolicy ?? legacyPolicy(scopedProject)));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
 
   useEffect(() => {
-    setPolicy(structuredClone(project.connectionPolicy ?? legacyPolicy(project)));
-  }, [project.id, project.updatedAt]);
+    setPolicy(structuredClone(scopedProject.connectionPolicy ?? legacyPolicy(scopedProject)));
+  }, [scopedProject.id, scopedProject.updatedAt]);
 
   async function refresh() {
     setBusy(true);
@@ -97,9 +117,9 @@ export function ProjectConnectionsPanel({
       const [connectionItems, sourceSnapshot, catalogResult] = await Promise.all([
         bridge?.providerConnections() ?? Promise.resolve([]),
         bridge?.workHubSnapshot() ?? Promise.resolve(undefined),
-        api<{ catalog: ProjectCatalog }>(`/api/projects/${encodeURIComponent(project.id)}/catalog`)
+        api<{ catalog: ProjectCatalog }>(`/api/projects/${encodeURIComponent(scopedProject.id)}/catalog`)
       ]);
-      setConnections(connectionItems as ProviderConnectionView[]);
+      setConnections((connectionItems as ProviderConnectionView[]).map(canonicalConnection));
       setSources((sourceSnapshot?.sources ?? []) as WorkHubSourceSummary[]);
       setCatalog(catalogResult.catalog);
       setPolicy(structuredClone(catalogResult.catalog.connectionPolicy));
@@ -110,7 +130,7 @@ export function ProjectConnectionsPanel({
     }
   }
 
-  useEffect(() => { void refresh(); }, [project.id]);
+  useEffect(() => { void refresh(); }, [scopedProject.id]);
 
   const connectionById = useMemo(
     () => new Map(connections.map((connection) => [connection.id, connection])),
@@ -122,8 +142,8 @@ export function ProjectConnectionsPanel({
   );
 
   function belongs(connection: ProviderConnectionView): boolean {
-    if (connection.organizationId === 'local') return true;
-    if (connection.organizationId === project.organizationId) return true;
+    if (connection.auth === 'local') return true;
+    if (connection.companyId === scopedProject.companyId) return true;
     return policy.chat.allowedConnectionIds.includes(connection.id) || policy.inference.allowedConnectionIds.includes(connection.id);
   }
 
@@ -182,8 +202,8 @@ export function ProjectConnectionsPanel({
       const defaultConnection = policy.chat.defaultConnectionId;
       const defaultModel = defaultConnection && policy.chat.defaultModelId
         ? { mode: 'explicit' as const, providerId: defaultConnection, modelId: policy.chat.defaultModelId }
-        : project.defaultModel;
-      const { project: updated } = await api<{ project: AdminProject }>(`/api/projects/${encodeURIComponent(project.id)}`, {
+        : scopedProject.defaultModel;
+      const { project: updated } = await api<{ project: AdminProject }>(`/api/projects/${encodeURIComponent(scopedProject.id)}`, {
         method: 'PATCH',
         body: {
           connectionPolicy: policy,
@@ -191,7 +211,7 @@ export function ProjectConnectionsPanel({
           defaultModel
         }
       });
-      onProjectChanged(updated);
+      onProjectChanged(canonicalProject(updated));
       window.dispatchEvent(new CustomEvent('local-coder:projects-changed'));
       setMessage('Project connection policy saved. Existing conversations keep their selected identity.');
       await refresh();
@@ -218,14 +238,15 @@ export function ProjectConnectionsPanel({
       .pcp-select{width:100%;font-size:10px;min-height:32px}.pcp-actions{display:flex;justify-content:flex-end;gap:7px}.pcp-message{font-size:9px;color:var(--lc-muted)}
     `}</style>
     <header><h2>Connections</h2><button className="icon" aria-label="Refresh connections" onClick={() => void refresh()} disabled={busy}><RefreshCw size={14}/></button></header>
-    <p className="pcp-note">This Project is isolated to <strong>{project.organizationName ?? project.organizationId}</strong>. Corporate identities from other organizations are visible but cannot be newly enabled. Local Ollama remains organization-neutral.</p>
+    <p className="pcp-note">This Project belongs to <strong>{scopedProject.companyName ?? scopedProject.companyId}</strong>. Connections owned by another Company are visible but cannot be newly enabled. Shared local execution remains company-neutral.</p>
 
     <div className="pcp-group"><strong>Allowed Chat identities</strong>
       {connections.map((connection) => {
         const compatible = belongs(connection);
         const checked = policy.chat.allowedConnectionIds.includes(connection.id);
+        const owner = connection.auth === 'local' ? 'Shared local' : connection.companyName ?? connection.companyId ?? 'Unassigned';
         return <button type="button" key={`chat:${connection.id}`} className={`pcp-row ${compatible ? '' : 'disabled'}`} disabled={!compatible || busy} onClick={() => toggle('chat', connection.id)}>
-          <span className="pcp-check">{checked ? <Check size={11}/> : null}</span><span className="pcp-copy"><strong>{connection.label}</strong><small>{connectionAuthLabel(connection.auth)} · {connection.organizationId}</small></span><span className="pcp-kind">{connection.providerFamily}</span>
+          <span className="pcp-check">{checked ? <Check size={11}/> : null}</span><span className="pcp-copy"><strong>{connection.label}</strong><small>{connectionAuthLabel(connection.auth)} · {owner}</small></span><span className="pcp-kind">{connection.providerFamily}</span>
         </button>;
       })}
     </div>
@@ -243,8 +264,9 @@ export function ProjectConnectionsPanel({
       {connections.map((connection) => {
         const compatible = belongs(connection);
         const checked = policy.inference.allowedConnectionIds.includes(connection.id);
+        const owner = connection.auth === 'local' ? 'Shared local' : connection.companyName ?? connection.companyId ?? 'Unassigned';
         return <button type="button" key={`cowork:${connection.id}`} className={`pcp-row ${compatible ? '' : 'disabled'}`} disabled={!compatible || busy} onClick={() => toggle('inference', connection.id)}>
-          <span className="pcp-check">{checked ? <Check size={11}/> : null}</span><span className="pcp-copy"><strong>{connection.label}</strong><small>{connectionAuthLabel(connection.auth)} · {connection.organizationId}</small></span><span className="pcp-kind">{connection.providerFamily}</span>
+          <span className="pcp-check">{checked ? <Check size={11}/> : null}</span><span className="pcp-copy"><strong>{connection.label}</strong><small>{connectionAuthLabel(connection.auth)} · {owner}</small></span><span className="pcp-kind">{connection.providerFamily}</span>
         </button>;
       })}
       <select className="pcp-select" value={policy.inference.preferredConnectionId ?? ''} onChange={(event) => setPolicy((current) => ({ ...current, inference: { ...current.inference, preferredConnectionId: event.target.value || undefined } }))}>
@@ -255,14 +277,14 @@ export function ProjectConnectionsPanel({
     <div className="pcp-group"><strong>Work Hub sources</strong>
       {sources.filter((source) => {
         const connection = connectionById.get(source.connectionId);
-        return connection?.organizationId === project.organizationId;
+        return connection?.companyId === scopedProject.companyId;
       }).map((source) => <button type="button" key={source.id} className="pcp-row" disabled={busy} onClick={() => toggleSource(source.id)}>
         <span className="pcp-check">{policy.workSourceIds.includes(source.id) ? <Check size={11}/> : null}</span><span className="pcp-copy"><strong>{source.label}</strong><small>{source.system} · {source.kind}</small></span><span className="pcp-kind"><Database size={11}/></span>
       </button>)}
       {sources.length === 0 ? <p className="pcp-note">Create Calendar/Jira/Teams/etc. sources in Work Hub first. Source binding remains independent from model routing.</p> : null}
     </div>
 
-    <p className="pcp-note"><ShieldCheck size={11}/> Identity fallback is fail-closed: if the selected corporate connection is unavailable, Local Coder reports it instead of switching to another account.</p>
+    <p className="pcp-note"><ShieldCheck size={11}/> Identity fallback is fail-closed: if the selected company-owned connection is unavailable, Axis reports it instead of switching to another account.</p>
     {message ? <div className="pcp-message" role="status">{message}</div> : null}
     <div className="pcp-actions"><button className="btn-primary" onClick={() => void save()} disabled={busy}>{busy ? 'Saving…' : 'Save connections'}</button></div>
   </section>;
