@@ -1,11 +1,12 @@
 import {
   ApiConnectionEndpointStore,
   apiConnectionAllowedHeaders,
-  testApiKeyConnection,
   type ApiEndpointProviderFamily
 } from './api-connection-endpoints.js';
 import { CredentialManager, type CredentialProfile } from './credential-store.js';
 import { ProviderConnectionRuntime, type ProviderConnectionView } from './provider-connections.js';
+import { AnthropicInferenceProvider } from './providers/anthropic-provider.js';
+import { OpenAIInferenceProvider } from './providers/openai-provider.js';
 import type { ProviderHealth } from './providers/types.js';
 
 export interface ApiKeyConnectionDetails {
@@ -113,8 +114,25 @@ export class ApiKeyConnectionLifecycle {
   }
 
   async test(connectionId: string): Promise<ProviderHealth> {
-    apiView(this.runtime, connectionId);
-    return await testApiKeyConnection(this.runtime, connectionId);
+    const view = apiView(this.runtime, connectionId);
+    const profile = profileFor(this.credentials, view);
+    const config = this.configs.get(connectionId);
+    if (config?.enabled === false) throw new Error(`API connection ${view.label} is disabled.`);
+    if (config && (config.credentialId !== profile.id || config.providerFamily !== view.providerFamily)) {
+      throw new Error(`API connection configuration does not match ${connectionId}.`);
+    }
+    const secret = this.credentials.resolve(profile.id);
+    if (!secret) throw new Error(`Credential for ${view.label} is unavailable.`);
+
+    // Connection Center Test is deliberately narrower than inference: construct
+    // a fresh provider from the current persisted connection metadata and run
+    // only its non-mutating model/health probe. This avoids cached/decorated
+    // runtime state while still exercising the actual key, endpoint and allowed
+    // headers that the next provider request will use.
+    const provider = view.providerFamily === 'openai'
+      ? new OpenAIInferenceProvider({ apiKey: secret, baseUrl: config?.endpoint, headers: config?.headers })
+      : new AnthropicInferenceProvider({ apiKey: secret, baseUrl: config?.endpoint, headers: config?.headers });
+    return await provider.health();
   }
 
   remove(connectionId: string): boolean {
