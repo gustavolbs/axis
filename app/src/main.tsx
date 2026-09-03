@@ -171,40 +171,42 @@ function CompanyScopeController() {
 /**
  * Transitional renderer composition: the conversation shell remains responsible
  * for navigation/persistence while this controller projects the canonical
- * AgentRuntime lifecycle into the UI component introduced by the runtime-UI
- * workstream. Approval posts back through the existing job decision endpoint;
- * the backend bridge translates that one response to AgentDecisionResolution.
+ * AgentRuntime lifecycle into the existing assistant body. The shell does not
+ * expose its selected job id to sibling controllers, so projection deliberately
+ * fails closed when more than one runtime job is active or when the visible
+ * conversation is not itself showing an active/approval state. This prevents a
+ * background Company/Project run from leaking activity into another chat.
  */
 function AgentRuntimeLifecycleController() {
-  const [job, setJob] = useState<LifecycleJob>();
+  const [jobs, setJobs] = useState<LifecycleJob[]>([]);
   const [target, setTarget] = useState<HTMLElement | null>(null);
+  const active = jobs.filter((candidate) =>
+    (candidate.lifecycleEvents?.length ?? 0) > 0 &&
+    ['queued', 'running', 'waiting-decision', 'waiting-guidance'].includes(candidate.status)
+  );
+  const job = active.length === 1 ? active[0] : undefined;
 
   useEffect(() => {
     let disposed = false;
-    const select = (jobs: LifecycleJob[]) => {
-      const candidates = jobs
-        .filter((candidate) => (candidate.lifecycleEvents?.length ?? 0) > 0)
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-      const running = candidates.find((candidate) =>
-        ['queued', 'running', 'waiting-decision', 'waiting-guidance'].includes(candidate.status)
-      );
-      if (!disposed) setJob(running ?? candidates[0]);
-    };
-
     void fetch('/api/jobs', { headers: { accept: 'application/json' } })
       .then(async (response) => {
         const payload = await response.json() as { jobs?: LifecycleJob[] };
-        if (response.ok) select(payload.jobs ?? []);
+        if (response.ok && !disposed) setJobs(payload.jobs ?? []);
       })
       .catch(() => undefined);
 
     const events = new EventSource('/api/events');
     events.addEventListener('jobs', (event) => {
-      select(JSON.parse((event as MessageEvent<string>).data) as LifecycleJob[]);
+      if (disposed) return;
+      setJobs(JSON.parse((event as MessageEvent<string>).data) as LifecycleJob[]);
     });
     events.addEventListener('job', (event) => {
+      if (disposed) return;
       const payload = JSON.parse((event as MessageEvent<string>).data) as { job: LifecycleJob };
-      if ((payload.job.lifecycleEvents?.length ?? 0) > 0) setJob(payload.job);
+      setJobs((current) => [
+        payload.job,
+        ...current.filter((candidate) => candidate.id !== payload.job.id)
+      ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)));
     });
     return () => {
       disposed = true;
@@ -214,7 +216,12 @@ function AgentRuntimeLifecycleController() {
 
   useEffect(() => {
     const locate = () => {
-      const next = lastElement('.lc-agent-thread .assistant-body');
+      const visibleActiveState = document.querySelector(
+        '.lc-agent-stop-button, .decision-picker-head'
+      );
+      const next = visibleActiveState
+        ? lastElement('.lc-agent-thread .assistant-body')
+        : null;
       setTarget((current) => current === next ? current : next);
     };
     locate();
@@ -232,7 +239,12 @@ function AgentRuntimeLifecycleController() {
     });
     const payload = await response.json() as { job?: LifecycleJob; error?: string };
     if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
-    if (payload.job) setJob(payload.job);
+    if (payload.job) {
+      setJobs((current) => [
+        payload.job!,
+        ...current.filter((candidate) => candidate.id !== payload.job!.id)
+      ]);
+    }
   }
 
   if (!job || !target || !(job.lifecycleEvents?.length)) return null;
