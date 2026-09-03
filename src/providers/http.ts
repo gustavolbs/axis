@@ -4,6 +4,9 @@ import {
   requestAbortSignal,
   throwIfCancelled
 } from '../cancellation.js';
+import { redactRuntimeText } from '../runtime-security/redaction.js';
+import { runtimeSecureFetch } from '../runtime-security/secure-fetch.js';
+import type { RuntimeNetworkPolicy } from '../runtime-security/network-policy.js';
 import { ProviderError } from './types.js';
 
 export type FetchLike = typeof globalThis.fetch;
@@ -14,15 +17,22 @@ export interface SseEvent {
 }
 
 export function redactSecrets(value: string, secrets: string[]): string {
-  let redacted = value;
-  for (const secret of secrets) {
-    if (!secret) continue;
-    redacted = redacted.split(secret).join('[REDACTED]');
+  return redactRuntimeText(value, { knownSecrets: secrets });
+}
+
+function providerNetworkPolicy(providerId: string): RuntimeNetworkPolicy {
+  if (providerId.trim().toLowerCase() === 'ollama') {
+    return Object.freeze({
+      allowLoopback: true,
+      allowPrivateNetwork: false,
+      allowInsecureHttp: true
+    });
   }
-  redacted = redacted
-    .replace(/sk-ant-[A-Za-z0-9_-]+/g, '[REDACTED]')
-    .replace(/sk-[A-Za-z0-9_-]{12,}/g, '[REDACTED]');
-  return redacted;
+  return Object.freeze({
+    allowLoopback: false,
+    allowPrivateNetwork: false,
+    allowInsecureHttp: false
+  });
 }
 
 function retryAfterMs(response: Response): number | undefined {
@@ -63,9 +73,11 @@ export async function fetchWithProviderErrors(
   const abort = requestAbortSignal(timeoutMs, init.signal ?? undefined);
   let response: Response;
   try {
-    response = await fetchImpl(url, {
+    response = await runtimeSecureFetch(fetchImpl, url, {
       ...init,
       signal: abort.signal
+    }, {
+      policy: providerNetworkPolicy(providerId)
     });
   } catch (error) {
     if (callerCancelled(abort.callerSignals)) {
