@@ -63,6 +63,7 @@ async function chooseAuth(cdp, label) {
   await evaluate(cdp, `(() => { const option = [...document.querySelectorAll('[role="option"]')].find((item) => item.textContent?.includes(${JSON.stringify(label)})); if (!option) throw new Error(${JSON.stringify(`${label} option not found`)}); option.click(); return true; })()`);
 }
 async function openPersonalConnections(cdp) {
+  await waitFor(cdp, `document.querySelector('.lc-shell-primary-nav button[data-company-id="personal"]') !== null`, 'Personal context navigation');
   await evaluate(cdp, `(() => { const personal = document.querySelector('.lc-shell-primary-nav button[data-company-id="personal"]'); if (!personal) throw new Error('Personal context not found'); personal.click(); return true; })()`);
   await waitFor(cdp, `document.querySelector('.company-hub[data-company-id="personal"]') !== null`, 'Personal Company Hub');
   await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.company-hub-rail > button')].find((item) => item.textContent?.trim() === 'Connections'); if (!button) throw new Error('Connections section missing'); button.click(); return true; })()`);
