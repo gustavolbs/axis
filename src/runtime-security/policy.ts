@@ -123,7 +123,7 @@ function firstStringArg(args: Readonly<Record<string, unknown>>, keys: readonly 
 }
 
 function pathDescriptor(args: Readonly<Record<string, unknown>>): string | undefined {
-  return firstStringArg(args, ['path', 'file', 'target', 'cwd', 'rootId']);
+  return firstStringArg(args, ['relativePath', 'path', 'sourcePath', 'destinationPath', 'file', 'target', 'cwd', 'rootId']);
 }
 
 function urlDescriptor(args: Readonly<Record<string, unknown>>): string | undefined {
@@ -210,39 +210,24 @@ function modeEffect(
 ): RuntimePolicyEffect {
   if (mode === 'plan') return toolEffect === 'read' || toolEffect === 'validation' ? 'allow' : 'deny';
   if (mode === 'ask-before') return toolEffect === 'read' || toolEffect === 'validation' ? 'allow' : 'ask';
-  if (mode === 'workspace-write') {
-    if (subject.destructive || subject.external) return 'ask';
-    return 'allow';
-  }
+  if (mode === 'workspace-write') return subject.destructive || subject.external ? 'ask' : 'allow';
   if (mode === 'auto') return subject.destructive ? 'ask' : 'allow';
   return 'allow';
 }
 
 function validateRule(value: RuntimePolicyRule): RuntimePolicyRule {
   const rule = record(value, 'Runtime policy rule') as unknown as RuntimePolicyRule;
-  if (typeof rule.id !== 'string' || !rule.id.trim()) {
-    throw new Error('Runtime policy rule id is required.');
-  }
-  if (!['allow', 'ask', 'deny'].includes(rule.effect)) {
-    throw new Error(`Invalid runtime policy effect: ${String(rule.effect)}`);
-  }
+  if (typeof rule.id !== 'string' || !rule.id.trim()) throw new Error('Runtime policy rule id is required.');
+  if (!['allow', 'ask', 'deny'].includes(rule.effect)) throw new Error(`Invalid runtime policy effect: ${String(rule.effect)}`);
   if (!['filesystem', 'process', 'git', 'mcp', 'browser', 'network', 'destructive', 'external'].includes(rule.domain)) {
     throw new Error(`Invalid runtime policy domain: ${String(rule.domain)}`);
   }
-  if (rule.match !== undefined && typeof rule.match !== 'string') {
-    throw new Error('Runtime policy rule match must be a string.');
-  }
-  if (rule.note !== undefined && typeof rule.note !== 'string') {
-    throw new Error('Runtime policy rule note must be a string.');
-  }
+  if (rule.match !== undefined && typeof rule.match !== 'string') throw new Error('Runtime policy rule match must be a string.');
+  if (rule.note !== undefined && typeof rule.note !== 'string') throw new Error('Runtime policy rule note must be a string.');
   const match = rule.match?.trim();
   const note = rule.note?.trim();
-  if (match && redactRuntimeText(match) !== match) {
-    throw new Error('Runtime policy rules must not persist credentials or secrets.');
-  }
-  if (note && redactRuntimeText(note) !== note) {
-    throw new Error('Runtime policy notes must not persist credentials or secrets.');
-  }
+  if (match && redactRuntimeText(match) !== match) throw new Error('Runtime policy rules must not persist credentials or secrets.');
+  if (note && redactRuntimeText(note) !== note) throw new Error('Runtime policy notes must not persist credentials or secrets.');
   return Object.freeze({
     id: rule.id.trim(),
     effect: rule.effect,
@@ -254,12 +239,8 @@ function validateRule(value: RuntimePolicyRule): RuntimePolicyRule {
 
 function validateScope(value: RuntimePolicyScope): RuntimePolicyScope {
   const scope = record(value, 'Runtime policy scope') as unknown as RuntimePolicyScope;
-  if (scope.mode !== undefined && !(scope.mode in MODE_RANK)) {
-    throw new Error(`Invalid runtime authority mode: ${String(scope.mode)}`);
-  }
-  if (scope.rules !== undefined && !Array.isArray(scope.rules)) {
-    throw new Error('Runtime policy rules must be an array.');
-  }
+  if (scope.mode !== undefined && !(scope.mode in MODE_RANK)) throw new Error(`Invalid runtime authority mode: ${String(scope.mode)}`);
+  if (scope.rules !== undefined && !Array.isArray(scope.rules)) throw new Error('Runtime policy rules must be an array.');
   return Object.freeze({
     ...(scope.mode ? { mode: scope.mode } : {}),
     rules: Object.freeze((scope.rules ?? []).map((rule) => validateRule(rule)))
@@ -280,8 +261,7 @@ function normalizePolicyFile(value: unknown): RuntimePolicyFile {
     if (rawCompany.projects !== undefined) {
       const projectsRecord = record(rawCompany.projects, `Runtime policy Company ${companyId} projects`);
       for (const [rawProjectId, rawProjectValue] of Object.entries(projectsRecord)) {
-        const projectId = cleanScopeId(rawProjectId, 'Project id');
-        projects[projectId] = validateScope(rawProjectValue as RuntimePolicyScope);
+        projects[cleanScopeId(rawProjectId, 'Project id')] = validateScope(rawProjectValue as RuntimePolicyScope);
       }
     }
     companies[companyId] = Object.freeze({
@@ -293,19 +273,11 @@ function normalizePolicyFile(value: unknown): RuntimePolicyFile {
   const updatedAt = typeof root.updatedAt === 'string' && !Number.isNaN(Date.parse(root.updatedAt))
     ? root.updatedAt
     : new Date().toISOString();
-  return Object.freeze({
-    version: 1,
-    companies: Object.freeze(companies),
-    updatedAt
-  });
+  return Object.freeze({ version: 1, companies: Object.freeze(companies), updatedAt });
 }
 
 function freshFile(): RuntimePolicyFile {
-  return Object.freeze({
-    version: 1,
-    companies: Object.freeze({}),
-    updatedAt: new Date().toISOString()
-  });
+  return Object.freeze({ version: 1, companies: Object.freeze({}), updatedAt: new Date().toISOString() });
 }
 
 export class RuntimePolicyStore {
@@ -330,11 +302,7 @@ export class RuntimePolicyStore {
     const temporary = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
     fs.writeFileSync(temporary, `${JSON.stringify(normalized, null, 2)}\n`, { mode: 0o600 });
     fs.renameSync(temporary, this.filePath);
-    try {
-      fs.chmodSync(this.filePath, 0o600);
-    } catch {
-      // Best effort on platforms without POSIX modes.
-    }
+    try { fs.chmodSync(this.filePath, 0o600); } catch { /* best effort on non-POSIX filesystems */ }
     this.state = normalized;
   }
 
@@ -370,10 +338,7 @@ export class RuntimePolicyStore {
         ...this.state.companies,
         [companyKey]: {
           ...company,
-          projects: {
-            ...(company.projects ?? {}),
-            [projectKey]: validateScope(scope)
-          }
+          projects: { ...(company.projects ?? {}), [projectKey]: validateScope(scope) }
         }
       },
       updatedAt: new Date().toISOString()
@@ -384,10 +349,7 @@ export class RuntimePolicyStore {
 export class RuntimePolicyEngine {
   constructor(readonly store = new RuntimePolicyStore()) {}
 
-  evaluate(
-    request: ToolPermissionRequest,
-    sessionOverride?: RuntimeSessionPolicyOverride
-  ): RuntimePolicyDecision {
+  evaluate(request: ToolPermissionRequest, sessionOverride?: RuntimeSessionPolicyOverride): RuntimePolicyDecision {
     const trustedOverride = sessionOverride ? assertTrustedPolicyOverride(sessionOverride) : undefined;
     const company = this.store.company(request.session.companyId);
     const project = request.session.project
@@ -395,23 +357,20 @@ export class RuntimePolicyEngine {
       : undefined;
     const mode = restrictiveMode([company?.mode, project?.mode, trustedOverride?.mode]);
     const subject = runtimePolicySubject(request);
-    const matches = [
-      company?.rules ?? [],
-      project?.rules ?? [],
-      trustedOverride?.rules ?? []
-    ].flat().filter((rule) => matchesRule(rule, subject));
+    const matches = [company?.rules ?? [], project?.rules ?? [], trustedOverride?.rules ?? []]
+      .flat()
+      .filter((rule) => matchesRule(rule, subject));
     const explicit = strictestEffect(matches.map((rule) => rule.effect));
     const fallback = modeEffect(mode, subject, request.tool.effect);
     const effect = explicit === undefined ? fallback : strictestEffect([fallback, explicit])!;
-    const reason = matches.length > 0
-      ? `${effect.toUpperCase()} by runtime policy rule(s): ${matches.map((rule) => rule.id).join(', ')}.`
-      : `${effect.toUpperCase()} by ${mode} authority mode.`;
     return {
       effect,
       mode,
       subject,
       matchedRuleIds: Object.freeze(matches.map((rule) => rule.id)),
-      reason
+      reason: matches.length > 0
+        ? `${effect.toUpperCase()} by runtime policy rule(s): ${matches.map((rule) => rule.id).join(', ')}.`
+        : `${effect.toUpperCase()} by ${mode} authority mode.`
     };
   }
 }
@@ -430,15 +389,9 @@ export class RuntimePolicyPermissionGate implements ToolPermissionGate {
   private pending?: PendingApproval;
   private lastAsk?: Omit<PendingApproval, 'requestId'>;
   private resolution?: AgentDecisionResolution;
-  private consumed = false;
 
-  constructor(
-    readonly engine: RuntimePolicyEngine,
-    sessionOverride?: RuntimeSessionPolicyOverride
-  ) {
-    this.sessionOverride = sessionOverride
-      ? assertTrustedPolicyOverride(sessionOverride)
-      : undefined;
+  constructor(readonly engine: RuntimePolicyEngine, sessionOverride?: RuntimeSessionPolicyOverride) {
+    this.sessionOverride = sessionOverride ? assertTrustedPolicyOverride(sessionOverride) : undefined;
   }
 
   remember(
@@ -448,13 +401,20 @@ export class RuntimePolicyPermissionGate implements ToolPermissionGate {
     if (!call || !this.lastAsk || call.name !== this.lastAsk.toolName) return;
     this.pending = { requestId: request.id, ...this.lastAsk };
     this.resolution = undefined;
-    this.consumed = false;
   }
 
   resolve(resolution: AgentDecisionResolution): void {
     if (!this.pending || resolution.requestId !== this.pending.requestId) return;
     this.resolution = resolution;
-    this.consumed = false;
+  }
+
+  private consumeDecision(): { pending: PendingApproval; resolution: AgentDecisionResolution } | undefined {
+    if (!this.pending || !this.resolution || this.resolution.requestId !== this.pending.requestId) return undefined;
+    const consumed = { pending: this.pending, resolution: this.resolution };
+    this.pending = undefined;
+    this.resolution = undefined;
+    this.lastAsk = undefined;
+    return consumed;
   }
 
   async authorize(request: ToolPermissionRequest): Promise<ToolPermissionDecision> {
@@ -474,23 +434,23 @@ export class RuntimePolicyPermissionGate implements ToolPermissionGate {
       argumentFingerprint: runtimeToolArgumentFingerprint(request.call.arguments)
     };
     this.lastAsk = identity;
-    const approved = this.pending && this.resolution && !this.consumed &&
+
+    const decisionMatches = this.pending && this.resolution &&
       this.pending.sessionId === identity.sessionId &&
       this.pending.companyId === identity.companyId &&
       this.pending.toolName === identity.toolName &&
       this.pending.argumentFingerprint === identity.argumentFingerprint &&
-      (this.resolution.optionId === 'approve' ||
-        this.resolution.text?.trim().toLowerCase() === 'approve');
-    if (approved) {
-      this.consumed = true;
-      return {
-        allowed: true,
-        reason: `Approved once by ${this.pending!.requestId}; ${policy.reason}`
-      };
+      this.resolution.requestId === this.pending.requestId;
+
+    if (decisionMatches) {
+      const consumed = this.consumeDecision()!;
+      const approved = consumed.resolution.optionId === 'approve' ||
+        consumed.resolution.text?.trim().toLowerCase() === 'approve';
+      return approved
+        ? { allowed: true, reason: `Approved once by ${consumed.pending.requestId}; ${policy.reason}` }
+        : { allowed: false, reason: `Denied by decision ${consumed.resolution.requestId}.` };
     }
-    if (this.pending && this.resolution && this.resolution.requestId === this.pending.requestId) {
-      return { allowed: false, reason: `Denied by decision ${this.resolution.requestId}.` };
-    }
+
     return {
       allowed: false,
       requiresApproval: true,
@@ -514,16 +474,11 @@ export function policyRule(
   });
 }
 
-export function assertTrustedPolicyOverride(
-  value: RuntimeSessionPolicyOverride
-): RuntimeSessionPolicyOverride {
+export function assertTrustedPolicyOverride(value: RuntimeSessionPolicyOverride): RuntimeSessionPolicyOverride {
   if (value.source !== 'trusted-session-config') {
     throw new Error('External/tool content cannot modify Axis runtime authority.');
   }
-  return Object.freeze({
-    source: 'trusted-session-config',
-    ...validateScope(value)
-  });
+  return Object.freeze({ source: 'trusted-session-config', ...validateScope(value) });
 }
 
 export function sameAuthority(left: AgentSessionContext, right: AgentSessionContext): boolean {
