@@ -24,6 +24,7 @@ export {
   setFileModeTool
 } from './operation-tools.js';
 
+/** Baseline tool set introduced by the first filesystem increment. */
 export const FILESYSTEM_TOOLS: readonly AxisTool[] = Object.freeze([
   listDirectoryTool,
   readFileTool,
@@ -32,7 +33,12 @@ export const FILESYSTEM_TOOLS: readonly AxisTool[] = Object.freeze([
   searchTextTool,
   createFileTool,
   writeFileTool,
-  editFileTool,
+  editFileTool
+]);
+
+/** Extended P1.2 catalog. Composition can adopt this without any runtime change. */
+export const FILESYSTEM_P1_2_TOOLS: readonly AxisTool[] = Object.freeze([
+  ...FILESYSTEM_TOOLS,
   patchFileTool,
   createDirectoryTool,
   movePathTool,
@@ -43,4 +49,8 @@ export const FILESYSTEM_TOOLS: readonly AxisTool[] = Object.freeze([
 
 export function createFilesystemTools(): readonly AxisTool[] {
   return FILESYSTEM_TOOLS;
+}
+
+export function createFilesystemP12Tools(): readonly AxisTool[] {
+  return FILESYSTEM_P1_2_TOOLS;
 }
