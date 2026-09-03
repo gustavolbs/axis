@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { prepareContextCapsule, RepoIndexStore } from './context-capsule.js';
 import type { LocalCoderConfig } from './config.js';
 import { discoverWorkspace } from './discovery.js';
@@ -5,9 +7,14 @@ import { reportProgress } from './progress-context.js';
 import type { ProjectDefinition } from './project-store.js';
 import { resolveWorkspace } from './workspace.js';
 
-const PROJECT_CHAT_MAX_FILES = 10;
-const PROJECT_CHAT_MAX_CHARS_PER_FILE = 1_800;
-const PROJECT_CHAT_MAP_FILES = 220;
+const PROJECT_CHAT_MAX_FILES = 8;
+const PROJECT_CHAT_MAX_CHARS_PER_FILE = 1_500;
+const PROJECT_CHAT_MAP_FILES = 160;
+
+function companyIndexDirectory(baseDirectory: string, companyId: string): string {
+  const safeCompanyId = companyId.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 160) || 'unknown';
+  return path.join(baseDirectory, 'project-chat', safeCompanyId);
+}
 
 /**
  * Project Chat is deliberately read-only, but it should still understand the
@@ -16,7 +23,10 @@ const PROJECT_CHAT_MAP_FILES = 220;
  *
  * The Project has already crossed the Company isolation boundary in
  * ProjectAwareEngineerBackend, so this function never accepts an arbitrary
- * caller-supplied root and never widens the allowed filesystem scope.
+ * caller-supplied root and never widens the allowed filesystem scope. Its
+ * reusable repository index is also partitioned by Company before the normal
+ * workspace hash is applied, so identical physical paths cannot share cached
+ * code intelligence across Company boundaries.
  */
 export async function attachProjectChatRepositoryContext(
   config: LocalCoderConfig,
@@ -40,7 +50,7 @@ export async function attachProjectChatRepositoryContext(
     maxDepth: 7,
     maxEntries: 1_200
   });
-  const index = new RepoIndexStore(config.contextIndexPath);
+  const index = new RepoIndexStore(companyIndexDirectory(config.contextIndexPath, project.organizationId));
   const capsule = await prepareContextCapsule(index, config, {
     workspace,
     task: goal,
