@@ -159,6 +159,11 @@ async function assertLayout(cdp, label) {
   if (!result?.ok) throw new Error(`${label} layout contract failed: ${JSON.stringify(result)}`);
 }
 
+async function pressKey(cdp, key, code, windowsVirtualKeyCode) {
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode });
+}
+
 let cdp;
 try {
   const page = await target();
@@ -189,15 +194,19 @@ try {
   if (!focused) throw new Error('Decision option could not receive keyboard focus.');
   await screenshot(cdp, 'runtime-active-keyboard-focus-light');
 
-  const tabMoved = await evaluate(cdp, `(() => {
+  const firstTabFocused = await evaluate(cdp, `(() => {
     const first = document.querySelector('[role="tab"]');
     first?.focus();
-    first?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-    return document.activeElement?.getAttribute('role') === 'tab'
-      && document.activeElement?.textContent?.includes('Shell')
-      && document.activeElement?.getAttribute('aria-selected') === 'true';
+    return document.activeElement === first && first?.getAttribute('aria-selected') === 'true';
   })()`);
-  if (!tabMoved) throw new Error('Runtime pane keyboard navigation did not move focus and selection.');
+  if (!firstTabFocused) throw new Error('Runtime pane tab could not receive keyboard focus.');
+  await pressKey(cdp, 'ArrowRight', 'ArrowRight', 39);
+  await waitFor(cdp, `(() => {
+    const active = document.activeElement;
+    return active?.getAttribute('role') === 'tab'
+      && active?.textContent?.includes('Shell')
+      && active?.getAttribute('aria-selected') === 'true';
+  })()`, 'runtime pane keyboard navigation');
 
   await setTheme(cdp, 'dark');
   await assertLayout(cdp, 'active dark');
