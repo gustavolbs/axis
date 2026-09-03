@@ -368,3 +368,35 @@ button {
     max-width: 118px;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Unified Connection Center composition.
+   The previous Connections page remains mounted only as the connector browser;
+   hide its duplicate shell chrome while retaining all MCP behavior and cache.
+   ----------------------------------------------------------------------- */
+
+.connection-center-legacy-connectors > .focused-settings-page > header,
+.connection-center-legacy-connectors > .focused-settings-page > .connections-surface-tabs {
+  display: none;
+}
+
+.connection-center-legacy-connectors > .focused-settings-page {
+  min-height: 0;
+  padding: 0;
+}
+
+.connection-center-search {
+  width: min(420px, 100%);
+  margin: 0 0 12px;
+}
+
+.connection-management {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--lc-faint);
+}
+
+.connection-management svg {
+  flex: 0 0 auto;
+}
