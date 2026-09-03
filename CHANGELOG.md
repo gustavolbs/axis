@@ -2,6 +2,17 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.20.0] - 2026-09-03
+
+### Added
+- Added provider-neutral Axis browser tools for explicit HTTP(S) navigation, session-scoped page reads, bounded text extraction and link discovery, with separate `axis.browser.navigate`, `axis.browser.read` and `axis.browser.interact` capability boundaries.
+- Added an explicit browser backend/session contract plus a built-in read-only fetch backend, so future Electron/CDP or Local Worker browser implementations can connect through `ToolRegistry` without runtime or provider-adapter changes.
+- Added browser-runtime coverage for navigation/read, navigation failures, timeout, cancellation, external and mutation permissions, provider independence, Company/session isolation and explicit no-fallback behavior.
+
+### Security
+- Browser state is isolated by immutable Company + Project + Axis session + execution-target context; provider/account identity cannot broaden or merge browser scope.
+- External navigation and DOM interaction require separate canonical permissions, HTTP(S) URLs reject embedded credentials, reads are bounded, and unsupported interaction never falls back to another browser backend or Computer Use.
+
 ## [0.19.0] - 2026-09-03
 
 ### Added
@@ -98,4 +109,3 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ### Changed
 - macOS releases are created automatically from `main` after validation, tests, packaging, signature verification, and changelog extraction.
 - Release notes are generated from the matching version section in this file.
-- The desktop entrypoint now uses a small updater bootstrap before loading the existing Electron main process.
