@@ -1,3 +1,4 @@
+import type { ModelDefinition, ProviderCapabilities } from '../providers/types.js';
 import type {
   EffectiveCapability,
   EffectiveCapabilitySet
@@ -23,6 +24,39 @@ export interface CapabilityNegotiationInput {
   readonly restrictions?: readonly CapabilityRestriction[];
 }
 
+/** Stable provider/model capability ids consumed by composition and adapters. */
+export const PROVIDER_CAPABILITY_IDS = Object.freeze({
+  modelDiscovery: 'provider.model-discovery',
+  streaming: 'provider.streaming',
+  structuredOutput: 'provider.structured-output',
+  reasoning: 'provider.reasoning',
+  promptCaching: 'provider.prompt-caching',
+  toolUse: 'provider.tool-use'
+} as const);
+
+export type ProviderCapabilityId = (typeof PROVIDER_CAPABILITY_IDS)[keyof typeof PROVIDER_CAPABILITY_IDS];
+
+const PROVIDER_CAPABILITY_KEYS = Object.keys(PROVIDER_CAPABILITY_IDS) as Array<keyof ProviderCapabilities>;
+
+/**
+ * Resolve provider defaults with model-specific overrides into one offer.
+ *
+ * A model-level `false` must remove a provider-level capability instead of
+ * leaving two independent offers where provider `true` would incorrectly win.
+ */
+export function providerModelCapabilityOffer(
+  source: string,
+  provider: ProviderCapabilities,
+  model?: Pick<ModelDefinition, 'capabilities'>
+): CapabilityOffer {
+  const ids: ProviderCapabilityId[] = [];
+  for (const key of PROVIDER_CAPABILITY_KEYS) {
+    const available = model?.capabilities?.[key] ?? provider[key];
+    if (available) ids.push(PROVIDER_CAPABILITY_IDS[key]);
+  }
+  return Object.freeze({ source, ids: Object.freeze(ids) });
+}
+
 function cleanIds(values: readonly string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
@@ -30,7 +64,7 @@ function cleanIds(values: readonly string[]): string[] {
 /**
  * Canonical capability negotiation for a resolved session.
  *
- * Callers should submit separately namespaced capabilities from Axis native
+ * Callers submit separately namespaced capability offers from Axis-native
  * features, the selected connection/model, configured resources and the exact
  * execution target. Company/Project/session/provider-admin restrictions are
  * represented as restriction layers. No provider or auth kind is special here.
