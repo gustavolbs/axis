@@ -59,10 +59,14 @@ export class DirectInferenceAgentAdapter implements AgentProviderAdapter {
   }
 }
 
-function assertProviderIdentity(provider: InferenceProvider, expected: string): void {
-  if (provider.id !== expected) {
+function assertProviderIdentity(
+  provider: InferenceProvider,
+  binding: AgentProviderBinding,
+  expectedFamily: string
+): void {
+  if (provider.id !== expectedFamily && provider.id !== binding.connectionId) {
     throw new AgentProviderProtocolError(
-      `Expected ${expected} inference provider, received ${provider.id}.`
+      `Expected ${expectedFamily} provider or resolved connection alias ${binding.connectionId}, received ${provider.id}.`
     );
   }
 }
@@ -73,7 +77,7 @@ export function createOpenAiApiKeyAgentAdapter(
   binding: AgentProviderBinding
 ): DirectInferenceAgentAdapter {
   assertExpectedProviderFamily(binding, 'openai');
-  assertProviderIdentity(provider, 'openai');
+  assertProviderIdentity(provider, binding, 'openai');
   return new DirectInferenceAgentAdapter(provider, binding);
 }
 
@@ -83,7 +87,7 @@ export function createAnthropicApiKeyAgentAdapter(
   binding: AgentProviderBinding
 ): DirectInferenceAgentAdapter {
   assertExpectedProviderFamily(binding, 'anthropic');
-  assertProviderIdentity(provider, 'anthropic');
+  assertProviderIdentity(provider, binding, 'anthropic');
   return new DirectInferenceAgentAdapter(provider, binding);
 }
 
@@ -97,7 +101,7 @@ export function createOllamaAgentAdapter(
   binding: AgentProviderBinding
 ): DirectInferenceAgentAdapter {
   assertExpectedProviderFamily(binding, 'ollama');
-  assertProviderIdentity(provider, 'ollama');
+  assertProviderIdentity(provider, binding, 'ollama');
   if (binding.companyId !== undefined && binding.companyId !== null) {
     throw new AgentProviderProtocolError('Ollama is a shared local connection and must use companyId=null.');
   }
