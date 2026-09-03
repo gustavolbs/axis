@@ -139,12 +139,12 @@ export function AppRoot() {
   const platform = window.lc?.platform ?? 'web';
 
   async function refreshSidebar() {
-    await api('/api/companies/context');
-    const [{ jobs: nextJobs }, { projects: nextProjects }, { companies: nextCompanies }] = await Promise.all([
+    const [{ context }, { jobs: nextJobs }, { projects: nextProjects }] = await Promise.all([
+      api<{ context: { companies: CompanyDefinition[] } }>('/api/companies/context'),
       api<{ jobs: SidebarJob[] }>('/api/jobs'),
-      api<{ projects: AdminProject[] }>('/api/projects'),
-      api<{ companies: CompanyDefinition[] }>('/api/companies?archived=all')
+      api<{ projects: AdminProject[] }>('/api/projects')
     ]);
+    const nextCompanies = context.companies;
     setJobs(nextJobs);
     setProjects(nextProjects);
     setCompanies(nextCompanies);
