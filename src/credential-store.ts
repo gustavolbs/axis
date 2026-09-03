@@ -260,6 +260,34 @@ export class CredentialManager {
     });
   }
 
+  updateMetadata(idValue: string, patch: { label?: string }): CredentialProfile {
+    const profile = this.profiles.get(idValue);
+    if (!profile) throw new Error(`Unknown credential: ${idValue}`);
+    return this.profiles.upsert({
+      id: profile.id,
+      providerId: profile.providerId,
+      label: patch.label === undefined ? profile.label : assertLabel(patch.label),
+      organizationId: profile.organizationId,
+      secret: { ...profile.secret }
+    });
+  }
+
+  rotateKeychainCredential(idValue: string, secret: string): CredentialProfile {
+    const profile = this.profiles.get(idValue);
+    if (!profile) throw new Error(`Unknown credential: ${idValue}`);
+    if (profile.secret.backend !== 'macos-keychain') {
+      throw new Error(`Credential ${profile.id} is not stored in macOS Keychain and cannot be rotated here.`);
+    }
+    if (!secret.trim()) throw new Error('Replacement API key is required.');
+    return this.addOrReplaceKeychainCredential({
+      id: profile.id,
+      providerId: profile.providerId,
+      label: profile.label,
+      organizationId: profile.organizationId,
+      secret: secret.trim()
+    });
+  }
+
   resolve(id: string): string | undefined {
     const profile = this.profiles.get(id);
     if (!profile) return undefined;
