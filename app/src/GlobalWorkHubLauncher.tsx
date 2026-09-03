@@ -121,9 +121,9 @@ export function GlobalWorkHubLauncher({ tab, onTabChange: setTab }: GlobalWorkHu
     if (!bridge) return undefined;
     const [nextSnapshot, companyResponse] = await Promise.all([
       bridge.workHubSnapshot(),
-      api<{ companies: CompanyDefinition[] }>('/api/companies?archived=all')
+      api<{ context: { companies: CompanyDefinition[] } }>('/api/companies/context')
     ]);
-    const activeCompanies = companyResponse.companies
+    const activeCompanies = companyResponse.context.companies
       .filter((company) => !company.archivedAt)
       .sort((left, right) => left.order - right.order || left.name.localeCompare(right.name));
     setSnapshot(nextSnapshot);
