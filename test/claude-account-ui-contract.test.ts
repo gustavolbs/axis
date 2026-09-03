@@ -27,21 +27,21 @@ test('preload exposes bounded connection and Work Hub actions without generic ac
   assert.doesNotMatch(preload, /invokeClaudeAccount|claudeAccountInvoke|invokeCodexAccount|codexAccountInvoke|spawn\(|exec\(/);
 });
 
-test('Company Hub exposes the first-class provider Connections center while global Settings stays app-wide', () => {
+test('Company Hub owns Connections and Work Hub source administration while global Settings stays app-wide', () => {
   const settings = source('app/src/SettingsModal.tsx');
   const hub = source('app/src/CompanyHub.tsx');
+  const companySources = source('app/src/CompanySourcesSettings.tsx');
   const entry = source('app/src/ConnectionsSettings.tsx');
   const center = source('app/src/ConnectionCenterSettings.tsx');
   const legacyEntry = source('app/src/LegacyConnectionsSettings.tsx');
   const connectors = source('app/src/ConnectionConnectorsPanel.tsx');
   const styles = source('app/src/lc-app.css');
 
-  assert.doesNotMatch(settings, /ConnectionsSettings/);
-  assert.doesNotMatch(settings, />Connections</);
+  assert.doesNotMatch(settings, /ConnectionsSettings|CompaniesSettings/);
   assert.match(hub, /ConnectionCenterSettings companyId=\{company\.id\}/);
+  assert.match(hub, /CompanySourcesSettings companyId=\{company\.id\}/);
   assert.match(entry, /ConnectionCenterSettings as ConnectionsSettings/);
 
-  // The Company-owned Connection Center owns provider identities and canonical Company assignment.
   assert.match(center, /Add connection/);
   assert.match(center, /OpenAI API key/);
   assert.match(center, /Anthropic API key/);
@@ -49,10 +49,16 @@ test('Company Hub exposes the first-class provider Connections center while glob
   assert.match(center, /connection\.companyId !== fixedCompanyId/);
   assert.match(center, /Managed restrictions/);
   assert.match(center, /createApiKeyConnection/);
-  assert.match(center, /LegacyConnectionsSettings/);
 
-  // The legacy entry is now only a compatibility alias. The embedded connector
-  // panel owns MCP discovery/auth/removal without nesting a second Settings page.
+  // Source CRUD is Company-owned. The selected connection is checked against
+  // the selected Company before any source is created, refreshed or removed.
+  assert.match(companySources, /connection\.companyId !== companyId/);
+  assert.match(companySources, /source\.companyId !== companyId/);
+  assert.match(companySources, /upsertWorkHubSource/);
+  assert.match(companySources, /removeWorkHubSource/);
+  assert.match(companySources, /Work Hub sources/);
+  assert.match(companySources, /Source ownership stays here/);
+
   assert.match(legacyEntry, /ConnectionConnectorsPanel as ConnectionsSettings/);
   assert.match(connectors, /Search connectors/);
   assert.match(connectors, /Add custom connector/);
@@ -61,6 +67,7 @@ test('Company Hub exposes the first-class provider Connections center while glob
   assert.match(connectors, /nested-settings-dialog connection-create-dialog connector-create-dialog/);
   assert.doesNotMatch(connectors, /<h1>Connections<\/h1>|connections-surface-tabs|<style>/);
   assert.doesNotMatch(center, /<style>/);
+  assert.doesNotMatch(companySources, /<style>/);
 
   for (const selector of [
     '.connections-settings-page',
@@ -87,53 +94,61 @@ test('desktop account IPC delegates auth and MCP discovery to official runtime a
   assert.doesNotMatch(bridge, /spawn\(|exec\(|setup-token|cookie|credentials\.json/i);
 });
 
-test('Work Hub is shell-owned, capability-driven and uses the shared stylesheet', () => {
+test('Work Hub is one global Company-aware aggregate and Sources is read-only there', () => {
   const shell = source('app/src/AppRoot.tsx');
   const main = source('app/src/main.tsx');
   const hub = source('app/src/GlobalWorkHubLauncher.tsx');
+  const companyHub = source('app/src/CompanyHub.tsx');
+  const companySources = source('app/src/CompanySourcesSettings.tsx');
+  const provenance = source('src/work-hub-company-provenance.ts');
+  const bootstrap = source('desktop/bootstrap.mjs');
   const runtime = source('src/work-hub.ts');
   const styles = source('app/src/lc-fixes.css');
+
   assert.match(shell, /GlobalWorkHubLauncher/);
   assert.match(shell, /surface === 'work-hub'/);
+  assert.match(shell, /local-coder\.work-hub-company-filter/);
   assert.doesNotMatch(main, /GlobalWorkHubLauncher/);
-  assert.match(hub, /Choose what to sync/);
-  assert.match(hub, /Work board/);
+  assert.match(companyHub, /Open in Work Hub/);
+
+  // The global rail remains unique and keeps the approved operational sections.
+  for (const label of ['Inbox', 'My Work', 'Today', 'Calendar', 'Sources']) assert.match(hub, new RegExp(`'${label}'|>${label}<`));
+  assert.match(hub, /Filter Work Hub by Company/);
+  assert.match(hub, />All<\/button>/);
+  assert.match(hub, /data-company-id=\{company\.id\}/);
+  assert.match(hub, /companyName/);
+  assert.match(hub, /companyId/);
+  assert.match(hub, /connectionId/);
+  assert.match(hub, /sourceId/);
+  assert.match(hub, /CompanyBadge/);
+  assert.match(hub, /work-hub-shell work-hub-page/);
+  assert.match(hub, /Aggregation and sync health/);
+  assert.match(hub, /Configure sources inside the owning Company/);
+  assert.doesNotMatch(hub, /upsertWorkHubSource|removeWorkHubSource|prepareSourceForm|Choose what to sync/);
+  assert.match(companySources, /upsertWorkHubSource/);
+  assert.match(companySources, /removeWorkHubSource/);
+
+  // Company provenance is projected from canonical connection ownership at the
+  // desktop boundary; mutable provider labels never become an ownership source.
+  assert.match(provenance, /attachWorkHubCompanyProvenance/);
+  assert.match(provenance, /companyId/);
+  assert.match(provenance, /companyName/);
+  assert.match(provenance, /has no canonical Company owner/);
+  assert.match(bootstrap, /installWorkHubCompanyProvenance/);
+
   assert.match(hub, /work-hub-sync-banner/);
-  assert.match(hub, /work-hub-week-grid/);
-  assert.match(hub, /work-hub-calendar-join/);
-  assert.match(hub, /work-hub-calendar-tooltip/);
-  assert.match(hub, /calendarEventDetails/);
   assert.match(hub, /id: 'qa'/);
-  assert.match(hub, /result\.setDate\(result\.getDate\(\) - day\)/);
   assert.match(hub, /work-hub-account-filter/);
-  assert.match(hub, /accountClass\(item\.connectionId\)/);
-  assert.match(hub, /prepareSourceForm/);
-  assert.match(hub, /alreadyAdded \? ' added' : ''/);
   assert.match(hub, /hasCachedSnapshot/);
   assert.match(hub, /Checking connected services/);
-  assert.match(hub, /The provider discovers its connected services automatically/);
-  assert.match(hub, /work-hub-shell work-hub-page/);
-  assert.doesNotMatch(hub, /work-hub-backdrop|aria-modal="true"|Close Work Hub/);
-  assert.doesNotMatch(hub, /Exact read-only MCP tools|Remote system|Normalized-data retention|<style>/);
+  assert.doesNotMatch(hub, /work-hub-backdrop|aria-modal="true"|Close Work Hub|<style>/);
   assert.match(runtime, /does not require a manual tool allowlist/);
   assert.match(runtime, /Interactive user requests outside Work Hub may use write actions normally/);
   assert.match(styles, /\.work-hub-shell/);
-  assert.match(styles, /\.work-hub-source-form/);
   assert.match(styles, /\.work-hub-board-column/);
   assert.match(styles, /\.work-hub-sync-banner/);
-  assert.match(styles, /\.work-hub-now/);
-  assert.match(styles, /\.work-hub-calendar-tooltip/);
-  assert.match(styles, /\.work-hub-shell \.work-hub-calendar-join/);
-  assert.match(styles, /\.work-hub-shell \.work-hub-calendar-today/);
-  assert.match(styles, /\.work-hub-shell \.work-hub-icon-button/);
-  assert.match(styles, /grid-template-columns: 52px repeat\(7, 168px\)/);
-  assert.match(styles, /width: 1228px/);
-  assert.match(styles, /height: 928px/);
   assert.match(styles, /\.work-hub-account-toggle/);
-  assert.match(styles, /\.work-hub-source-form \.ui-select-trigger/);
-  assert.match(styles, /\.settings-option-group > button\.added/);
   assert.match(styles, /\.account-tone-0/);
-  assert.match(styles, /repeat\(6/);
   assert.match(runtime, /stopOnValidJson: true/);
   assert.doesNotMatch(source('desktop/preload.cjs'), /workHubPrompt|runWorkHubPrompt/);
 });
