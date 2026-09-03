@@ -55,7 +55,11 @@ Object.assign(childEnv, {
   LOCAL_CODER_REMOTE_WORKER_URL: 'http://127.0.0.1:65534'
 });
 
-const child = spawn(electronPath, [`--remote-debugging-port=${debugPort}`, 'desktop/main.mjs'], {
+// Launch the package root exactly like the real development desktop command so
+// Electron resolves package.json -> desktop/bootstrap.mjs and app.getAppPath()
+// stays at the repository root. Launching desktop/main.mjs directly would make
+// Electron treat desktop/ as the app root and look for desktop/app-dist.
+const child = spawn(electronPath, [`--remote-debugging-port=${debugPort}`, '.'], {
   cwd: root,
   env: childEnv,
   stdio: ['ignore', 'pipe', 'pipe']
