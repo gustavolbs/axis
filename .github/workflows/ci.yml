@@ -115,10 +115,13 @@ jobs:
           node --check desktop/main.mjs
           node --check scripts/run-desktop.mjs
           node --check scripts/capture-companies-visual.mjs
+          node --check scripts/capture-company-scope-visual.mjs
           npx tsx --test test/desktop-shell.test.ts test/desktop-ui-contract.test.ts
 
       - name: Render Companies settings states
-        run: node scripts/capture-companies-visual.mjs
+        run: |
+          node scripts/capture-companies-visual.mjs
+          node scripts/capture-company-scope-visual.mjs
 
       - name: Upload Companies visual smoke
         uses: actions/upload-artifact@v4
