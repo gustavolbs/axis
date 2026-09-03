@@ -6,25 +6,32 @@ import test from 'node:test';
 const root = path.resolve(import.meta.dirname, '..');
 const source = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('desktop installs Company-aware connection handlers after provider-owned account handlers', () => {
+test('desktop installs both provider-owned account bridge and Company-aware Connection Center bridge', () => {
   const main = source('desktop/main.mjs');
   assert.match(main, /import \{ installClaudeAccountBridge \} from '\.\/claude-accounts\.mjs'/);
   assert.match(main, /import \{ installConnectionCenterBridge \} from '\.\/connection-center\.mjs'/);
-  const accountInstall = main.indexOf('installClaudeAccountBridge();');
-  const centerInstall = main.indexOf('installConnectionCenterBridge();');
-  assert.ok(accountInstall >= 0 && centerInstall > accountInstall, 'Connection Center must override list/create handlers after the official account bridge installs.');
+  assert.match(main, /installClaudeAccountBridge\(\);/);
+  assert.match(main, /installConnectionCenterBridge\(\);/);
 });
 
-test('Connection Center overrides only ownership-sensitive channels', () => {
+test('Connection Center uses dedicated ownership-sensitive channels', () => {
   const bridge = source('desktop/connection-center.mjs');
-  for (const channel of [
-    'local-coder:connections',
-    'local-coder:claude-account-create',
-    'local-coder:codex-account-create',
-    'local-coder:api-connection-create'
-  ]) assert.match(bridge, new RegExp(channel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  const preload = source('desktop/preload.cjs');
+  const channels = [
+    'local-coder:connection-center-connections',
+    'local-coder:connection-center-claude-create',
+    'local-coder:connection-center-codex-create',
+    'local-coder:connection-center-api-create'
+  ];
+  for (const channel of channels) {
+    const escaped = new RegExp(channel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    assert.match(bridge, escaped);
+    assert.match(preload, escaped);
+  }
 
+  assert.doesNotMatch(bridge, /ipcMain\.handle\('local-coder:(?:connections|claude-account-create|codex-account-create|api-connection-create)'/);
   assert.doesNotMatch(bridge, /claude-account-login|codex-account-login|account-status|account-mcp-login/);
+  assert.match(bridge, /canonicalConnectionViews/);
   assert.match(bridge, /ownership\.bind/);
   assert.match(bridge, /addOrReplaceKeychainCredential/);
   assert.match(bridge, /Provider must be openai or anthropic/);
