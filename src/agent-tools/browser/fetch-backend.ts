@@ -39,18 +39,27 @@ function positiveInteger(value: number | undefined, fallback: number, label: str
   return value;
 }
 
+function validHtmlCodePoint(value: number): boolean {
+  return (
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= 0x10ffff &&
+    !(value >= 0xd800 && value <= 0xdfff)
+  );
+}
+
 function decodeHtmlEntities(value: string): string {
   const named: Record<string, string> = {
     amp: '&', apos: "'", gt: '>', lt: '<', nbsp: ' ', quot: '"'
   };
   return value
-    .replace(/&#(\d+);/g, (_match, decimal: string) => {
+    .replace(/&#(\d+);/g, (match, decimal: string) => {
       const codePoint = Number.parseInt(decimal, 10);
-      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : _match;
+      return validHtmlCodePoint(codePoint) ? String.fromCodePoint(codePoint) : match;
     })
-    .replace(/&#x([\da-f]+);/gi, (_match, hexadecimal: string) => {
+    .replace(/&#x([\da-f]+);/gi, (match, hexadecimal: string) => {
       const codePoint = Number.parseInt(hexadecimal, 16);
-      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : _match;
+      return validHtmlCodePoint(codePoint) ? String.fromCodePoint(codePoint) : match;
     })
     .replace(/&([a-z]+);/gi, (match, name: string) => named[name.toLowerCase()] ?? match);
 }
@@ -138,6 +147,9 @@ async function readBody(
     }
   } catch (error) {
     await reader.cancel().catch(() => undefined);
+    if (signal.aborted && !(error instanceof OperationCancelledError)) {
+      throw new OperationCancelledError('Browser navigation was cancelled.');
+    }
     throw error;
   }
 
@@ -152,9 +164,10 @@ async function readBody(
 
 function textLike(contentType: string | undefined): boolean {
   if (!contentType) return true;
+  const normalized = contentType.toLowerCase();
   return (
-    contentType.startsWith('text/') ||
-    /application\/(json|xml|xhtml\+xml|javascript)/i.test(contentType)
+    normalized.startsWith('text/') ||
+    /application\/(json|xml|xhtml\+xml|javascript)/.test(normalized)
   );
 }
 
@@ -208,15 +221,23 @@ class FetchBrowserSession implements BrowserBackendSession {
     });
     if (context.signal.aborted) throw new OperationCancelledError('Browser navigation was cancelled.');
 
-    const response = await fetch(requested, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: context.signal,
-      headers: {
-        accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1',
-        'user-agent': this.userAgent
+    let response: Response;
+    try {
+      response = await fetch(requested, {
+        method: 'GET',
+        redirect: 'follow',
+        signal: context.signal,
+        headers: {
+          accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1',
+          'user-agent': this.userAgent
+        }
+      });
+    } catch (error) {
+      if (context.signal.aborted) {
+        throw new OperationCancelledError('Browser navigation was cancelled.');
       }
-    });
+      throw error;
+    }
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
       throw new Error(
@@ -234,15 +255,16 @@ class FetchBrowserSession implements BrowserBackendSession {
     const body = await readBody(response, this.maxResponseBytes, context.signal);
     const html = new TextDecoder().decode(body);
     const finalUrl = safeHttpUrl(response.url || requested.toString()).toString();
+    const isHtml = contentType?.toLowerCase().includes('html') ?? false;
     const page: FetchPageState = {
       requestedUrl: requested.toString(),
       url: finalUrl,
       status: response.status,
-      title: contentType?.includes('html') ? extractTitle(html) : undefined,
+      title: isHtml ? extractTitle(html) : undefined,
       contentType,
       html,
-      text: contentType?.includes('html') ? htmlToText(html) : html.trim(),
-      links: contentType?.includes('html') ? extractLinks(html, finalUrl, this.maxLinks) : []
+      text: isHtml ? htmlToText(html) : html.trim(),
+      links: isHtml ? extractLinks(html, finalUrl, this.maxLinks) : []
     };
     this.page = page;
     context.reportProgress({
