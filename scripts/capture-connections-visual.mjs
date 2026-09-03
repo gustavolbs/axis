@@ -77,7 +77,7 @@ try {
     const cards = [...document.querySelectorAll('.connection-center-card')]; const rawConnections = await window.lc.providerConnections();
     return { cardCount: cards.length, cardCompanies: cards.map((card) => card.dataset.companyId), cardTexts: cards.map((card) => card.textContent?.replace(/\\s+/g, ' ').trim() ?? ''), rawCount: rawConnections.length, leakedNorthstar: cards.some((card) => card.textContent?.includes('Northstar Health')), leakedPersonal: cards.some((card) => card.textContent?.includes('Company: Personal')), apiKeyCount: cards.filter((card) => card.textContent?.includes('API Key')).length, accountCount: cards.filter((card) => card.textContent?.includes('Claude Account')).length, bodyOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth, cardsOverflow: cards.some((card) => card.scrollWidth > card.clientWidth + 1) };
   })()`);
-  if (!inventory || inventory.cardCount !== 3 || inventory.rawCount !== 5 || inventory.cardCompanies.some((id) => id !== ${JSON.stringify(acme.id)}) || inventory.leakedNorthstar || inventory.leakedPersonal || inventory.apiKeyCount !== 2 || inventory.accountCount !== 1 || inventory.bodyOverflow || inventory.cardsOverflow) throw new Error(`Company-scoped connection inventory failed: ${JSON.stringify(inventory)}`);
+  if (!inventory || inventory.cardCount !== 3 || inventory.rawCount !== 5 || inventory.cardCompanies.some((id) => id !== acme.id) || inventory.leakedNorthstar || inventory.leakedPersonal || inventory.apiKeyCount !== 2 || inventory.accountCount !== 1 || inventory.bodyOverflow || inventory.cardsOverflow) throw new Error(`Company-scoped connection inventory failed: ${JSON.stringify(inventory)}`);
   console.log(`inventory ${JSON.stringify(inventory)}`); await screenshot(cdp, 'inventory-acme-wide');
 
   await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.connection-center-settings > header button')].find((item) => item.textContent?.includes('Add connection')); if (!button) throw new Error('Add connection button not found'); button.click(); return true; })()`);
@@ -90,7 +90,7 @@ try {
   await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.company-hub-rail > button')].find((item) => item.textContent?.trim() === 'MCPs'); if (!button) throw new Error('MCPs section missing'); button.click(); return true; })()`);
   await waitFor(cdp, `document.querySelector('[data-connection-id=${JSON.stringify(claudeAcmeId)}]') !== null`, 'Acme MCP account surface');
   const mcpScope = await evaluate(cdp, `(() => ({ accountCards: [...document.querySelectorAll('.company-mcp-list [data-connection-id]')].map((item) => item.dataset.connectionId), text: document.querySelector('.company-hub-content')?.textContent?.replace(/\\s+/g, ' ').trim() }))()`);
-  if (mcpScope?.accountCards.length !== 1 || mcpScope.accountCards[0] !== ${JSON.stringify(claudeAcmeId)} || mcpScope.text?.includes('ChatGPT Personal')) throw new Error(`Company MCP surface leaked another context: ${JSON.stringify(mcpScope)}`);
+  if (mcpScope?.accountCards.length !== 1 || mcpScope.accountCards[0] !== claudeAcmeId || mcpScope.text?.includes('ChatGPT Personal')) throw new Error(`Company MCP surface leaked another context: ${JSON.stringify(mcpScope)}`);
   console.log(`mcp-scope ${JSON.stringify(mcpScope)}`); await screenshot(cdp, 'mcps-acme-scoped');
 } finally {
   cdp?.close(); child.kill('SIGTERM'); await Promise.race([new Promise((resolve) => child.once('exit', resolve)), sleep(3_000).then(() => child.kill('SIGKILL'))]);
