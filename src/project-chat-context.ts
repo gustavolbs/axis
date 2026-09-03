@@ -4,7 +4,8 @@ import { prepareContextCapsule, RepoIndexStore } from './context-capsule.js';
 import type { LocalCoderConfig } from './config.js';
 import { discoverWorkspace } from './discovery.js';
 import { reportProgress } from './progress-context.js';
-import type { ProjectDefinition } from './project-store.js';
+import { projectRepoMemoryScopeKey, type ProjectDefinition } from './project-store.js';
+import { prepareRepoIntelligence } from './repo-intelligence.js';
 import { resolveWorkspace } from './workspace.js';
 
 const PROJECT_CHAT_MAX_FILES = 8;
@@ -27,6 +28,12 @@ function companyIndexDirectory(baseDirectory: string, companyId: string): string
  * reusable repository index is also partitioned by Company before the normal
  * workspace hash is applied, so identical physical paths cannot share cached
  * code intelligence across Company boundaries.
+ *
+ * Repo Intelligence is consumed here as shared Project Memory using the same
+ * Company + Project + repository scope that Cowork uses. The selected provider
+ * is intentionally absent from the key: Claude, Codex, API-key connections and
+ * Ollama may consume the same validated memory when they are authorized for the
+ * same Project, while another Company or Project receives a different scope.
  */
 export async function attachProjectChatRepositoryContext(
   config: LocalCoderConfig,
@@ -43,8 +50,29 @@ export async function attachProjectChatRepositoryContext(
     activityKind: 'searching-repository',
     action: 'Reading project context',
     detail: project.name,
-    reasoningSummary: 'Project Chat is gathering a bounded, read-only repository snapshot for this response.'
+    reasoningSummary: 'Project Chat is gathering bounded, read-only repository evidence and shared Project Memory for this response.'
   });
+
+  let sharedProjectMemory: string | undefined;
+  try {
+    const memory = await prepareRepoIntelligence(
+      workspace,
+      goal,
+      config,
+      projectRepoMemoryScopeKey(project, workspace)
+    );
+    sharedProjectMemory = memory.capsule;
+    reportProgress({
+      phase: 'investigation',
+      activityKind: 'reading',
+      action: `Loaded ${memory.retrieved.length} shared Project Memory fact${memory.retrieved.length === 1 ? '' : 's'}`,
+      detail: `${project.name} · familiarity ${memory.familiarity.overall}/100`,
+      reasoningSummary: 'Project Memory is provider-neutral and scoped to this Company, Project and repository identity. Current source remains authoritative.'
+    });
+  } catch {
+    // Persistent memory is advisory. Fresh source context remains available if
+    // the folder is not a Git repository or memory state is temporarily unavailable.
+  }
 
   const discovery = await discoverWorkspace(workspace, {
     maxDepth: 7,
@@ -82,6 +110,9 @@ export async function attachProjectChatRepositoryContext(
     'Axis gathered this repository evidence from the Project-owned workspace for this Chat turn.',
     'Treat it as read-only context. You may explain, inspect, compare and reason about the code, but do not claim that you edited files or ran commands. Use Cowork when the user asks you to modify or validate the repository.',
     '',
+    '## Shared Project Memory',
+    sharedProjectMemory ?? '[No reusable Project Memory is available for this task yet.]',
+    '',
     '## Repository map',
     repositoryMap,
     '',
@@ -94,7 +125,7 @@ export async function attachProjectChatRepositoryContext(
     activityKind: 'reading',
     action: `Loaded ${capsule.relevantFiles.length} relevant project file${capsule.relevantFiles.length === 1 ? '' : 's'}`,
     detail: capsule.relevantFiles.map((file) => file.path).slice(0, 5).join(', ') || project.name,
-    reasoningSummary: 'Only the bounded repository capsule is sent to the selected model; Project Chat does not mutate the workspace.'
+    reasoningSummary: 'Only bounded Project Memory and repository evidence are sent to the selected model; Project Chat does not mutate the workspace.'
   });
 
   return [existingContext?.trim(), readOnlyContext].filter(Boolean).join('\n\n') || undefined;
