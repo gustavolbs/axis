@@ -53,12 +53,23 @@ async function withWorkspace(run: (workspace: string) => Promise<void>) {
 }
 
 test('defaults adaptive mode to 7b fast, 14b strong, and bounded context', () => {
-  const result = loadConfig({});
-  assert.equal(result.adaptiveModelsEnabled, true);
-  assert.equal(result.model, 'qwen2.5-coder:7b');
-  assert.equal(result.strongModel, 'qwen2.5-coder:14b');
-  assert.equal(result.ollamaNumCtx, 16_384);
-  assert.equal(result.maxContextBytes, 96_000);
+  const previousSettingsPath = process.env.LOCAL_CODER_SETTINGS_PATH;
+  process.env.LOCAL_CODER_SETTINGS_PATH = path.join(
+    os.tmpdir(),
+    `local-coder-default-settings-${process.pid}`,
+    'settings.json'
+  );
+  try {
+    const result = loadConfig({});
+    assert.equal(result.adaptiveModelsEnabled, true);
+    assert.equal(result.model, 'qwen2.5-coder:7b');
+    assert.equal(result.strongModel, 'qwen2.5-coder:14b');
+    assert.equal(result.ollamaNumCtx, 16_384);
+    assert.equal(result.maxContextBytes, 96_000);
+  } finally {
+    if (previousSettingsPath === undefined) delete process.env.LOCAL_CODER_SETTINGS_PATH;
+    else process.env.LOCAL_CODER_SETTINGS_PATH = previousSettingsPath;
+  }
 });
 
 test('legacy single-model mode can still be explicitly enabled', () => {

@@ -2,6 +2,39 @@
 
 These instructions are repository-wide and apply to every coding agent or automation that edits this repository, including Codex, GPT-based agents, Claude, Copilot, Gemini, Cursor, and custom agents.
 
+## Mandatory visual and interface preservation
+
+Every change that affects UI, layout, styling, interaction states, visual copy, icons, or frontend structure MUST preserve the established Axis design system and the Claude Desktop interaction/visual conventions that Axis intentionally follows. Visual work is not complete merely because TypeScript compiles or tests pass.
+
+Before editing visual code, the agent MUST:
+
+1. inspect the affected screen and its neighboring states in the running app;
+2. read the relevant existing component and shared styles before proposing new markup or CSS;
+3. identify and reuse the closest existing Axis/Claude pattern for panes, sidebars, composer controls, dialogs, lists, cards, typography, spacing, colors, radii, shadows, icons, hover/focus states, and information hierarchy;
+4. preserve the current interaction grammar unless the user explicitly requests a redesign; and
+5. keep the change narrowly scoped so unrelated surfaces do not drift.
+
+The stylesheet architecture is a repository contract:
+
+- `app/src/lc-base.css` owns design tokens, theme values, geometry, and base rules.
+- `app/src/lc-app.css` owns source component styles and is the normal destination for new component rules.
+- `app/src/lc-fixes.css` is the final corrections layer. Add to it only when repairing an existing cascade defect, document the defect, and fold the correction into `lc-app.css` when practical.
+- `app/src/main.tsx` MUST keep the import order `lc-base.css` → `lc-app.css` → `lc-fixes.css`.
+- Do not add another global stylesheet, competing `:root` tokens, one-off color/spacing systems, or broad selectors that can leak into other surfaces.
+- Prefer existing tokens, classes, and shared controls such as `UiSelect` and `ShellDialog`. Do not introduce inline visual constants, `!important`, or duplicate components when the existing system can express the design.
+
+Before considering visual work complete, the agent MUST render and inspect the affected UI. Verify at minimum:
+
+- the normal window size, a narrower resized window, and a maximized/wide window where relevant;
+- light and dark themes;
+- expanded and collapsed sidebar states when the shell is affected;
+- empty, loading, error, populated, long-content, and disabled states touched by the change;
+- keyboard focus, hover, selected, pressed, and destructive states;
+- scrolling, text wrapping, truncation, overlays, sticky elements, and modal/popover bounds; and
+- that there is no unintended horizontal overflow, clipping, overlap, layout jump, inaccessible control, or broken neighboring screen.
+
+Use before/after screenshots or equivalent rendered evidence for the affected states and report that visual verification in the handoff. When the intended Claude pattern is ambiguous, inspect the current project implementation and the supplied/reference Claude interface before inventing a new pattern. Any intentional departure from the established Axis/Claude visual language must be explicitly requested or called out to the user before implementation.
+
 ## Mandatory release metadata
 
 Every change intended to be merged into `main` MUST update both release metadata sources before the task is considered complete:

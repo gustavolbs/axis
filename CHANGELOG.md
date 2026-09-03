@@ -2,6 +2,30 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.17.1] - 2026-09-02
+
+### Added
+- Added a source-backed, P1–P4 parity checklist for a local-first, multi-company AI control plane: first-class parity between Account and API Key connections, multiple models, Ollama, the Windows Local Worker specialization, connection/model-specific MCPs, skills, plugins and agents, provider-managed constraints, strict company isolation, and company-scoped memory, automation, usage and policies—without a hosted Axis database or backend.
+- Added repository-wide visual-change instructions requiring agents to preserve the established Axis and Claude Desktop interface language, reuse the three-layer CSS architecture, and render and inspect affected states before completing UI work.
+
+## [0.17.0] - 2026-09-02
+
+### Added
+- Cloud model selectors now refresh available models from provider catalogs when opened, so newly released API models can appear without an Axis update.
+- Claude subscription-account aliases show the currently resolved family version, such as `Opus 5 · latest alias`, and completed responses retain the canonical model actually reported by Claude Code.
+- Work Hub now has a full-size app surface with dedicated Messages, Work Board, Overview, Calendar, and Sources sections.
+- Work Hub messages can be marked as read or dismissed locally, and ticket cards expose direct links from the Work Board.
+
+### Changed
+- Projectless Chat now distinguishes API-key connections from ChatGPT and Claude subscription accounts, including personal and organization account identities.
+- Model names are shorter and current recommendations stay visible while older OpenAI and Claude models are grouped under More models.
+- Messages sources now stay focused on comments from assigned Jira tickets and actionable Slack messages instead of collecting unrelated GitHub or other connector activity.
+
+### Fixed
+- Removed duplicate generic provider entries when the same configured API credentials were already represented as named connections.
+- Account-backed model choices no longer hide the selected model family or make different authentication and billing paths look interchangeable.
+- Jira ticket and comment links now preserve MCP-returned permalinks and use the configured Jira MCP origin when that server omits browser URLs, avoiding incorrect guessed Atlassian hostnames.
+
 ## [0.16.2] - 2026-09-02
 
 ### Fixed
