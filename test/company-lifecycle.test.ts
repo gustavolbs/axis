@@ -137,9 +137,11 @@ test('legacy company records migrate metadata defaults without changing their st
   assert.equal(company.order, 0);
 });
 
-test('Personal remains reserved and cannot be edited, archived or created as a normal company', () => {
+test('Personal remains reserved and cannot be edited, archived or recreated as a normal company', () => {
   const store = new CompanyContextStore(tempFile());
   assert.throws(() => store.updateCompany('personal', { name: 'Work' }), /reserved context/);
   assert.throws(() => store.setCompanyArchived('personal', true), /cannot be archived/);
   assert.throws(() => store.createCompany({ name: '' }), /Company name/);
+  assert.throws(() => store.createCompany({ name: 'personal' }), /reserved company name/);
+  assert.throws(() => store.createCompany({ name: 'PERSONAL' }), /reserved company name/);
 });
