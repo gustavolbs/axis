@@ -2,18 +2,20 @@ import {
   assertRuntimeNetworkUrl,
   type RuntimeNetworkPolicy
 } from './network-policy.js';
-
-const CROSS_ORIGIN_SECRET_HEADERS = [
-  'authorization',
-  'proxy-authorization',
-  'cookie',
-  'x-api-key'
-] as const;
+import { isRuntimeSecretField } from './redaction.js';
 
 function redirectMethod(status: number, method: string): string {
   if (status === 303 && method !== 'HEAD') return 'GET';
   if ((status === 301 || status === 302) && method === 'POST') return 'GET';
   return method;
+}
+
+function stripCrossOriginCredentials(headers: Headers): Headers {
+  const next = new Headers(headers);
+  for (const [name] of next.entries()) {
+    if (isRuntimeSecretField(name)) next.delete(name);
+  }
+  return next;
 }
 
 export interface RuntimeSecureFetchOptions {
@@ -50,11 +52,7 @@ export async function runtimeSecureFetch(
     const target = new URL(location, current);
     assertRuntimeNetworkUrl(target.toString(), options.policy);
 
-    if (current.origin !== target.origin) {
-      const nextHeaders = new Headers(headers);
-      for (const name of CROSS_ORIGIN_SECRET_HEADERS) nextHeaders.delete(name);
-      headers = nextHeaders;
-    }
+    if (current.origin !== target.origin) headers = stripCrossOriginCredentials(headers);
 
     const nextMethod = redirectMethod(response.status, method);
     if (nextMethod === 'GET' && method !== 'GET') {
