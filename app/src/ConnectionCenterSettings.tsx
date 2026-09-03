@@ -50,6 +50,8 @@ export interface ConnectionCenterSettingsProps {
   companyName?: string;
   initialSurface?: CenterSurface;
   showConnectors?: boolean;
+  /** Reuse Company Hub chrome instead of nesting a second Settings page. */
+  embedded?: boolean;
 }
 
 const connectionKindOptions: UiSelectOption[] = [
@@ -84,11 +86,18 @@ function isAccount(connection: ProviderConnectionView): boolean {
   return connection.auth === 'claude-account' || connection.auth === 'chatgpt-account';
 }
 
+function visibleInCompanyScope(connection: ProviderConnectionView, companyId?: string): boolean {
+  if (!companyId) return true;
+  if (connection.companyId === companyId) return true;
+  return companyId === 'personal' && connection.auth === 'local';
+}
+
 export function ConnectionCenterSettings({
   companyId: fixedCompanyId,
   companyName: fixedCompanyName,
   initialSurface = 'connections',
-  showConnectors = true
+  showConnectors = true,
+  embedded = false
 }: ConnectionCenterSettingsProps = {}) {
   const bridge = connectionCenterBridge();
   const [surface, setSurface] = useState<CenterSurface>(initialSurface);
@@ -172,10 +181,10 @@ export function ConnectionCenterSettings({
       setClaudeRuntime(nextClaudeRuntime);
       setCodexRuntime(nextCodexRuntime);
 
-      const ownedConnections = fixedCompanyId
-        ? nextConnections.filter((connection) => connection.companyId === fixedCompanyId)
+      const scopedConnections = fixedCompanyId
+        ? nextConnections.filter((connection) => visibleInCompanyScope(connection, fixedCompanyId))
         : nextConnections;
-      const accountConnections = ownedConnections.filter((connection) => isAccount(connection) && connection.accountProfileId);
+      const accountConnections = scopedConnections.filter((connection) => isAccount(connection) && connection.accountProfileId);
       const statusResults = await Promise.all(accountConnections.map(async (connection) => {
         const profileId = connection.accountProfileId!;
         if (connection.auth === 'claude-account') {
@@ -191,7 +200,7 @@ export function ConnectionCenterSettings({
       }
       setClaudeStatuses(nextClaude);
       setCodexStatuses(nextCodex);
-      await discoverManagedRestrictions(ownedConnections, nextClaude, nextCodex);
+      await discoverManagedRestrictions(scopedConnections, nextClaude, nextCodex);
     } catch (error) {
       setNotice(errorMessage(error));
     } finally {
@@ -231,7 +240,7 @@ export function ConnectionCenterSettings({
   const filteredConnections = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     return connections.filter((connection) => {
-      if (fixedCompanyId && connection.companyId !== fixedCompanyId) return false;
+      if (!visibleInCompanyScope(connection, fixedCompanyId)) return false;
       if (!query) return true;
       return [
         connection.label,
@@ -355,18 +364,19 @@ export function ConnectionCenterSettings({
   }
 
   if (!bridge) {
-    return <div className="focused-settings-page"><h1>Connections</h1><div className="settings-empty-state">Open the standalone desktop app to manage provider identities.</div></div>;
+    return <div className={embedded ? 'connection-center-settings' : 'focused-settings-page'}><h1>Connections</h1><div className="settings-empty-state">Open the standalone desktop app to manage provider identities.</div></div>;
   }
 
   const apiKind = newKind === 'openai-api' || newKind === 'anthropic-api';
   const managingApi = filteredConnections.find((connection) => connection.id === managingApiId && connection.auth === 'api-key');
   const scopedLabel = fixedCompanyName ?? companies.find((company) => company.id === fixedCompanyId)?.name;
+  const personalScope = fixedCompanyId === 'personal';
 
-  return <div className="focused-settings-page connections-settings-page connection-center-settings" data-company-scope={fixedCompanyId}>
-    <header>
-      <div><h1>Connections</h1><p>{fixedCompanyId ? `Provider identities owned by ${scopedLabel ?? fixedCompanyId}. New connections are locked to this context.` : 'Every provider identity is a separate Company-owned connection, regardless of how it authenticates.'}</p></div>
+  return <div className={`${embedded ? '' : 'focused-settings-page connections-settings-page '}connection-center-settings`} data-company-scope={fixedCompanyId} data-embedded={embedded ? 'true' : 'false'}>
+    {!embedded ? <header>
+      <div><h1>Connections</h1><p>{personalScope ? 'Personal provider identities plus shared local execution. New cloud connections are bound to Personal.' : fixedCompanyId ? `Provider identities owned by ${scopedLabel ?? fixedCompanyId}. New connections are locked to this context.` : 'Every cloud provider identity is a separate Company-owned connection; local runtimes remain shared execution capabilities.'}</p></div>
       {surface === 'connections' ? <button type="button" className="settings-save-button" onClick={() => setAdding(true)}><Plus size={14} />Add connection</button> : null}
-    </header>
+    </header> : surface === 'connections' ? <div className="connection-section-heading"><div><h2>Provider connections</h2><p>{personalScope ? 'Personal provider identities plus shared local execution.' : `Provider identities owned by ${scopedLabel ?? fixedCompanyId}.`}</p></div><button type="button" className="settings-save-button" onClick={() => setAdding(true)}><Plus size={14} />Add connection</button></div> : null}
 
     {showConnectors ? <nav className="connections-surface-tabs" aria-label="Connection settings">
       <button type="button" className={surface === 'connections' ? 'active' : ''} onClick={() => setSurface('connections')}><UserRound size={14} />Connections</button>
@@ -385,8 +395,8 @@ export function ConnectionCenterSettings({
       </section>
 
       <section className="connection-section connection-center-inventory">
-        <div className="connection-section-heading"><div><h2>Connection inventory</h2><p>{fixedCompanyId ? 'Only connections canonically owned by this Company are shown.' : 'Accounts and API Keys from the same provider remain distinct identities with independent Company ownership.'}</p></div><span className="connection-count">{filteredConnections.length}</span></div>
-        <label className="connector-search connection-center-search"><Search size={14} /><input aria-label="Search connections" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={fixedCompanyId ? 'Search this Company’s connections' : 'Search name, Company, provider or auth kind'} /></label>
+        <div className="connection-section-heading"><div><h2>Connection inventory</h2><p>{personalScope ? 'Personal cloud identities and shared local runtimes are shown here.' : fixedCompanyId ? 'Only connections canonically owned by this Company are shown.' : 'Accounts and API Keys from the same provider remain distinct identities with independent Company ownership.'}</p></div><span className="connection-count">{filteredConnections.length}</span></div>
+        <label className="connector-search connection-center-search"><Search size={14} /><input aria-label="Search connections" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={personalScope ? 'Search Personal connections and local runtimes' : fixedCompanyId ? 'Search this Company’s connections' : 'Search name, Company, provider or auth kind'} /></label>
         <div className="connection-list">
           {filteredConnections.map((connection) => {
             const currentState = state(connection);
@@ -398,7 +408,7 @@ export function ConnectionCenterSettings({
                 <span className="connection-icon">{connection.auth === 'api-key' ? <KeyRound size={16} /> : <UserRound size={16} />}</span>
                 <div className="connection-copy">
                   <div className="connection-title-row"><strong>{connection.label}</strong><span>{authLabel(connection)}</span></div>
-                  <small>{providerLabel(connection)} · Company: {connection.companyName ?? connection.organizationLabel ?? connection.organizationId ?? 'Unassigned'} · {connection.billing}</small>
+                  <small>{connection.auth === 'local' ? `${providerLabel(connection)} · Shared local execution · ${connection.billing}` : `${providerLabel(connection)} · Company: ${connection.companyName ?? connection.organizationLabel ?? connection.organizationId ?? 'Unassigned'} · ${connection.billing}`}</small>
                   {connection.auth === 'api-key' ? <small>{customEndpoint ? `Custom endpoint: ${customEndpoint}` : 'Official provider endpoint'}</small> : null}
                   <span className={`connection-state ${currentState.ready ? 'ready' : ''}`}>{currentState.ready ? <CheckCircle2 size={12} /> : null}{currentState.label}</span>
                   <small className="connection-management"><ShieldCheck size={12} />{management(connection)}</small>
@@ -414,11 +424,11 @@ export function ConnectionCenterSettings({
               </div>
             </article>;
           })}
-          {filteredConnections.length === 0 ? <div className="settings-empty-state connection-empty-state">{busy === 'refresh' ? 'Loading connections…' : search ? 'No connections match your search.' : fixedCompanyId ? 'No provider connections belong to this Company yet.' : 'No provider connections yet.'}</div> : null}
+          {filteredConnections.length === 0 ? <div className="settings-empty-state connection-empty-state">{busy === 'refresh' ? 'Loading connections…' : search ? 'No connections match your search.' : personalScope ? 'No Personal provider identities are configured. Shared local runtimes appear here when available.' : fixedCompanyId ? 'No provider connections belong to this Company yet.' : 'No provider connections yet.'}</div> : null}
         </div>
       </section>
 
-      <aside className="connection-note"><ShieldCheck size={16} /><p><strong>One identity, one Company</strong><span>OAuth stays in the provider runtime; API Keys stay in Keychain. Axis persists only stable ownership and endpoint metadata and never infers Company from a mutable account label after binding.</span></p></aside>
+      <aside className="connection-note"><ShieldCheck size={16} /><p><strong>{personalScope ? 'Personal identities, shared local runtime' : 'One identity, one Company'}</strong><span>{personalScope ? 'Personal owns its cloud identities; Ollama remains a shared local execution capability and is not assigned a fake Company.' : 'OAuth stays in the provider runtime; API Keys stay in Keychain. Axis persists only stable ownership and endpoint metadata and never infers Company from a mutable account label after binding.'}</span></p></aside>
     </>}
 
     {adding ? <div className="nested-settings-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setAdding(false); }}>
