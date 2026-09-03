@@ -6,6 +6,8 @@ import type {
   InferenceUsage
 } from '../providers/types.js';
 import type {
+  AgentAttachment,
+  AgentDecisionRequest,
   AgentMessage,
   AgentProgress,
   AgentSessionContext,
@@ -31,7 +33,11 @@ export interface AgentProviderRequest {
 
 export interface AgentProviderResponse {
   readonly text?: string;
+  /** Summary only; adapters must not expose raw provider chain-of-thought. */
+  readonly reasoningSummary?: string;
+  readonly attachments?: readonly AgentAttachment[];
   readonly toolCalls: readonly ToolCall[];
+  readonly decisionRequest?: AgentDecisionRequest;
   readonly stopReason: string;
   readonly usage?: InferenceUsage;
   readonly responseId?: string;
@@ -44,7 +50,7 @@ export interface AgentProviderControl {
 
 /**
  * Provider-specific protocols terminate here. The runtime only sees canonical
- * messages, tool definitions/calls and progress.
+ * messages, tool definitions/calls, decision requests and progress.
  *
  * `connectionId` and `modelId` identify one exact already-resolved session
  * selection. Adapters must never choose another connection/model as fallback.
@@ -76,6 +82,30 @@ const TOOL_LOOP_SCHEMA: Record<string, unknown> = {
   properties: {
     complete: { type: 'boolean' },
     text: { type: 'string' },
+    reasoningSummary: { type: 'string' },
+    decisionRequest: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['kind', 'prompt'],
+      properties: {
+        id: { type: 'string' },
+        kind: { type: 'string' },
+        prompt: { type: 'string' },
+        options: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['id', 'label'],
+            properties: {
+              id: { type: 'string' },
+              label: { type: 'string' },
+              description: { type: 'string' }
+            }
+          }
+        }
+      }
+    },
     toolCalls: {
       type: 'array',
       items: {
@@ -114,13 +144,60 @@ function canonicalToolCalls(value: unknown): ToolCall[] {
   });
 }
 
+function canonicalDecisionRequest(value: unknown): AgentDecisionRequest | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AgentProviderProtocolError('Provider decisionRequest must be an object.');
+  }
+  const record = value as Record<string, unknown>;
+  const kind = typeof record.kind === 'string' ? record.kind.trim() : '';
+  const prompt = typeof record.prompt === 'string' ? record.prompt.trim() : '';
+  if (!kind || !prompt) {
+    throw new AgentProviderProtocolError('Provider decisionRequest requires kind and prompt.');
+  }
+  let options: AgentDecisionRequest['options'];
+  if (record.options !== undefined) {
+    if (!Array.isArray(record.options)) {
+      throw new AgentProviderProtocolError('Provider decisionRequest options must be an array.');
+    }
+    options = record.options.map((option, index) => {
+      if (!option || typeof option !== 'object' || Array.isArray(option)) {
+        throw new AgentProviderProtocolError(`Provider decision option ${index} must be an object.`);
+      }
+      const candidate = option as Record<string, unknown>;
+      const id = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+      const label = typeof candidate.label === 'string' ? candidate.label.trim() : '';
+      if (!id || !label) {
+        throw new AgentProviderProtocolError(`Provider decision option ${index} requires id and label.`);
+      }
+      return {
+        id,
+        label,
+        description: typeof candidate.description === 'string' ? candidate.description : undefined
+      };
+    });
+  }
+  const rawId = typeof record.id === 'string' ? record.id.trim() : '';
+  return {
+    id: rawId || `decision-${randomUUID()}`,
+    kind,
+    prompt,
+    options
+  };
+}
+
 function transcript(messages: readonly AgentMessage[]): string {
   return JSON.stringify(messages.map((message) => ({
     role: message.role,
     content: message.content,
+    reasoningSummary: message.reasoningSummary,
+    attachments: message.attachments,
     toolCalls: message.toolCalls,
     toolCallId: message.toolCallId,
-    toolName: message.toolName
+    toolName: message.toolName,
+    error: message.error,
+    decisionRequest: message.decisionRequest,
+    decisionResolution: message.decisionResolution
   })));
 }
 
@@ -132,7 +209,8 @@ function structuredSystemPrompt(
     systemPrompt.trim(),
     '',
     '# AXIS AGENT RUNTIME PROTOCOL',
-    'Respond only with the requested JSON object. Set complete=true when the turn is finished. Otherwise request one or more tools from the exact catalog below. Never invent a tool name. Tool results will be appended to the transcript and you will be invoked again.',
+    'Respond only with the requested JSON object. Set complete=true when the turn is finished. Otherwise request one or more tools from the exact catalog below, or emit decisionRequest when user input/approval is required before continuing. Never invent a tool name. Tool results will be appended to the transcript and you will be invoked again.',
+    'If reasoningSummary is supplied, include only a concise reasoning summary, never hidden chain-of-thought.',
     '',
     '# TOOL CATALOG',
     JSON.stringify(tools.map((tool) => ({
@@ -258,17 +336,26 @@ export class InferenceProviderAgentAdapter implements AgentProviderAdapter {
       throw new AgentProviderProtocolError('Provider structured tool output must contain boolean complete.');
     }
     const toolCalls = canonicalToolCalls(record.toolCalls);
-    if (!record.complete && toolCalls.length === 0) {
-      throw new AgentProviderProtocolError('Provider requested continuation without any tool calls.');
+    const decisionRequest = canonicalDecisionRequest(record.decisionRequest);
+    if (!record.complete && toolCalls.length === 0 && !decisionRequest) {
+      throw new AgentProviderProtocolError('Provider requested continuation without tool calls or a decision request.');
     }
-    if (record.complete && toolCalls.length > 0) {
-      throw new AgentProviderProtocolError('Provider marked the turn complete while also requesting tools.');
+    if (record.complete && (toolCalls.length > 0 || decisionRequest)) {
+      throw new AgentProviderProtocolError('Provider marked the turn complete while also requesting tools or a decision.');
+    }
+    if (toolCalls.length > 0 && decisionRequest) {
+      throw new AgentProviderProtocolError('Provider cannot request tools and a user decision in the same canonical cycle.');
     }
     const text = typeof record.text === 'string' ? record.text : undefined;
+    const reasoningSummary = typeof record.reasoningSummary === 'string'
+      ? record.reasoningSummary.trim() || undefined
+      : undefined;
     return {
       text,
+      reasoningSummary,
       toolCalls,
-      stopReason: record.complete ? result.stopReason ?? 'complete' : 'tool_calls',
+      decisionRequest,
+      stopReason: decisionRequest ? 'decision_required' : record.complete ? result.stopReason ?? 'complete' : 'tool_calls',
       usage: result.usage,
       responseId: result.responseId
     };
