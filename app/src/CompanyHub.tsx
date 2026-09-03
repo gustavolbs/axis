@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Building2,
   FolderKanban,
@@ -12,7 +12,6 @@ import {
 import type { AdminProject, CompanyDefinition } from './app-types.js';
 import { ConnectionCenterSettings } from './ConnectionCenterSettings.js';
 import type { McpConnectorView, ProviderConnectionView } from './native.js';
-import './company-hub.css';
 
 export type CompanyHubSection = 'overview' | 'projects' | 'connections' | 'mcps' | 'skills' | 'settings';
 
@@ -50,11 +49,23 @@ function errorMessage(error: unknown): string {
 
 function SectionButton({ active, icon, children, onClick }: {
   active: boolean;
-  icon: React.ReactNode;
-  children: React.ReactNode;
+  icon: ReactNode;
+  children: ReactNode;
   onClick: () => void;
 }) {
   return <button type="button" className={active ? 'active' : ''} onClick={onClick}>{icon}<span>{children}</span></button>;
+}
+
+function CompanyPageHeader({ eyebrow, title, description, action }: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  action?: ReactNode;
+}) {
+  return <header className="work-hub-header">
+    <div><small>{eyebrow}</small><h2>{title}</h2><p>{description}</p></div>
+    {action ? <div className="work-hub-actions">{action}</div> : null}
+  </header>;
 }
 
 export function CompanyHub({
@@ -147,89 +158,86 @@ export function CompanyHub({
   const accountConnections = scopedConnections.filter((connection) => connection.auth === 'claude-account' || connection.auth === 'chatgpt-account');
   const apiKeys = scopedConnections.filter((connection) => connection.auth === 'api-key').length;
 
-  return <div className="company-hub" data-company-id={company.id}>
-    <aside className="company-hub-rail" aria-label={`${company.name} navigation`}>
-      <div className="company-hub-identity">
-        <span className="company-hub-mark" style={{ backgroundColor: company.color }}><Building2 size={16} /></span>
-        <div><strong>{company.name}</strong><small>{company.id === 'personal' ? 'Personal context' : 'Company context'}</small></div>
-      </div>
-      <nav>
-        <SectionButton active={section === 'overview'} icon={<LayoutDashboard size={15} />} onClick={() => onSectionChange('overview')}>Overview</SectionButton>
-        <SectionButton active={section === 'projects'} icon={<FolderKanban size={15} />} onClick={() => onSectionChange('projects')}>Projects</SectionButton>
-        <SectionButton active={section === 'connections'} icon={<KeyRound size={15} />} onClick={() => onSectionChange('connections')}>Connections</SectionButton>
-        <SectionButton active={section === 'mcps'} icon={<Network size={15} />} onClick={() => onSectionChange('mcps')}>MCPs</SectionButton>
-        <SectionButton active={section === 'skills'} icon={<Sparkles size={15} />} onClick={() => onSectionChange('skills')}>Skills</SectionButton>
-        <SectionButton active={section === 'settings'} icon={<Settings2 size={15} />} onClick={() => onSectionChange('settings')}>Settings</SectionButton>
-      </nav>
+  return <section className="work-hub-shell work-hub-page company-hub" data-company-id={company.id} aria-label={`${company.name} Company Hub`}>
+    <aside className="work-hub-rail company-hub-rail" aria-label={`${company.name} navigation`}>
+      <div className="work-hub-rail-title"><Building2 size={14} style={{ color: company.color }} /> {company.name}</div>
+      <SectionButton active={section === 'overview'} icon={<LayoutDashboard size={15} />} onClick={() => onSectionChange('overview')}>Overview</SectionButton>
+      <SectionButton active={section === 'projects'} icon={<FolderKanban size={15} />} onClick={() => onSectionChange('projects')}>Projects</SectionButton>
+      <SectionButton active={section === 'connections'} icon={<KeyRound size={15} />} onClick={() => onSectionChange('connections')}>Connections</SectionButton>
+      <SectionButton active={section === 'mcps'} icon={<Network size={15} />} onClick={() => onSectionChange('mcps')}>MCPs</SectionButton>
+      <SectionButton active={section === 'skills'} icon={<Sparkles size={15} />} onClick={() => onSectionChange('skills')}>Skills</SectionButton>
+      <SectionButton active={section === 'settings'} icon={<Settings2 size={15} />} onClick={() => onSectionChange('settings')}>Settings</SectionButton>
+      <div className="work-hub-rail-footer"><span />{company.id === 'personal' ? 'Personal context' : 'Company context'}</div>
     </aside>
 
-    <section className="company-hub-content">
+    <main className="work-hub-main company-hub-content">
       {notice ? <div className="settings-inline-message" role="status">{notice}</div> : null}
 
-      {section === 'overview' ? <div className="company-hub-page company-overview-page">
-        <header><div><span className="company-hub-eyebrow">Company Hub</span><h1>{company.name}</h1><p>{company.description || 'Company-scoped resources, projects and provider identities.'}</p></div><button type="button" className="settings-save-button" onClick={() => onOpenWorkHub(company.id)}>Open in Work Hub</button></header>
-        <div className="company-hub-metrics">
-          <article><strong>{scopedProjects.length}</strong><span>Projects</span></article>
-          <article><strong>{scopedConnections.length}</strong><span>Connections</span></article>
-          <article><strong>{accountConnections.length}</strong><span>Account connections</span></article>
-          <article><strong>{apiKeys}</strong><span>API Keys</span></article>
+      {section === 'overview' ? <>
+        <CompanyPageHeader eyebrow="Company Hub" title={company.name} description={company.description || 'Company-scoped resources, projects and provider identities.'} action={<button type="button" className="btn-primary" onClick={() => onOpenWorkHub(company.id)}>Open in Work Hub</button>} />
+        <div className="work-hub-summary-grid company-hub-metrics">
+          <button type="button" className="work-hub-stat" onClick={() => onSectionChange('projects')}><FolderKanban size={16} /><strong>{scopedProjects.length}</strong><small>Projects</small></button>
+          <button type="button" className="work-hub-stat" onClick={() => onSectionChange('connections')}><KeyRound size={16} /><strong>{scopedConnections.length}</strong><small>Connections</small></button>
+          <button type="button" className="work-hub-stat" onClick={() => onSectionChange('connections')}><Building2 size={16} /><strong>{accountConnections.length}</strong><small>Account connections</small></button>
+          <button type="button" className="work-hub-stat" onClick={() => onSectionChange('connections')}><KeyRound size={16} /><strong>{apiKeys}</strong><small>API Keys</small></button>
         </div>
-        <section className="company-hub-card">
-          <h2>Ownership boundary</h2>
+        <section className="work-hub-section company-hub-card">
+          <div className="work-hub-section-heading"><h3>Ownership boundary</h3></div>
           <p>Projects, connections, MCP discovery and later Company resources on this surface are scoped by the canonical Company id <code>{company.id}</code>. The Work Hub remains one separate global surface and only aggregates this context with explicit provenance.</p>
         </section>
-        <section className="company-hub-card">
-          <div className="company-hub-card-heading"><div><h2>Recent projects</h2><p>Only projects owned by this Company.</p></div><button type="button" onClick={() => onSectionChange('projects')}>View all</button></div>
-          <div className="company-project-list compact">
-            {scopedProjects.slice(0, 5).map((project) => <button type="button" key={project.id} onClick={() => onOpenProject(project)}><FolderKanban size={15} /><span><strong>{project.name}</strong><small>{project.workspace || 'No workspace selected'}</small></span></button>)}
-            {scopedProjects.length === 0 ? <p className="company-hub-empty">No projects belong to this context yet.</p> : null}
+        <section className="work-hub-section company-hub-card">
+          <div className="work-hub-section-heading"><h3>Recent projects</h3><button type="button" onClick={() => onSectionChange('projects')}>View all</button></div>
+          <div className="work-hub-list company-project-list">
+            {scopedProjects.slice(0, 5).map((project) => <button type="button" className="work-hub-item" key={project.id} onClick={() => onOpenProject(project)}><FolderKanban size={15} /><span className="work-hub-item-copy"><strong>{project.name}</strong><small>{project.workspace || 'No workspace selected'}</small></span></button>)}
+            {scopedProjects.length === 0 ? <div className="work-hub-empty"><FolderKanban size={20} /><strong>No projects yet</strong><span>No projects belong to this context yet.</span></div> : null}
           </div>
         </section>
-      </div> : null}
+      </> : null}
 
-      {section === 'projects' ? <div className="company-hub-page">
-        <header><div><span className="company-hub-eyebrow">{company.name}</span><h1>Projects</h1><p>Projects are filtered by canonical Company ownership, never by workspace path or label.</p></div></header>
-        <div className="company-project-grid">
-          {scopedProjects.map((project) => <button type="button" className="company-project-card" key={project.id} onClick={() => onOpenProject(project)}>
-            <span><FolderKanban size={18} /></span><div><strong>{project.name}</strong><small>{project.workspace || 'No workspace selected'}</small><em>{project.defaultConnectionId || 'No default connection'}</em></div>
+      {section === 'projects' ? <>
+        <CompanyPageHeader eyebrow={company.name} title="Projects" description="Projects are filtered by canonical Company ownership, never by workspace path or label." />
+        <div className="work-hub-list company-project-grid">
+          {scopedProjects.map((project) => <button type="button" className="work-hub-item company-project-card" key={project.id} onClick={() => onOpenProject(project)}>
+            <FolderKanban size={18} /><span className="work-hub-item-copy"><strong>{project.name}</strong><small>{project.workspace || 'No workspace selected'} · {project.defaultConnectionId || 'No default connection'}</small></span>
           </button>)}
-          {scopedProjects.length === 0 ? <p className="company-hub-empty">No active projects in {company.name}.</p> : null}
+          {scopedProjects.length === 0 ? <div className="work-hub-empty large"><FolderKanban size={24} /><strong>No active projects</strong><span>No active projects belong to {company.name}.</span></div> : null}
         </div>
-      </div> : null}
+      </> : null}
 
-      {section === 'connections' ? <div className="company-hub-page company-connections-page">
+      {section === 'connections' ? <div className="company-connections-page">
         <ConnectionCenterSettings companyId={company.id} companyName={company.name} showConnectors={false} />
       </div> : null}
 
-      {section === 'mcps' ? <div className="company-hub-page">
-        <header><div><span className="company-hub-eyebrow">{company.name}</span><h1>MCPs</h1><p>Provider-managed MCP discovery is resolved only through account connections owned by this Company.</p></div></header>
+      {section === 'mcps' ? <>
+        <CompanyPageHeader eyebrow={company.name} title="MCPs" description="Provider-managed MCP discovery is resolved only through account connections owned by this Company." />
         <div className="company-mcp-list">
           {accountConnections.map((connection) => {
             const state = mcpState[connection.id];
-            return <article className="company-hub-card" key={connection.id} data-connection-id={connection.id}>
-              <div className="company-hub-card-heading"><div><h2>{connection.label}</h2><p>{connection.auth === 'claude-account' ? 'Claude Account' : 'ChatGPT / Codex Account'}</p></div><button type="button" disabled={state?.loading} onClick={() => void loadMcps(connection, true)}>{state?.loading ? 'Refreshing…' : 'Refresh'}</button></div>
-              {state?.error ? <p className="company-hub-error">{state.error}</p> : null}
-              {state?.connectors?.length ? <div className="company-mcp-connectors">{state.connectors.map((connector) => <div key={connector.name}><span className={`company-mcp-status status-${connector.status}`} /><strong>{connector.name}</strong><small>{connector.status}{connector.managed ? ' · provider-managed' : ''}</small></div>)}</div> : state?.loading ? <p className="company-hub-empty">Discovering MCPs…</p> : <p className="company-hub-empty">No MCPs discovered for this account.</p>}
-            </article>;
+            return <section className="work-hub-section company-hub-card" key={connection.id} data-connection-id={connection.id}>
+              <div className="work-hub-section-heading"><h3>{connection.label}</h3><button type="button" disabled={state?.loading} onClick={() => void loadMcps(connection, true)}>{state?.loading ? 'Refreshing…' : 'Refresh'}</button></div>
+              <p>{connection.auth === 'claude-account' ? 'Claude Account' : 'ChatGPT / Codex Account'}</p>
+              {state?.error ? <div className="work-hub-error"><span>{state.error}</span></div> : null}
+              {state?.connectors?.length ? <div className="work-hub-list company-mcp-connectors">{state.connectors.map((connector) => <div className="work-hub-item" key={connector.name}><Network size={14} /><span className="work-hub-item-copy"><strong>{connector.name}</strong><small>{connector.status}{connector.managed ? ' · provider-managed' : ''}</small></span></div>)}</div> : state?.loading ? <div className="work-hub-empty"><strong>Discovering MCPs…</strong></div> : <div className="work-hub-empty"><strong>No MCPs discovered</strong><span>No MCPs were reported for this account.</span></div>}
+            </section>;
           })}
-          {accountConnections.length === 0 ? <p className="company-hub-empty">Add a Claude or ChatGPT/Codex Account connection to discover provider MCPs for this Company.</p> : null}
+          {accountConnections.length === 0 ? <div className="work-hub-empty large"><Network size={24} /><strong>No account MCP sources</strong><span>Add a Claude or ChatGPT/Codex Account connection to discover provider MCPs for this Company.</span></div> : null}
         </div>
-      </div> : null}
+      </> : null}
 
-      {section === 'skills' ? <div className="company-hub-page">
-        <header><div><span className="company-hub-eyebrow">{company.name}</span><h1>Skills</h1><p>Company-scoped skills will be administered here as the unified agent runtime is implemented.</p></div></header>
-        <section className="company-hub-card"><h2>Company skill scope</h2><p>This first-class location reserves the ownership boundary now; it does not invent or inherit skills from another Company. The skill lifecycle remains an open parity item in P2.5.</p></section>
-      </div> : null}
+      {section === 'skills' ? <>
+        <CompanyPageHeader eyebrow={company.name} title="Skills" description="Company-scoped skills will be administered here as the unified agent runtime is implemented." />
+        <section className="work-hub-section company-hub-card"><div className="work-hub-section-heading"><h3>Company skill scope</h3></div><p>This first-class location reserves the ownership boundary now; it does not invent or inherit skills from another Company. The skill lifecycle remains an open parity item in P2.5.</p></section>
+      </> : null}
 
-      {section === 'settings' ? <div className="company-hub-page">
-        <header><div><span className="company-hub-eyebrow">{company.name}</span><h1>Settings</h1><p>Settings on this page belong to this Company. App-wide settings remain in the global Settings dialog.</p></div></header>
-        {company.id === 'personal' ? <section className="company-hub-card"><h2>Personal context</h2><p>Personal is a reserved canonical isolation boundary. Its identity cannot be renamed, archived or converted into a Company.</p></section> : <form className="company-settings-form company-hub-card" onSubmit={(event) => void saveCompany(event)}>
+      {section === 'settings' ? <>
+        <CompanyPageHeader eyebrow={company.name} title="Settings" description="Settings on this page belong to this Company. App-wide settings remain in the global Settings dialog." />
+        {company.id === 'personal' ? <section className="work-hub-section company-hub-card"><div className="work-hub-section-heading"><h3>Personal context</h3></div><p>Personal is a reserved canonical isolation boundary. Its identity cannot be renamed, archived or converted into a Company.</p></section> : <form className="nested-settings-dialog company-settings-form" onSubmit={(event) => void saveCompany(event)}>
           <label><span>Name</span><input required value={name} onChange={(event) => setName(event.target.value)} /></label>
-          <label><span>Description</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={4} /></label>
-          <label><span>Color</span><div className="company-color-field"><input type="color" value={color} onChange={(event) => setColor(event.target.value.toUpperCase())} /><code>{color}</code></div></label>
-          <div className="company-settings-actions"><button type="submit" className="settings-save-button" disabled={saving || !name.trim()}>{saving ? 'Saving…' : 'Save Company'}</button></div>
+          <label><span>Description</span><input value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+          <label><span>Color</span><input type="color" value={color} onChange={(event) => setColor(event.target.value.toUpperCase())} /></label>
+          <div className="nested-settings-dialog-actions"><button type="submit" className="settings-save-button" disabled={saving || !name.trim()}>{saving ? 'Saving…' : 'Save Company'}</button></div>
         </form>}
-      </div> : null}
-    </section>
-  </div>;
+      </> : null}
+    </main>
+  </section>;
 }
