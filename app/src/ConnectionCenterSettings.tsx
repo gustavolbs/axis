@@ -86,12 +86,10 @@ function isAccount(connection: ProviderConnectionView): boolean {
   return connection.auth === 'claude-account' || connection.auth === 'chatgpt-account';
 }
 
-function visibleInCompanyScope(connection: ProviderConnectionView, fixedCompanyId?: string): boolean {
-  if (!fixedCompanyId) return true;
-  if (connection.companyId !== fixedCompanyId) {
-    return fixedCompanyId === 'personal' && connection.auth === 'local';
-  }
-  return true;
+function visibleInCompanyScope(connection: ProviderConnectionView, companyId?: string): boolean {
+  if (!companyId) return true;
+  if (connection.companyId === companyId) return true;
+  return companyId === 'personal' && connection.auth === 'local';
 }
 
 export function ConnectionCenterSettings({
@@ -242,7 +240,9 @@ export function ConnectionCenterSettings({
   const filteredConnections = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     return connections.filter((connection) => {
-      if (!visibleInCompanyScope(connection, fixedCompanyId)) return false;
+      if (fixedCompanyId && connection.companyId !== fixedCompanyId) {
+        if (!visibleInCompanyScope(connection, fixedCompanyId)) return false;
+      }
       if (!query) return true;
       return [
         connection.label,
