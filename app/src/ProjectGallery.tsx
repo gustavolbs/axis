@@ -15,6 +15,15 @@ function slug(value: string): string {
   return value.toLowerCase().trim().replace(/[^a-z0-9._:-]+/g, '-').replace(/^-|-$/g, '') || 'personal';
 }
 
+function canonicalProject(project: AdminProject): AdminProject {
+  const companyId = project.companyId || project.organizationId || 'personal';
+  return {
+    ...project,
+    companyId,
+    companyName: project.companyName ?? project.organizationName ?? (companyId === 'personal' ? 'Personal' : companyId)
+  };
+}
+
 function relative(value: string): string {
   const hours = Math.floor((Date.now() - new Date(value).getTime()) / 3_600_000);
   if (hours < 1) return 'now';
@@ -38,7 +47,7 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
 
   async function load() {
     const { projects: next } = await api<{ projects: AdminProject[] }>('/api/projects');
-    setProjects(next);
+    setProjects(next.map(canonicalProject));
   }
 
   useEffect(() => { void load().catch((next) => setError(next instanceof Error ? next.message : String(next))); }, []);
@@ -74,18 +83,25 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
     setError(undefined);
     try {
       const isEdit = Boolean(editing);
+      // companyId/companyName are the product contract. organization* remains a
+      // write-through compatibility alias until ProjectStore's legacy file
+      // schema is migrated by a later storage-focused change.
+      const companyFields = {
+        companyId,
+        companyName,
+        organizationId: companyId,
+        organizationName: companyName
+      };
       const payload = isEdit ? {
         name,
         description,
         workspace: folderOpen ? workspace.trim() : '',
-        companyId,
-        companyName
+        ...companyFields
       } : {
         name,
         description: description || undefined,
         workspace: folderOpen ? workspace.trim() || undefined : undefined,
-        companyId,
-        companyName,
+        ...companyFields,
         defaultRoutingPolicy: 'local-first',
         defaultModel: { mode: 'auto' },
         privacy: { cloudAllowed: false, allowedProviderIds: ['ollama'] },
@@ -102,7 +118,7 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
       await load();
       window.dispatchEvent(new CustomEvent('local-coder:projects-changed'));
       closeModal();
-      if (!isEdit) onOpenProject(project);
+      if (!isEdit) onOpenProject(canonicalProject(project));
     } catch (next) {
       setError(next instanceof Error ? next.message : String(next));
     } finally {
