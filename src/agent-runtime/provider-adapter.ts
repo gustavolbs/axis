@@ -280,6 +280,7 @@ export class InferenceProviderAgentAdapter implements AgentProviderAdapter {
     }
 
     const usesTools = request.tools.length > 0;
+    const usesCanonicalEnvelope = this.provider.capabilities.structuredOutput;
     if (usesTools && this.capabilities.toolProtocol === 'none') {
       throw new AgentProviderProtocolError(
         `Connection ${this.connectionId} cannot participate in the Axis tool loop because structured tool output is unavailable.`
@@ -288,12 +289,12 @@ export class InferenceProviderAgentAdapter implements AgentProviderAdapter {
 
     const result = await withCancellationSignal(control.signal, async () => await this.provider.invoke({
       model: this.modelId,
-      systemPrompt: usesTools
+      systemPrompt: usesCanonicalEnvelope
         ? structuredSystemPrompt(request.systemPrompt, request.tools)
         : request.systemPrompt,
-      userPrompt: usesTools ? transcript(request.messages) : request.messages.at(-1)?.content ?? '',
+      userPrompt: usesCanonicalEnvelope ? transcript(request.messages) : request.messages.at(-1)?.content ?? '',
       stage: 'agent-runtime',
-      output: usesTools
+      output: usesCanonicalEnvelope
         ? { type: 'json_schema', schema: TOOL_LOOP_SCHEMA, name: 'axis_agent_turn', strict: true }
         : { type: 'text' },
       timeoutMs: request.timeoutMs,
@@ -310,7 +311,7 @@ export class InferenceProviderAgentAdapter implements AgentProviderAdapter {
       })
     }));
 
-    if (!usesTools) {
+    if (!usesCanonicalEnvelope) {
       return {
         text: result.content,
         toolCalls: [],
