@@ -78,6 +78,9 @@ export function CompaniesSettings() {
   const [notice, setNotice] = useState<string>();
 
   async function load() {
+    // Bring legacy Project/Account identities into the canonical store before
+    // listing it so existing users never see an apparently empty Companies page.
+    await api('/api/companies/context');
     const { companies: next } = await api<{ companies: CompanyDefinition[] }>('/api/companies?archived=all');
     setCompanies(next);
   }
