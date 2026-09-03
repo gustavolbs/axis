@@ -38,6 +38,12 @@ if (process.platform === 'darwin') {
 const { installCompanyConnectionOwnership } = await import('../dist/company-connection-ownership.js');
 installCompanyConnectionOwnership();
 
+// API endpoint selection is connection-scoped, not provider-scoped. Install it
+// after Company canonicalization so every API-key view can carry independent
+// transport metadata without changing Account/Ollama behavior.
+const { installApiConnectionEndpointRouting } = await import('../dist/api-connection-endpoints.js');
+installApiConnectionEndpointRouting();
+
 // Install the standalone active-Company decorator before main.mjs asks the
 // compiled runtime class to create its singleton. The decorator keeps Company
 // scope server-owned while the existing app runtime remains the implementation
