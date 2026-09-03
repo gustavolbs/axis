@@ -50,6 +50,8 @@ export interface ProviderConnectionView {
   companyName?: string;
   companyArchived?: boolean;
   credentialId?: string;
+  /** Optional API base endpoint. Undefined means use the provider's official endpoint. */
+  endpoint?: string;
   accountProfileId?: string;
   available: boolean;
   reason?: string;
@@ -195,6 +197,8 @@ export interface LocalCoderBridge {
     providerFamily: 'openai' | 'anthropic';
     companyId: string;
     secret: string;
+    /** Optional API base endpoint. Empty/undefined uses the official provider endpoint. */
+    endpoint?: string;
   }): Promise<ProviderConnectionView>;
   workHubSnapshot(): Promise<WorkHubSnapshotView>;
   upsertWorkHubSource(input: {
