@@ -5,13 +5,13 @@ import path from 'node:path';
 
 import {
   AgentProviderProtocolError,
-  OperationCancelledError,
   type AgentProviderAdapter,
   type AgentProviderAdapterCapabilities,
   type AgentProviderControl,
   type AgentProviderRequest,
   type AgentProviderResponse
 } from '../agent-runtime/index.js';
+import { OperationCancelledError } from '../cancellation.js';
 import { ClaudeAccountProfileStore } from '../claude-account-profiles.js';
 import { ProviderError } from '../providers/types.js';
 import {
