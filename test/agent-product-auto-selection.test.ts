@@ -176,10 +176,10 @@ test('Cowork resolves Project auto routing to one exact Connection/model before 
       };
     },
     buildRegistry() { return registry; }
-  } as ProjectProviderRuntime;
+  } as unknown as ProjectProviderRuntime;
   const connections = {
     view(id: string) { return id === selectedConnection.id ? selectedConnection : undefined; }
-  } as ProviderConnectionRuntime;
+  } as unknown as ProviderConnectionRuntime;
   const runtime = new AgentProductRuntime({
     companyContext: () => snapshot(selectedProject, ['openai-a']),
     projects: { getProject() { return selectedProject; } },
@@ -227,14 +227,14 @@ test('auto routing rejects a foreign allowed Connection from the canonical Compa
       throw new Error('routingCandidates must not run after a Company ownership violation');
     },
     buildRegistry() { throw new Error('buildRegistry must not run after a Company ownership violation'); }
-  } as ProjectProviderRuntime;
+  } as unknown as ProjectProviderRuntime;
   const connections = {
     view(id: string) {
       if (id === connectionA.id) return connectionA;
       if (id === connectionB.id) return connectionB;
       return undefined;
     }
-  } as ProviderConnectionRuntime;
+  } as unknown as ProviderConnectionRuntime;
   const runtime = new AgentProductRuntime({
     companyContext: () => snapshot(selectedProject, ['openai-a'], ['openai-b']),
     projects: { getProject() { return selectedProject; } },
