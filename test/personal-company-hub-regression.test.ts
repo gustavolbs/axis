@@ -10,6 +10,7 @@ const appRoot = read('app/src/AppRoot.tsx');
 const companyHub = read('app/src/CompanyHub.tsx');
 const connectionCenter = read('app/src/ConnectionCenterSettings.tsx');
 const companySources = read('app/src/CompanySourcesSettings.tsx');
+const workHub = read('app/src/GlobalWorkHubLauncher.tsx');
 
 test('primary context navigation consumes the canonical snapshot that contains Personal', () => {
   assert.match(appRoot, /api<\{ context: \{ companies: CompanyDefinition\[\] \} \}>\('\/api\/companies\/context'\)/);
@@ -38,6 +39,14 @@ test('Company Hub embeds canonical settings surfaces instead of nesting standalo
 test('Company projects read the canonical chat connection policy', () => {
   assert.match(companyHub, /project\.connectionPolicy\?\.chat\.defaultConnectionId/);
   assert.doesNotMatch(companyHub, /project\.defaultConnectionId/);
+});
+
+test('global Work Hub scopes also consume the canonical snapshot so Personal is filterable', () => {
+  assert.match(workHub, /api<\{ context: \{ companies: CompanyDefinition\[\] \} \}>\('\/api\/companies\/context'\)/);
+  assert.match(workHub, /companyResponse\.context\.companies/);
+  assert.doesNotMatch(workHub, /api<\{ companies: CompanyDefinition\[\] \}>\('\/api\/companies\?archived=all'\)/);
+  assert.match(workHub, />All<\/button>/);
+  assert.match(workHub, /data-company-id=\{company\.id\}/);
 });
 
 test('Work Hub source administration remains inside the owning Company surface', () => {
