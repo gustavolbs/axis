@@ -109,3 +109,4 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ### Changed
 - macOS releases are created automatically from `main` after validation, tests, packaging, signature verification, and changelog extraction.
 - Release notes are generated from the matching version section in this file.
+- The desktop entrypoint now uses a small updater bootstrap before loading the existing Electron main process.
