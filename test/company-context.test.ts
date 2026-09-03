@@ -139,3 +139,12 @@ test('canonical company id and legacy organization id cannot disagree on a Proje
     /conflicting company and legacy organization identities/
   );
 });
+
+test('desktop runtime exposes the canonical hierarchy instead of requiring callers to reconstruct legacy scopes', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'src', 'app-runtime.ts'), 'utf8');
+  assert.match(source, /private readonly companyContext = new CompanyContextStore\(\)/);
+  assert.match(source, /pathname === '\/companies\/context'/);
+  assert.match(source, /projects: this\.projects\.listProjects\(\)/);
+  assert.match(source, /connections: this\.projects\.listConnections\(\)/);
+  assert.match(source, /sessions: this\.jobs\.list\(\)/);
+});
