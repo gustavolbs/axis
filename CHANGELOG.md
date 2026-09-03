@@ -2,6 +2,22 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.22.0] - 2026-09-03
+
+### Added
+- Routed real Chat and Cowork product sessions through the same canonical `AgentRuntime` composition, with immutable Company/Project/exact Connection/model/execution-target authority and dynamically scoped filesystem, process, Git, MCP and browser tools.
+- Connected real provider/tool/read/mutation/command/validation/error/cancellation/pause/completion lifecycle events to the Agent Runtime UI, while Project Memory now receives and retrieves lifecycle context from the real product path.
+- Added canonical approval/resume composition that pauses before tool execution and binds a resumed approval to the pending tool name and argument fingerprint so a local mutation cannot be silently duplicated.
+
+### Changed
+- `StandaloneJobManager` is now the durable conversation/API compatibility shell for desktop Chat/Cowork instead of the product execution engine; `AgentRuntime` is the canonical engine. The legacy execution runtime remains only for worker health/settings and unrelated compatibility surfaces.
+- Chat can use the same runtime tools when its session authorizes them, while Cowork gets broader repository mutation/process/Git authority from roots, resources, capabilities and permissions rather than a second engine or a predeclared editable-file plan.
+
+### Security
+- Product session Company ownership is resolved from the canonical Company graph before provider transport resolution; workspace paths, display labels, provider family, account identity, API-key identity and legacy organization metadata do not select Company.
+- Product execution never silently substitutes another Company, Connection, model or execution target. ChatGPT/Codex Account remains fail-closed under the accepted G2 blocker until provider tool calls can be intercepted safely before execution.
+- Tool catalogs are reduced to the capabilities, permissions and resources actually bound to the immutable session, including read-only Chat roots and Company/Project-scoped MCP resources.
+
 ## [0.21.1] - 2026-09-03
 
 ### Added
@@ -37,7 +53,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added Agent Runtime UI contract tests and real-Electron visual smoke coverage for light/dark themes, narrow layout, keyboard focus, pane navigation, progress, decision/approval resolution and failure states.
 - Added Company-bound native `AgentProviderAdapter` composition for OpenAI API Key, Anthropic API Key, Ollama, and Claude Account connections without changing the canonical `AgentRuntime` or Axis tool contracts.
 - Added a provider-neutral structured Account protocol that translates canonical messages, attachment metadata, summarized reasoning, tool definitions/calls/results, decision requests, stop reasons, progress, errors, cancellation, and exact model identity at the provider boundary.
-- Added adapter tests covering API Key and Account authentication in the same runtime, OpenAI and Anthropic provider families, capability negotiation, canonical tool-call roundtrips, hidden-tool rejection, cancellation, provider errors, exact no-fallback model selection, Ollama local scope, and Company ownership preservation.
+- Added adapter tests covering API Key and Account authentication in the same runtime, OpenAI and Anthropic provider families, capability negotiation, canonical tool-call roundtrips, hidden-tool rejection, cancellation, provider errors, exact no-fallback model selection, Ollama local scope, Company ownership preservation, and the explicit fail-closed ChatGPT/Codex Account blocker.
 - Added provider-agnostic filesystem tools for bounded file reads, directory listings, metadata/stat inspection, glob/file search, text search, atomic file creation/replacement, and exact text edits through the unified `AxisTool` runtime contract.
 - Added namespaced `axis.filesystem.read` and `axis.filesystem.write` capabilities with existing `workspace.read`/`workspace.write` permission gates, progress/activity reporting, per-tool timeouts, explicit mutation status, SHA-256 conflict detection, binary-file handling, and `.gitignore`-aware search.
 - Added focused runtime tests covering allowed roots, traversal and absolute-path refusal, symlink escapes, Company/Project isolation, read-only roots and denied permissions, cancellation, mutations, explicit filesystem errors, search behavior, and provider-neutral execution through different fake adapters.
