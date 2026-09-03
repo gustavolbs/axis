@@ -166,13 +166,18 @@ async function waitFor(cdp, expression, label) {
   throw new Error(`Timed out waiting for ${label}.\n${logs}`);
 }
 
-async function waitForRequests(count, label) {
+function safeRequests() {
+  return requests.map(({ authorization, ...request }) => request);
+}
+
+async function waitForRequest(match, label) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if (requests.length >= count) return;
+    const request = requests.find(match);
+    if (request) return request;
     await sleep(100);
   }
-  throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(requests)}`);
+  throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(safeRequests())}`);
 }
 
 async function screenshot(cdp, name) {
@@ -242,11 +247,17 @@ try {
   }
   await screenshot(cdp, 'api-lifecycle-manage-initial');
 
+  const initialRequestCount = requests.length;
   await clickText(cdp, '.api-key-manage-dialog button', 'Test connection');
-  await waitForRequests(1, 'initial safe connection test');
   await waitFor(cdp, "document.querySelector('.api-key-manage-dialog')?.textContent?.includes('Connection verified') === true", 'initial verified result');
-  if (requests[0]?.method !== 'GET' || requests[0]?.url !== '/v1/models' || requests[0]?.authorization !== `Bearer ${firstSecret}`) {
-    throw new Error(`Initial test did not use the expected non-mutating request: ${JSON.stringify(requests[0])}`);
+  const initialRequest = await waitForRequest((request, index) =>
+    index >= initialRequestCount &&
+    request.method === 'GET' &&
+    request.url === '/v1/models' &&
+    request.authorization === `Bearer ${firstSecret}`,
+  'initial safe connection test');
+  if (initialRequest.project !== undefined) {
+    throw new Error(`Initial test unexpectedly sent project metadata: ${JSON.stringify(safeRequests())}`);
   }
 
   await evaluate(cdp, `(() => {
@@ -287,13 +298,16 @@ try {
   await clickText(cdp, '.api-key-manage-dialog button', 'Rotate key');
   await waitFor(cdp, "document.querySelector('.api-key-manage-dialog')?.textContent?.includes('API key rotated') === true", 'rotated API key');
 
+  const rotatedRequestStart = requests.length;
   await clickText(cdp, '.api-key-manage-dialog button', 'Test connection');
-  await waitForRequests(2, 'post-rotation connection test');
   await waitFor(cdp, "document.querySelector('.api-key-manage-dialog')?.textContent?.includes('Connection verified') === true", 'post-rotation verified result');
-  const rotatedRequest = requests[1];
-  if (rotatedRequest?.method !== 'GET' || rotatedRequest?.url !== '/v1/models' || rotatedRequest?.authorization !== `Bearer ${rotatedSecret}` || rotatedRequest?.project !== 'project-smoke') {
-    throw new Error(`Rotation/header test did not use updated connection state: ${JSON.stringify(rotatedRequest)}`);
-  }
+  await waitForRequest((request, index) =>
+    index >= rotatedRequestStart &&
+    request.method === 'GET' &&
+    request.url === '/v1/models' &&
+    request.authorization === `Bearer ${rotatedSecret}` &&
+    request.project === 'project-smoke',
+  'post-rotation test using rotated key and persisted project header');
 
   await evaluate(cdp, `(() => {
     const button = document.querySelector('.api-key-manage-dialog button[aria-label="Disable API Key connection"]');
@@ -332,7 +346,7 @@ try {
     throw new Error(`Sibling isolation after removal failed: ${JSON.stringify(remaining)}`);
   }
   await screenshot(cdp, 'api-lifecycle-sibling-after-remove');
-  console.log(`api-lifecycle-requests ${JSON.stringify(requests.map(({ authorization, ...request }) => request))}`);
+  console.log(`api-lifecycle-requests ${JSON.stringify(safeRequests())}`);
 } finally {
   cdp?.close();
   child.kill('SIGTERM');
