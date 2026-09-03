@@ -14,14 +14,15 @@ import {
 } from './agent-runtime-ui-fixtures.js';
 import type { AgentDecisionResolution, AgentLifecycleEvent } from '../../src/agent-runtime/contracts.js';
 
-type PreviewScenario = 'active' | 'resolved' | 'failure' | 'all';
+type PreviewScenario = 'empty' | 'active' | 'resolved' | 'failure' | 'all';
 
 function scenarioFromLocation(): PreviewScenario {
   const value = new URLSearchParams(window.location.search).get('runtime-ui-preview');
-  return value === 'resolved' || value === 'failure' || value === 'all' ? value : 'active';
+  return value === 'empty' || value === 'resolved' || value === 'failure' || value === 'all' ? value : 'active';
 }
 
 function eventsForScenario(scenario: PreviewScenario): readonly AgentLifecycleEvent[] {
+  if (scenario === 'empty') return [];
   if (scenario === 'resolved') return [...runtimeUiActiveEvents, ...runtimeUiOutcomeEvents];
   if (scenario === 'failure') return runtimeUiFailureEvents;
   if (scenario === 'all') return runtimeUiAllEvents;
@@ -91,7 +92,7 @@ export function RuntimeUiPreview() {
         <p>Isolated canonical lifecycle fixture for visual verification. No backend wiring is used.</p>
       </div>
       <div className="result-chip-row" role="group" aria-label="Preview scenarios">
-        {(['active', 'resolved', 'failure', 'all'] as const).map((value) => <button
+        {(['empty', 'active', 'resolved', 'failure', 'all'] as const).map((value) => <button
           key={value}
           type="button"
           className="lc-agent-secondary-action"
@@ -108,6 +109,7 @@ export function RuntimeUiPreview() {
       <div className="assistant-body">
         <AgentRuntimeTimeline
           events={events}
+          emptyLabel="No lifecycle events have been emitted for this turn."
           onDecision={setDecision}
           onPermission={setPermission}
         />
@@ -122,7 +124,10 @@ export function RuntimeUiPreview() {
     </section>
 
     <section aria-label="Future runtime panes">
-      <RuntimeEvidenceDock panes={panes} />
+      <RuntimeEvidenceDock
+        panes={scenario === 'empty' ? [] : panes}
+        emptyLabel="No filesystem, process, Git, MCP, or browser evidence yet."
+      />
     </section>
   </main>;
 }
