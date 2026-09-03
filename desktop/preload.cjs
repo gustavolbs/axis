@@ -38,6 +38,7 @@ const bridge = {
   loginCodexAccountMcp: (profileId, name) => ipcRenderer.invoke('local-coder:codex-account-mcp-login', String(profileId), String(name)),
 
   providerConnections: () => ipcRenderer.invoke('local-coder:connections'),
+  createApiKeyConnection: (input) => ipcRenderer.invoke('local-coder:api-connection-create', input),
   workHubSnapshot: () => ipcRenderer.invoke('local-coder:work-hub-snapshot'),
   upsertWorkHubSource: (input) => ipcRenderer.invoke('local-coder:work-hub-source-upsert', input),
   removeWorkHubSource: (sourceId) => ipcRenderer.invoke('local-coder:work-hub-source-remove', String(sourceId)),
