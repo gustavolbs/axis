@@ -2,6 +2,11 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 import type { AgentSessionContext } from '../../agent-runtime/index.js';
+import {
+  assertRuntimeNetworkUrl,
+  type RuntimeNetworkPolicy
+} from '../../runtime-security/network-policy.js';
+import { runtimeSecureFetch } from '../../runtime-security/secure-fetch.js';
 import type {
   McpCallToolResult,
   McpClient,
@@ -56,6 +61,12 @@ const BASE_ENV_KEYS = new Set([
   'NODE_EXTRA_CA_CERTS', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'https_proxy',
   'http_proxy', 'no_proxy'
 ]);
+
+const DEFAULT_MCP_NETWORK_POLICY: RuntimeNetworkPolicy = Object.freeze({
+  allowLoopback: false,
+  allowPrivateNetwork: false,
+  allowInsecureHttp: false
+});
 
 function abortError(message = 'MCP operation was cancelled.'): Error {
   const error = new Error(message);
@@ -208,6 +219,14 @@ function notificationBody(method: string, params: unknown): Record<string, unkno
   return { jsonrpc: '2.0', method, params };
 }
 
+function scopedMcpNetworkPolicy(url: string, base: RuntimeNetworkPolicy): RuntimeNetworkPolicy {
+  const initial = assertRuntimeNetworkUrl(url, base);
+  return Object.freeze({
+    ...base,
+    allowedHosts: Object.freeze([initial.host])
+  });
+}
+
 class StreamableHttpTransport implements McpRpcTransport {
   private notificationHandler: NotificationHandler = () => undefined;
   private nextId = 0;
@@ -215,7 +234,8 @@ class StreamableHttpTransport implements McpRpcTransport {
 
   constructor(
     private readonly url: string,
-    private readonly headers: Readonly<Record<string, string>>
+    private readonly headers: Readonly<Record<string, string>>,
+    private readonly networkPolicy: RuntimeNetworkPolicy
   ) {}
 
   setNotificationHandler(handler: NotificationHandler): void {
@@ -229,7 +249,7 @@ class StreamableHttpTransport implements McpRpcTransport {
   async request(method: string, params: unknown, signal: AbortSignal): Promise<unknown> {
     throwIfAborted(signal);
     const id = ++this.nextId;
-    const response = await fetch(this.url, {
+    const response = await runtimeSecureFetch(fetch, this.url, {
       method: 'POST',
       headers: {
         ...this.headers,
@@ -239,7 +259,7 @@ class StreamableHttpTransport implements McpRpcTransport {
       },
       body: JSON.stringify(requestBody(id, method, params)),
       signal
-    });
+    }, { policy: this.networkPolicy });
     if (!response.ok) {
       throw new McpHostError('transport', 'mcp_http_error', `MCP server returned HTTP ${response.status}.`, response.status >= 500 ? 'safe' : 'never', { status: response.status });
     }
@@ -259,7 +279,7 @@ class StreamableHttpTransport implements McpRpcTransport {
 
   async notify(method: string, params: unknown, signal?: AbortSignal): Promise<void> {
     if (signal) throwIfAborted(signal);
-    const response = await fetch(this.url, {
+    const response = await runtimeSecureFetch(fetch, this.url, {
       method: 'POST',
       headers: {
         ...this.headers,
@@ -269,7 +289,7 @@ class StreamableHttpTransport implements McpRpcTransport {
       },
       body: JSON.stringify(notificationBody(method, params)),
       signal
-    });
+    }, { policy: this.networkPolicy });
     if (!response.ok && response.status !== 202) {
       throw new McpHostError('transport', 'mcp_http_error', `MCP notification returned HTTP ${response.status}.`);
     }
@@ -278,10 +298,10 @@ class StreamableHttpTransport implements McpRpcTransport {
   async close(): Promise<void> {
     if (!this.sessionId) return;
     try {
-      await fetch(this.url, {
+      await runtimeSecureFetch(fetch, this.url, {
         method: 'DELETE',
         headers: { ...this.headers, 'mcp-session-id': this.sessionId }
-      });
+      }, { policy: this.networkPolicy });
     } catch {
       // Closing is best-effort. The server may not implement session deletion.
     }
@@ -435,7 +455,8 @@ class LegacySseTransport implements McpRpcTransport {
 
   constructor(
     private readonly url: string,
-    private readonly headers: Readonly<Record<string, string>>
+    private readonly headers: Readonly<Record<string, string>>,
+    private readonly networkPolicy: RuntimeNetworkPolicy
   ) {}
 
   setNotificationHandler(handler: NotificationHandler): void {
@@ -449,11 +470,11 @@ class LegacySseTransport implements McpRpcTransport {
     this.streamAbort = controller;
     const onCallerAbort = () => controller.abort();
     signal.addEventListener('abort', onCallerAbort, { once: true });
-    const response = await fetch(this.url, {
+    const response = await runtimeSecureFetch(fetch, this.url, {
       method: 'GET',
       headers: { ...this.headers, accept: 'text/event-stream' },
       signal: controller.signal
-    });
+    }, { policy: this.networkPolicy });
     signal.removeEventListener('abort', onCallerAbort);
     if (!response.ok) throw new McpHostError('transport', 'mcp_sse_connect_error', `MCP SSE connection returned HTTP ${response.status}.`);
 
@@ -466,7 +487,16 @@ class LegacySseTransport implements McpRpcTransport {
     this.streamTask = consumeSseStream(response, controller.signal, (event) => {
       if (event.event === 'endpoint') {
         try {
-          this.endpoint = new URL(event.data, this.url).toString();
+          const resolved = new URL(event.data, this.url);
+          assertRuntimeNetworkUrl(resolved.toString(), this.networkPolicy);
+          if (resolved.origin !== new URL(this.url).origin) {
+            throw new McpHostError(
+              'scope',
+              'mcp_sse_endpoint_origin_mismatch',
+              'MCP SSE endpoint must remain on the configured server origin.'
+            );
+          }
+          this.endpoint = resolved.toString();
           endpointResolved?.();
         } catch (error) {
           endpointRejected?.(error);
@@ -515,12 +545,12 @@ class LegacySseTransport implements McpRpcTransport {
       this.pending.set(id, { resolve, reject, cleanup });
     });
     try {
-      const response = await fetch(endpoint, {
+      const response = await runtimeSecureFetch(fetch, endpoint, {
         method: 'POST',
         headers: { ...this.headers, 'content-type': 'application/json' },
         body: JSON.stringify(requestBody(id, method, params)),
         signal
-      });
+      }, { policy: this.networkPolicy });
       if (!response.ok && response.status !== 202) {
         throw new McpHostError('transport', 'mcp_sse_post_error', `MCP SSE request returned HTTP ${response.status}.`);
       }
@@ -539,12 +569,12 @@ class LegacySseTransport implements McpRpcTransport {
     if (signal) throwIfAborted(signal);
     const endpoint = this.endpoint;
     if (!endpoint) throw new McpHostError('transport', 'mcp_sse_endpoint_missing', 'MCP SSE server did not provide a message endpoint.');
-    const response = await fetch(endpoint, {
+    const response = await runtimeSecureFetch(fetch, endpoint, {
       method: 'POST',
       headers: { ...this.headers, 'content-type': 'application/json' },
       body: JSON.stringify(notificationBody(method, params)),
       signal
-    });
+    }, { policy: this.networkPolicy });
     if (!response.ok && response.status !== 202) {
       throw new McpHostError('transport', 'mcp_sse_post_error', `MCP SSE notification returned HTTP ${response.status}.`);
     }
@@ -758,14 +788,17 @@ async function stdioEnv(
 
 export interface NativeMcpClientFactoryOptions {
   readonly baseEnv?: NodeJS.ProcessEnv;
+  readonly networkPolicy?: RuntimeNetworkPolicy;
 }
 
 /** Native Axis MCP client factory. Authentication is resolved from source-owned secret refs, never from the inference provider. */
 export class NativeMcpClientFactory implements McpClientFactory {
   private readonly baseEnv: NodeJS.ProcessEnv;
+  private readonly networkPolicy: RuntimeNetworkPolicy;
 
   constructor(options: NativeMcpClientFactoryOptions = {}) {
     this.baseEnv = options.baseEnv ?? process.env;
+    this.networkPolicy = options.networkPolicy ?? DEFAULT_MCP_NETWORK_POLICY;
   }
 
   async open(server: McpServerConfig, options: McpClientFactoryOpenOptions): Promise<McpClient> {
@@ -780,9 +813,10 @@ export class NativeMcpClientFactory implements McpClientFactory {
       );
     } else {
       const headers = await resolvedHeaders(server, options.secretResolver);
+      const networkPolicy = scopedMcpNetworkPolicy(server.transport.url, this.networkPolicy);
       transport = server.transport.kind === 'sse'
-        ? new LegacySseTransport(server.transport.url, headers)
-        : new StreamableHttpTransport(server.transport.url, headers);
+        ? new LegacySseTransport(server.transport.url, headers, networkPolicy)
+        : new StreamableHttpTransport(server.transport.url, headers, networkPolicy);
     }
     const client = new ProtocolMcpClient(transport);
     await transport.start(options.signal);
