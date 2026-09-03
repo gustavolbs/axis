@@ -2,6 +2,18 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.20.0] - 2026-09-03
+
+### Added
+- Added Company-bound native `AgentProviderAdapter` composition for OpenAI API Key, Anthropic API Key, Ollama, and Claude Account connections without changing the canonical `AgentRuntime` or Axis tool contracts.
+- Added a provider-neutral structured Account protocol that translates canonical messages, attachment metadata, summarized reasoning, tool definitions/calls/results, decision requests, stop reasons, progress, errors, cancellation, and exact model identity at the provider boundary.
+- Added adapter tests covering API Key and Account authentication in the same runtime, OpenAI and Anthropic provider families, capability negotiation, canonical tool-call roundtrips, hidden-tool rejection, cancellation, provider errors, exact no-fallback model selection, Ollama local scope, and Company ownership preservation.
+
+### Security
+- Claude Account AgentRuntime calls now execute in an Axis-owned empty temporary working directory with Claude Code `--bare`, an empty built-in tool catalog, explicit MCP denial, no session persistence, and sanitized environment inheritance, so filesystem/shell/MCP execution cannot occur behind the canonical Axis tool host.
+- Direct inference adapters reject provider-returned tool names that were not exposed by Axis for the exact model cycle and independently re-check provider family, connection, model, and bound Company identity.
+- ChatGPT/Codex Account remains fail-closed for the canonical runtime: current `codex exec` has no proven all-tools-disabled mode, and `read-only` plus `shell_tool=false` does not prove model-dependent core tools such as `apply_patch` are absent. Axis will not route Codex Account work through the unsafe generic bridge until tool calls can be intercepted before provider execution.
+
 ## [0.19.0] - 2026-09-03
 
 ### Added
