@@ -12,6 +12,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added an explicit active-Company selector to the desktop chrome, composer, approval flow and completed results. The selected Company is persisted locally and switching scope deliberately reloads the shell after clearing stale navigation IDs.
 - Added real-Electron visual smoke coverage for Company settings plus active-Company controls in the composer, approval and result surfaces.
 - Added read-only repository context to Project Chat. Each Chat turn can rank and read bounded source excerpts plus a repository map from the Project-owned folder without granting Chat mutation or command execution capabilities.
+- Added provider-neutral Project Memory retrieval to Project Chat by reusing the existing Repo Intelligence store under the same Company + Project + repository identity used by Cowork. Validated durable facts learned through one authorized connection can therefore inform another model/connection in the same Project without crossing a Company or Project boundary.
 - Added a structured Last-turn diff review for Cowork results with changed-file navigation, collapsible per-file hunks, old/new line numbers, addition/removal highlighting and access to the raw unified diff.
 - Added Company-scoped Project Git review for Unstaged, Staged and Branch changes. Git state is read only from the active Project-owned folder, with Branch comparison resolving upstream/main/master locally and the same structured file/hunk review used by Cowork results.
 
@@ -29,6 +30,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Personal context no longer implicitly inherits corporate Accounts, API keys, account-scoped MCP resources or projectless history; legacy jobs without explicit Company metadata are resolved through their Project before they can be exposed.
 - The renderer never supplies a trusted Company ID when creating work. Active Company selection is validated and persisted by the desktop runtime, and switching scope is an explicit user action.
 - Project Chat repository indexes are partitioned by Company before workspace hashing, so reusable code-intelligence metadata cannot be shared across Company boundaries even if two Projects reference the same physical path.
+- Shared Project Memory keys include the canonical Company and Project before Repo Intelligence adds repository/workspace identity. The same physical Git repository therefore cannot cause automatic memory sharing across either Company or Project boundaries.
 - Project Git review cannot accept a renderer-supplied filesystem path: the Company-scoped runtime resolves and validates the active Project first, then runs read-only Git commands against that Project's configured workspace.
 
 ## [0.17.1] - 2026-09-02
