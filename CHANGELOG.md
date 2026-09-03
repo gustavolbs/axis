@@ -13,6 +13,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added real-Electron visual smoke coverage for Company settings plus active-Company controls in the composer, approval and result surfaces.
 - Added read-only repository context to Project Chat. Each Chat turn can rank and read bounded source excerpts plus a repository map from the Project-owned folder without granting Chat mutation or command execution capabilities.
 - Added a structured Last-turn diff review for Cowork results with changed-file navigation, collapsible per-file hunks, old/new line numbers, addition/removal highlighting and access to the raw unified diff.
+- Added Company-scoped Project Git review for Unstaged, Staged and Branch changes. Git state is read only from the active Project-owned folder, with Branch comparison resolving upstream/main/master locally and the same structured file/hunk review used by Cowork results.
 
 ### Changed
 - Ollama/local execution is represented as a shared execution capability in the canonical context instead of the former synthetic `local` organization.
@@ -28,6 +29,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Personal context no longer implicitly inherits corporate Accounts, API keys, account-scoped MCP resources or projectless history; legacy jobs without explicit Company metadata are resolved through their Project before they can be exposed.
 - The renderer never supplies a trusted Company ID when creating work. Active Company selection is validated and persisted by the desktop runtime, and switching scope is an explicit user action.
 - Project Chat repository indexes are partitioned by Company before workspace hashing, so reusable code-intelligence metadata cannot be shared across Company boundaries even if two Projects reference the same physical path.
+- Project Git review cannot accept a renderer-supplied filesystem path: the Company-scoped runtime resolves and validates the active Project first, then runs read-only Git commands against that Project's configured workspace.
 
 ## [0.17.1] - 2026-09-02
 
