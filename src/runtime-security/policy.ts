@@ -1,0 +1,491 @@
+import { createHash, randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import {
+  StaticToolPermissionGate,
+  type AgentDecisionRequest,
+  type AgentDecisionResolution,
+  type AgentSessionContext,
+  type ToolPermissionDecision,
+  type ToolPermissionGate,
+  type ToolPermissionRequest
+} from '../agent-runtime/index.js';
+import { redactRuntimeText } from './redaction.js';
+
+export type RuntimeAuthorityMode = 'plan' | 'ask-before' | 'workspace-write' | 'auto' | 'full-access';
+export type RuntimePolicyEffect = 'allow' | 'ask' | 'deny';
+export type RuntimePolicyDomain = 'filesystem' | 'process' | 'git' | 'mcp' | 'browser' | 'network' | 'destructive' | 'external';
+
+export interface RuntimePolicyRule {
+  readonly id: string;
+  readonly effect: RuntimePolicyEffect;
+  readonly domain: RuntimePolicyDomain;
+  readonly match?: string;
+  readonly note?: string;
+}
+
+export interface RuntimePolicyScope {
+  readonly mode?: RuntimeAuthorityMode;
+  readonly rules?: readonly RuntimePolicyRule[];
+}
+
+export interface RuntimeCompanyPolicy extends RuntimePolicyScope {
+  readonly projects?: Readonly<Record<string, RuntimePolicyScope>>;
+}
+
+interface RuntimePolicyFile {
+  readonly version: 1;
+  readonly companies: Readonly<Record<string, RuntimeCompanyPolicy>>;
+  readonly updatedAt: string;
+}
+
+export interface RuntimeSessionPolicyOverride extends RuntimePolicyScope {
+  readonly source: 'trusted-session-config';
+}
+
+export interface RuntimePolicySubject {
+  readonly domain: RuntimePolicyDomain;
+  readonly descriptor: string;
+  readonly destructive: boolean;
+  readonly external: boolean;
+}
+
+export interface RuntimePolicyDecision {
+  readonly effect: RuntimePolicyEffect;
+  readonly mode: RuntimeAuthorityMode;
+  readonly subject: RuntimePolicySubject;
+  readonly matchedRuleIds: readonly string[];
+  readonly reason: string;
+}
+
+const SAFE_SCOPE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+const MODE_RANK: Readonly<Record<RuntimeAuthorityMode, number>> = {
+  plan: 0,
+  'ask-before': 1,
+  'workspace-write': 2,
+  auto: 3,
+  'full-access': 4
+};
+const EFFECT_RANK: Readonly<Record<RuntimePolicyEffect, number>> = { deny: 0, ask: 1, allow: 2 };
+const DESTRUCTIVE_COMMANDS = new Set(['rm', 'rmdir', 'del', 'erase', 'format', 'diskpart', 'shutdown', 'reboot']);
+
+function runtimePolicyPath(): string {
+  return process.env.AXIS_RUNTIME_POLICY_PATH?.trim() || path.join(os.homedir(), '.local-coder-mcp', 'runtime-policies.json');
+}
+
+function cleanScopeId(value: string, label: string): string {
+  const clean = value.trim();
+  if (!SAFE_SCOPE_ID.test(clean) || ['__proto__', 'prototype', 'constructor'].includes(clean)) {
+    throw new Error(`${label} is not a safe runtime policy scope id.`);
+  }
+  return clean;
+}
+
+function record(value: unknown, label: string): Readonly<Record<string, unknown>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return value as Readonly<Record<string, unknown>>;
+}
+
+function stable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, child]) => `${JSON.stringify(key)}:${stable(child)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
+export function runtimeToolArgumentFingerprint(value: Readonly<Record<string, unknown>>): string {
+  return createHash('sha256').update(stable(value)).digest('hex');
+}
+
+function commandDescriptor(args: Readonly<Record<string, unknown>>): string | undefined {
+  const command = typeof args.command === 'string' ? args.command.trim() : '';
+  if (!command) return undefined;
+  const argv = Array.isArray(args.args)
+    ? args.args.filter((item): item is string => typeof item === 'string')
+    : [];
+  return [command, ...argv].join(' ').trim();
+}
+
+function firstStringArg(args: Readonly<Record<string, unknown>>, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function pathDescriptor(args: Readonly<Record<string, unknown>>): string | undefined {
+  return firstStringArg(args, ['relativePath', 'path', 'sourcePath', 'destinationPath', 'file', 'target', 'cwd', 'rootId']);
+}
+
+function urlDescriptor(args: Readonly<Record<string, unknown>>): string | undefined {
+  return firstStringArg(args, ['url', 'href', 'endpoint']);
+}
+
+export function runtimePolicySubject(request: ToolPermissionRequest): RuntimePolicySubject {
+  const caps = request.tool.requiredCapabilities.join(' ');
+  const name = request.tool.name;
+  const args = request.call.arguments;
+  const processDomain = caps.includes('axis.process.') || name.startsWith('process_');
+  const gitDomain = caps.includes('axis.git.') || name.startsWith('git_');
+  const filesystemDomain = caps.includes('axis.filesystem.') || name.startsWith('filesystem_');
+  const mcpDomain = caps.includes('axis.mcp.') || name.startsWith('mcp_') || name.startsWith('axis_mcp_');
+  const browserDomain = caps.includes('axis.browser.') || name.startsWith('axis_browser_');
+  const domain: RuntimePolicyDomain = processDomain
+    ? 'process'
+    : gitDomain
+      ? 'git'
+      : filesystemDomain
+        ? 'filesystem'
+        : mcpDomain
+          ? 'mcp'
+          : browserDomain
+            ? 'browser'
+            : request.tool.effect === 'external'
+              ? 'external'
+              : 'filesystem';
+  const command = processDomain ? commandDescriptor(args) : undefined;
+  const descriptor = redactRuntimeText(
+    command ?? urlDescriptor(args) ?? pathDescriptor(args) ?? name,
+    { maxChars: 2_000 }
+  );
+  const executable = command?.split(/\s+/)[0]?.toLowerCase();
+  const destructive =
+    Boolean(executable && DESTRUCTIVE_COMMANDS.has(path.basename(executable))) ||
+    /(?:^|[_-])(delete|remove|destroy|reset|clean|purge)(?:$|[_-])/i.test(name) ||
+    (gitDomain && /\bgit\s+(?:reset\s+--hard|clean\b)/i.test(command ?? ''));
+  const external = request.tool.effect === 'external' || mcpDomain || browserDomain;
+  return { domain, descriptor, destructive, external };
+}
+
+function globRegex(value: string): RegExp {
+  const escaped = value.trim()
+    .replace(/[|\\{}()[\]^$+.]/g, '\\$&')
+    .replace(/\*/g, '.*')
+    .replace(/\?/g, '.');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+function matchesRule(rule: RuntimePolicyRule, subject: RuntimePolicySubject): boolean {
+  const networkSubject =
+    (subject.domain === 'browser' || subject.domain === 'mcp' || subject.domain === 'external') &&
+    /^https?:\/\//i.test(subject.descriptor);
+  const domainMatches =
+    rule.domain === subject.domain ||
+    (rule.domain === 'destructive' && subject.destructive) ||
+    (rule.domain === 'external' && subject.external) ||
+    (rule.domain === 'network' && networkSubject);
+  if (!domainMatches) return false;
+  return !rule.match?.trim() || globRegex(rule.match).test(subject.descriptor);
+}
+
+function restrictiveMode(modes: readonly (RuntimeAuthorityMode | undefined)[]): RuntimeAuthorityMode {
+  const present = modes.filter((mode): mode is RuntimeAuthorityMode => Boolean(mode));
+  if (present.length === 0) return 'workspace-write';
+  return present.reduce((strictest, mode) =>
+    MODE_RANK[mode] < MODE_RANK[strictest] ? mode : strictest
+  );
+}
+
+function strictestEffect(effects: readonly RuntimePolicyEffect[]): RuntimePolicyEffect | undefined {
+  return effects.length
+    ? effects.reduce((strictest, effect) =>
+      EFFECT_RANK[effect] < EFFECT_RANK[strictest] ? effect : strictest
+    )
+    : undefined;
+}
+
+function modeEffect(
+  mode: RuntimeAuthorityMode,
+  subject: RuntimePolicySubject,
+  toolEffect: ToolPermissionRequest['tool']['effect']
+): RuntimePolicyEffect {
+  if (mode === 'plan') return toolEffect === 'read' || toolEffect === 'validation' ? 'allow' : 'deny';
+  if (mode === 'ask-before') return toolEffect === 'read' || toolEffect === 'validation' ? 'allow' : 'ask';
+  if (mode === 'workspace-write') return subject.destructive || subject.external ? 'ask' : 'allow';
+  if (mode === 'auto') return subject.destructive ? 'ask' : 'allow';
+  return 'allow';
+}
+
+function validateRule(value: RuntimePolicyRule): RuntimePolicyRule {
+  const rule = record(value, 'Runtime policy rule') as unknown as RuntimePolicyRule;
+  if (typeof rule.id !== 'string' || !rule.id.trim()) throw new Error('Runtime policy rule id is required.');
+  if (!['allow', 'ask', 'deny'].includes(rule.effect)) throw new Error(`Invalid runtime policy effect: ${String(rule.effect)}`);
+  if (!['filesystem', 'process', 'git', 'mcp', 'browser', 'network', 'destructive', 'external'].includes(rule.domain)) {
+    throw new Error(`Invalid runtime policy domain: ${String(rule.domain)}`);
+  }
+  if (rule.match !== undefined && typeof rule.match !== 'string') throw new Error('Runtime policy rule match must be a string.');
+  if (rule.note !== undefined && typeof rule.note !== 'string') throw new Error('Runtime policy rule note must be a string.');
+  const match = rule.match?.trim();
+  const note = rule.note?.trim();
+  if (match && redactRuntimeText(match) !== match) throw new Error('Runtime policy rules must not persist credentials or secrets.');
+  if (note && redactRuntimeText(note) !== note) throw new Error('Runtime policy notes must not persist credentials or secrets.');
+  return Object.freeze({
+    id: rule.id.trim(),
+    effect: rule.effect,
+    domain: rule.domain,
+    ...(match ? { match } : {}),
+    ...(note ? { note } : {})
+  });
+}
+
+function validateScope(value: RuntimePolicyScope): RuntimePolicyScope {
+  const scope = record(value, 'Runtime policy scope') as unknown as RuntimePolicyScope;
+  if (scope.mode !== undefined && !(scope.mode in MODE_RANK)) throw new Error(`Invalid runtime authority mode: ${String(scope.mode)}`);
+  if (scope.rules !== undefined && !Array.isArray(scope.rules)) throw new Error('Runtime policy rules must be an array.');
+  return Object.freeze({
+    ...(scope.mode ? { mode: scope.mode } : {}),
+    rules: Object.freeze((scope.rules ?? []).map((rule) => validateRule(rule)))
+  });
+}
+
+function normalizePolicyFile(value: unknown): RuntimePolicyFile {
+  const root = record(value, 'Runtime policy file');
+  if (root.version !== 1) throw new Error('Unsupported runtime policy file.');
+  const companiesRecord = record(root.companies, 'Runtime policy companies');
+  const companies: Record<string, RuntimeCompanyPolicy> = Object.create(null) as Record<string, RuntimeCompanyPolicy>;
+
+  for (const [rawCompanyId, rawCompanyValue] of Object.entries(companiesRecord)) {
+    const companyId = cleanScopeId(rawCompanyId, 'Company id');
+    const rawCompany = record(rawCompanyValue, `Runtime policy Company ${companyId}`);
+    const base = validateScope(rawCompany as unknown as RuntimePolicyScope);
+    const projects: Record<string, RuntimePolicyScope> = Object.create(null) as Record<string, RuntimePolicyScope>;
+    if (rawCompany.projects !== undefined) {
+      const projectsRecord = record(rawCompany.projects, `Runtime policy Company ${companyId} projects`);
+      for (const [rawProjectId, rawProjectValue] of Object.entries(projectsRecord)) {
+        projects[cleanScopeId(rawProjectId, 'Project id')] = validateScope(rawProjectValue as RuntimePolicyScope);
+      }
+    }
+    companies[companyId] = Object.freeze({
+      ...base,
+      ...(Object.keys(projects).length > 0 ? { projects: Object.freeze(projects) } : {})
+    });
+  }
+
+  const updatedAt = typeof root.updatedAt === 'string' && !Number.isNaN(Date.parse(root.updatedAt))
+    ? root.updatedAt
+    : new Date().toISOString();
+  return Object.freeze({ version: 1, companies: Object.freeze(companies), updatedAt });
+}
+
+function freshFile(): RuntimePolicyFile {
+  return Object.freeze({ version: 1, companies: Object.freeze({}), updatedAt: new Date().toISOString() });
+}
+
+export class RuntimePolicyStore {
+  private state: RuntimePolicyFile;
+
+  constructor(readonly filePath = runtimePolicyPath(), initial?: RuntimePolicyFile) {
+    this.state = initial ? normalizePolicyFile(initial) : this.read();
+  }
+
+  private read(): RuntimePolicyFile {
+    try {
+      return normalizePolicyFile(JSON.parse(fs.readFileSync(this.filePath, 'utf8')) as unknown);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return freshFile();
+      throw error;
+    }
+  }
+
+  private write(next: RuntimePolicyFile): void {
+    const normalized = normalizePolicyFile(next);
+    fs.mkdirSync(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
+    const temporary = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
+    fs.writeFileSync(temporary, `${JSON.stringify(normalized, null, 2)}\n`, { mode: 0o600 });
+    fs.renameSync(temporary, this.filePath);
+    try { fs.chmodSync(this.filePath, 0o600); } catch { /* best effort on non-POSIX filesystems */ }
+    this.state = normalized;
+  }
+
+  company(companyId: string): RuntimeCompanyPolicy | undefined {
+    return this.state.companies[cleanScopeId(companyId, 'Company id')];
+  }
+
+  project(companyId: string, projectId: string): RuntimePolicyScope | undefined {
+    return this.company(companyId)?.projects?.[cleanScopeId(projectId, 'Project id')];
+  }
+
+  setCompany(companyId: string, scope: RuntimePolicyScope): void {
+    const id = cleanScopeId(companyId, 'Company id');
+    const existing = this.state.companies[id];
+    const company: RuntimeCompanyPolicy = {
+      ...validateScope(scope),
+      ...(existing?.projects ? { projects: existing.projects } : {})
+    };
+    this.write({
+      version: 1,
+      companies: { ...this.state.companies, [id]: company },
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  setProject(companyId: string, projectId: string, scope: RuntimePolicyScope): void {
+    const companyKey = cleanScopeId(companyId, 'Company id');
+    const projectKey = cleanScopeId(projectId, 'Project id');
+    const company = this.state.companies[companyKey] ?? Object.freeze({ rules: Object.freeze([]) });
+    this.write({
+      version: 1,
+      companies: {
+        ...this.state.companies,
+        [companyKey]: {
+          ...company,
+          projects: { ...(company.projects ?? {}), [projectKey]: validateScope(scope) }
+        }
+      },
+      updatedAt: new Date().toISOString()
+    });
+  }
+}
+
+export class RuntimePolicyEngine {
+  constructor(readonly store = new RuntimePolicyStore()) {}
+
+  evaluate(request: ToolPermissionRequest, sessionOverride?: RuntimeSessionPolicyOverride): RuntimePolicyDecision {
+    const trustedOverride = sessionOverride ? assertTrustedPolicyOverride(sessionOverride) : undefined;
+    const company = this.store.company(request.session.companyId);
+    const project = request.session.project
+      ? this.store.project(request.session.companyId, request.session.project.id)
+      : undefined;
+    const mode = restrictiveMode([company?.mode, project?.mode, trustedOverride?.mode]);
+    const subject = runtimePolicySubject(request);
+    const matches = [company?.rules ?? [], project?.rules ?? [], trustedOverride?.rules ?? []]
+      .flat()
+      .filter((rule) => matchesRule(rule, subject));
+    const explicit = strictestEffect(matches.map((rule) => rule.effect));
+    const fallback = modeEffect(mode, subject, request.tool.effect);
+    const effect = explicit === undefined ? fallback : strictestEffect([fallback, explicit])!;
+    return {
+      effect,
+      mode,
+      subject,
+      matchedRuleIds: Object.freeze(matches.map((rule) => rule.id)),
+      reason: matches.length > 0
+        ? `${effect.toUpperCase()} by runtime policy rule(s): ${matches.map((rule) => rule.id).join(', ')}.`
+        : `${effect.toUpperCase()} by ${mode} authority mode.`
+    };
+  }
+}
+
+interface PendingApproval {
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly companyId: string;
+  readonly toolName: string;
+  readonly argumentFingerprint: string;
+}
+
+export class RuntimePolicyPermissionGate implements ToolPermissionGate {
+  private readonly base = new StaticToolPermissionGate();
+  private readonly sessionOverride?: RuntimeSessionPolicyOverride;
+  private pending?: PendingApproval;
+  private lastAsk?: Omit<PendingApproval, 'requestId'>;
+  private resolution?: AgentDecisionResolution;
+
+  constructor(readonly engine: RuntimePolicyEngine, sessionOverride?: RuntimeSessionPolicyOverride) {
+    this.sessionOverride = sessionOverride ? assertTrustedPolicyOverride(sessionOverride) : undefined;
+  }
+
+  remember(
+    request: AgentDecisionRequest,
+    call?: { name: string; arguments: Readonly<Record<string, unknown>> }
+  ): void {
+    if (!call || !this.lastAsk || call.name !== this.lastAsk.toolName) return;
+    this.pending = { requestId: request.id, ...this.lastAsk };
+    this.resolution = undefined;
+  }
+
+  resolve(resolution: AgentDecisionResolution): void {
+    if (!this.pending || resolution.requestId !== this.pending.requestId) return;
+    this.resolution = resolution;
+  }
+
+  private consumeDecision(): { pending: PendingApproval; resolution: AgentDecisionResolution } | undefined {
+    if (!this.pending || !this.resolution || this.resolution.requestId !== this.pending.requestId) return undefined;
+    const consumed = { pending: this.pending, resolution: this.resolution };
+    this.pending = undefined;
+    this.resolution = undefined;
+    this.lastAsk = undefined;
+    return consumed;
+  }
+
+  async authorize(request: ToolPermissionRequest): Promise<ToolPermissionDecision> {
+    const base = await this.base.authorize(request);
+    if (!base.allowed && !base.requiresApproval) return base;
+
+    const policy = this.engine.evaluate(request, this.sessionOverride);
+    if (policy.effect === 'deny') return { allowed: false, reason: policy.reason };
+
+    const needsApproval = base.requiresApproval === true || policy.effect === 'ask';
+    if (!needsApproval) return { allowed: true, reason: policy.reason };
+
+    const identity = {
+      sessionId: request.session.sessionId,
+      companyId: request.session.companyId,
+      toolName: request.tool.name,
+      argumentFingerprint: runtimeToolArgumentFingerprint(request.call.arguments)
+    };
+    this.lastAsk = identity;
+
+    const decisionMatches = this.pending && this.resolution &&
+      this.pending.sessionId === identity.sessionId &&
+      this.pending.companyId === identity.companyId &&
+      this.pending.toolName === identity.toolName &&
+      this.pending.argumentFingerprint === identity.argumentFingerprint &&
+      this.resolution.requestId === this.pending.requestId;
+
+    if (decisionMatches) {
+      const consumed = this.consumeDecision()!;
+      const approved = consumed.resolution.optionId === 'approve' ||
+        consumed.resolution.text?.trim().toLowerCase() === 'approve';
+      return approved
+        ? { allowed: true, reason: `Approved once by ${consumed.pending.requestId}; ${policy.reason}` }
+        : { allowed: false, reason: `Denied by decision ${consumed.resolution.requestId}.` };
+    }
+
+    return {
+      allowed: false,
+      requiresApproval: true,
+      reason: base.reason ?? policy.reason
+    };
+  }
+}
+
+export function policyRule(
+  effect: RuntimePolicyEffect,
+  domain: RuntimePolicyDomain,
+  match?: string,
+  note?: string
+): RuntimePolicyRule {
+  return validateRule({
+    id: randomUUID(),
+    effect,
+    domain,
+    ...(match ? { match } : {}),
+    ...(note ? { note } : {})
+  });
+}
+
+export function assertTrustedPolicyOverride(value: RuntimeSessionPolicyOverride): RuntimeSessionPolicyOverride {
+  if (value.source !== 'trusted-session-config') {
+    throw new Error('External/tool content cannot modify Axis runtime authority.');
+  }
+  return Object.freeze({ source: 'trusted-session-config', ...validateScope(value) });
+}
+
+export function sameAuthority(left: AgentSessionContext, right: AgentSessionContext): boolean {
+  return left.sessionId === right.sessionId &&
+    left.companyId === right.companyId &&
+    left.project?.id === right.project?.id &&
+    left.connection.id === right.connection.id &&
+    left.modelId === right.modelId &&
+    left.executionTarget.id === right.executionTarget.id;
+}

@@ -2,6 +2,29 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.23.0] - 2026-09-03
+
+### Added
+- Added a persistent Company/Project-aware runtime policy engine with normalized `plan`, `ask-before`, `workspace-write`, `auto`, and explicit `full-access` authority modes across filesystem, process, Git, MCP, browser/network, destructive operations, and external side effects.
+- Added deny-wins one-shot Runtime UI approval binding to the exact session, Company, tool, and raw-argument fingerprint so approvals cannot cross sessions/Companies, be replayed, or override a Company/Project deny.
+- Added a canonical secret-free Effective Context representation derived from the same immutable `AgentSessionContext` and runtime policy engine used for execution, including Company, Project, Connection/auth kind, model, target, roots, MCP resources, permissions, rules, and network protections.
+- Added security audit primitives for permission requests/results, policy decisions, decision requests/resolutions, tool mutations, external actions, runtime errors, and the effective Company/Project/Connection/model/target authority that produced each event.
+- Added a transversal runtime redaction layer shared by lifecycle/UI-facing events, errors, audit data and Project Memory, covering common API keys/tokens, authorization/cookies, passwords, private keys, credential-bearing URLs, known credential fields and secret references.
+- Added focused CHAT J regression coverage for all 15 multi-company security invariants, including monotonic policy overrides, network redirect bypass, cross-Company MCP refusal, process secret filtering, external-content non-authority, Effective Context equivalence, shared-local Connection isolation and destructive authority.
+
+### Changed
+- Browser navigation, provider HTTP, native MCP HTTP/SSE and Local Worker HTTP now share one outbound network authorization boundary instead of maintaining separate host/redirect checks.
+- Native MCP Streamable HTTP and legacy SSE re-authorize every redirect/derived endpoint; legacy SSE message endpoints must stay on the configured server origin.
+- Product Chat/Cowork composition now uses `RuntimePolicyPermissionGate` instead of the earlier product-only approval gate, and lifecycle events are redacted before Runtime UI, Project Memory and security-audit fan-out.
+- Project Memory now delegates secret-pattern redaction to the transversal runtime redactor rather than maintaining an independent implementation.
+
+### Security
+- Company, Project and trusted-session policy composition is monotonic: narrower scopes may reduce authority but cannot widen a parent scope, and `deny` wins over `ask` and `allow` even after an attempted user approval.
+- Repository files, browser/web content, MCP results, provider content and tool output are explicitly treated as data rather than authority; they cannot change Company/Project/Connection/model/target/root, enable tools/MCPs, alter network policy, grant permission or approve mutations.
+- Outbound HTTP(S) rejects credential-bearing URLs and metadata services, requires explicit opt-in for loopback/private/link-local/reserved targets, re-authorizes every redirect hop and strips sensitive headers on cross-origin redirects.
+- Cloud provider HTTP remains public-HTTPS-only, Ollama receives only its explicit loopback HTTP exception, and Local Worker network reach is narrowed to the explicitly configured worker hostname.
+- Shared local Connections remain shared transport/inference capabilities only; runtime policy is still resolved from the active Company and never becomes shared Company authority.
+
 ## [0.22.0] - 2026-09-03
 
 ### Added
@@ -110,7 +133,6 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ### Added
 - Added a canonical company-context graph that represents `Company → connections/resources → Projects → sessions` without treating workspace paths, account display labels, or the local execution runtime as company identities.
 - Added persistent one-time migration bindings for existing Account/API-key connections so legacy organization metadata can seed company ownership without allowing a later label rename to silently move a connection between companies.
-- Added the desktop runtime endpoint `GET /api/companies/context` so the canonical hierarchy is inspectable independently of the legacy storage fields while the remaining multi-company migration proceeds.
 - Added local Company lifecycle management in Settings: create, edit, archive, restore, search, explicit ordering, stable generated IDs, color, icon and description.
 - Added an explicit active-Company selector to the desktop chrome, composer, approval flow and completed results. The selected Company is persisted locally and switching scope deliberately reloads the shell after clearing stale navigation IDs.
 - Added real-Electron visual smoke coverage for Company settings plus active-Company controls in the composer, approval and result surfaces.
@@ -123,6 +145,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Ollama/local execution is represented as a shared execution capability in the canonical context instead of the former synthetic `local` organization.
 - Projects now select canonical Companies rather than inventing organization IDs from free text; archived Companies retain existing references but cannot receive new Projects.
 - Personal Chat no longer exposes organization-scoped API keys or Claude/ChatGPT subscription Accounts. Corporate identities require an explicitly compatible Project boundary.
+- Model names are shorter and current recommendations stay visible while older OpenAI and Claude models are grouped under More models.
 - Jobs and Projects exposed by the standalone desktop are filtered by the server-owned active Company. Cross-company job and Project actions fail closed, and corporate Company scope currently requires selecting one of that Company's Projects before starting a conversation.
 - Company Connections now use a quieter, narrower information hierarchy: redundant helper copy and security callouts are removed from the primary scan path, runtimes and connections render as lightweight rows instead of stacked cards, and semantic accent/status colors distinguish actions, providers, healthy states and attention states.
 - Company Overview, Projects, MCPs, Skills and Settings now follow the same quieter hierarchy: implementation terminology and dashboard-like metric cards are removed from the primary scan path, project and MCP content uses lightweight rows, empty states are action-oriented, and Settings keeps only the fields a user can actually change.
@@ -189,4 +212,3 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ### Changed
 - macOS releases are created automatically from `main` after validation, tests, packaging, signature verification, and changelog extraction.
 - Release notes are generated from the matching version section in this file.
-- The desktop entrypoint now uses a small updater bootstrap before loading the existing Electron main process.
