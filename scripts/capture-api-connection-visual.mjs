@@ -161,7 +161,7 @@ try {
   console.log(`api-inventory ${JSON.stringify(inventory)}`);
   await screenshot(cdp, 'api-custom-endpoint-inventory');
 
-  await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.connection-center-settings > header button')].find((item) => item.textContent?.includes('Add connection')); if (!button) throw new Error('Add connection button not found'); button.click(); return true; })()`);
+  await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.connection-center-settings button')].find((item) => item.textContent?.includes('Add connection')); if (!button) throw new Error('Add connection button not found'); button.click(); return true; })()`);
   await waitFor(cdp, "document.querySelector('.connection-create-dialog') !== null", 'Add connection dialog');
   const fixedScope = await evaluate(cdp, `document.querySelector('.company-connection-fixed-scope')?.textContent?.replace(/\\s+/g, ' ').trim()`);
   if (!fixedScope?.includes('Personal') || !fixedScope.includes('Ownership is fixed')) throw new Error(`Connection form did not preserve fixed Personal ownership: ${fixedScope}`);
