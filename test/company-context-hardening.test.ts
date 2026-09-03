@@ -52,3 +52,32 @@ test('only local authentication/runtime kind can enter shared local execution sc
   });
   assert.deepEqual(local.sharedConnectionIds, ['ollama']);
 });
+
+test('reserved object keys cannot become company or stable resource identities', () => {
+  const store = new CompanyContextStore(tempFile());
+  assert.throws(
+    () => store.reconcile({
+      projects: [{ id: 'project-a', name: 'A', companyId: '__proto__' }],
+      connections: [],
+      sessions: []
+    }),
+    /reserved object key/
+  );
+  assert.throws(
+    () => store.reconcile({
+      projects: [],
+      connections: [{ id: '__proto__', label: 'unsafe', auth: 'api-key', organizationId: 'company-a' }],
+      sessions: []
+    }),
+    /safe stable resource id/
+  );
+});
+
+test('company context uses atomic private local persistence', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'src', 'company-context.ts'), 'utf8');
+  assert.match(source, /fs\.mkdirSync\(directory, \{ recursive: true, mode: 0o700 \}\)/);
+  assert.match(source, /fs\.chmodSync\(directory, 0o700\)/);
+  assert.match(source, /fs\.writeFileSync\(temp,[\s\S]*mode: 0o600/);
+  assert.match(source, /fs\.renameSync\(temp, this\.file\)/);
+  assert.match(source, /fs\.chmodSync\(this\.file, 0o600\)/);
+});
