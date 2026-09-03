@@ -14,11 +14,9 @@ test('Project surface presents Company as identity and workspace only as a folde
 
 test('Project surface bridges existing legacy storage without exposing it as the product model', () => {
   const source = fs.readFileSync('app/src/ProjectGallery.tsx', 'utf8');
-  assert.match(source, /companyId: companyId/);
-  assert.match(source, /organizationId: companyId/);
-  assert.match(source, /companyName/);
-  assert.match(source, /organizationName: companyName/);
+  assert.match(source, /const companyFields = \{[\s\S]*companyId,[\s\S]*companyName,[\s\S]*organizationId: companyId,[\s\S]*organizationName: companyName/);
   assert.match(source, /companyId = project\.companyId \|\| project\.organizationId \|\| 'personal'/);
+  assert.match(source, /companyName: project\.companyName \?\? project\.organizationName/);
 });
 
 test('renderer project contract marks organization fields as deprecated migration aliases', () => {
