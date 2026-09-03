@@ -74,20 +74,38 @@ export interface CompanyContextServiceInput {
 }
 
 const SAFE_COMPANY_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
+function hasOwn(record: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
 
 function cleanCompanyId(value: string | undefined, label: string): string | undefined {
   const clean = value?.trim();
   if (!clean) return undefined;
-  if (!SAFE_COMPANY_ID.test(clean)) throw new Error(`${label} contains unsupported characters.`);
+  if (!SAFE_COMPANY_ID.test(clean) || UNSAFE_OBJECT_KEYS.has(clean)) {
+    throw new Error(`${label} contains unsupported characters or a reserved object key.`);
+  }
   if (clean === LOCAL_ORGANIZATION_ID) {
     throw new Error(`${label} cannot use reserved local execution scope as a company id.`);
   }
   return clean;
 }
 
+function cleanBindingKey(value: string, label: string): string {
+  const clean = value.trim();
+  if (!clean || clean.length > 512 || /[\0\r\n]/.test(clean) || UNSAFE_OBJECT_KEYS.has(clean)) {
+    throw new Error(`${label} is not a safe stable resource id.`);
+  }
+  return clean;
+}
+
 function displayName(value: string | undefined, fallbackId: string): string {
   const clean = value?.trim();
-  if (clean) return clean.slice(0, 160);
+  if (clean) {
+    if (/[\0\r\n]/.test(clean)) throw new Error('Company display name contains unsupported control characters.');
+    return clean.slice(0, 160);
+  }
   return fallbackId
     .split(/[-_.:]+/)
     .filter(Boolean)
@@ -101,14 +119,18 @@ function uniqueSorted(values: Iterable<string>): string[] {
 
 function freshFile(): CompanyContextFile {
   const now = new Date().toISOString();
+  const companies = Object.create(null) as CompanyContextFile['companies'];
+  companies[PERSONAL_COMPANY_ID] = { name: 'Personal', createdAt: now, updatedAt: now };
   return {
     version: 1,
-    companies: {
-      [PERSONAL_COMPANY_ID]: { name: 'Personal', createdAt: now, updatedAt: now }
-    },
-    connectionBindings: {},
+    companies,
+    connectionBindings: Object.create(null) as Record<string, string>,
     updatedAt: now
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 export function companyContextPath(): string {
@@ -132,7 +154,7 @@ export class CompanyContextStore {
 
     const ensure = (idValue: string | undefined, nameValue?: string): string => {
       const id = cleanCompanyId(idValue, 'Company id') ?? PERSONAL_COMPANY_ID;
-      const existing = state.companies[id];
+      const existing = hasOwn(state.companies, id) ? state.companies[id] : undefined;
       if (!existing) {
         state.companies[id] = {
           name: id === PERSONAL_COMPANY_ID ? 'Personal' : displayName(nameValue, id),
@@ -163,35 +185,39 @@ export class CompanyContextStore {
     const connectionCompanies = new Map<string, string>();
     const sharedConnectionIds: string[] = [];
     for (const connection of input.connections) {
+      const connectionId = cleanBindingKey(connection.id, 'Connection id');
       // Execution locality is defined by the connection kind, never by a label
       // or a legacy company-looking string. A corporate account called "Local"
       // must not be mistaken for Ollama/local execution.
       if (connection.auth === 'local') {
-        sharedConnectionIds.push(connection.id);
+        sharedConnectionIds.push(connectionId);
         continue;
       }
 
+      const persistedRaw = hasOwn(state.connectionBindings, connectionId)
+        ? state.connectionBindings[connectionId]
+        : undefined;
       const persisted = cleanCompanyId(
-        state.connectionBindings[connection.id],
-        `Connection ${connection.id} persisted company id`
+        persistedRaw,
+        `Connection ${connectionId} persisted company id`
       );
-      const explicit = cleanCompanyId(connection.companyId, `Connection ${connection.id} company id`);
+      const explicit = cleanCompanyId(connection.companyId, `Connection ${connectionId} company id`);
       if (persisted && explicit && persisted !== explicit) {
-        throw new Error(`Connection ${connection.id} explicit company conflicts with its persisted company binding.`);
+        throw new Error(`Connection ${connectionId} explicit company conflicts with its persisted company binding.`);
       }
       const legacy = cleanCompanyId(
         connection.organizationId,
-        `Connection ${connection.id} legacy organization id`
+        `Connection ${connectionId} legacy organization id`
       );
       const companyId = ensure(
         persisted ?? explicit ?? legacy ?? PERSONAL_COMPANY_ID,
         connection.organizationLabel
       );
-      if (state.connectionBindings[connection.id] !== companyId) {
-        state.connectionBindings[connection.id] = companyId;
+      if (persistedRaw !== companyId) {
+        state.connectionBindings[connectionId] = companyId;
         dirty = true;
       }
-      connectionCompanies.set(connection.id, companyId);
+      connectionCompanies.set(connectionId, companyId);
     }
 
     const sessionCompanies = new Map<string, string>();
@@ -254,33 +280,34 @@ export class CompanyContextStore {
     } catch (error) {
       throw new Error(`Could not read Axis company context: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('Axis company context must be a JSON object.');
+    if (!isRecord(parsed)) throw new Error('Axis company context must be a JSON object.');
+    if (parsed.version !== 1 || !isRecord(parsed.companies) || !isRecord(parsed.connectionBindings)) {
+      throw new Error(`Unsupported Axis company context version: ${String(parsed.version)}`);
     }
-    const value = parsed as Partial<CompanyContextFile>;
-    if (value.version !== 1 || !value.companies || !value.connectionBindings) {
-      throw new Error(`Unsupported Axis company context version: ${String(value.version)}`);
-    }
+
     const state = freshFile();
-    for (const [rawId, raw] of Object.entries(value.companies)) {
-      if (!raw || typeof raw !== 'object') throw new Error(`Invalid company context entry: ${rawId}`);
+    for (const [rawId, raw] of Object.entries(parsed.companies)) {
+      if (!isRecord(raw)) throw new Error(`Invalid company context entry: ${rawId}`);
       const id = cleanCompanyId(rawId, 'Stored company id');
       if (!id) throw new Error('Stored company id cannot be empty.');
-      const item = raw as { name?: unknown; createdAt?: unknown; updatedAt?: unknown };
-      const name = typeof item.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 160) : displayName(undefined, id);
+      const name = typeof raw.name === 'string' && raw.name.trim()
+        ? displayName(raw.name, id)
+        : displayName(undefined, id);
       state.companies[id] = {
         name: id === PERSONAL_COMPANY_ID ? 'Personal' : name,
-        createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date(0).toISOString(),
-        updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date(0).toISOString()
+        createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date(0).toISOString(),
+        updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date(0).toISOString()
       };
     }
-    state.connectionBindings = {};
-    for (const [connectionId, rawCompanyId] of Object.entries(value.connectionBindings)) {
-      if (!connectionId.trim() || typeof rawCompanyId !== 'string') throw new Error('Invalid company connection binding.');
+
+    state.connectionBindings = Object.create(null) as Record<string, string>;
+    for (const [rawConnectionId, rawCompanyId] of Object.entries(parsed.connectionBindings)) {
+      const connectionId = cleanBindingKey(rawConnectionId, 'Stored connection id');
+      if (typeof rawCompanyId !== 'string') throw new Error(`Invalid company binding for connection ${connectionId}.`);
       const companyId = cleanCompanyId(rawCompanyId, `Connection ${connectionId} company id`);
       if (!companyId) throw new Error(`Connection ${connectionId} company id cannot be empty.`);
       state.connectionBindings[connectionId] = companyId;
-      if (!state.companies[companyId]) {
+      if (!hasOwn(state.companies, companyId)) {
         state.companies[companyId] = {
           name: displayName(undefined, companyId),
           createdAt: new Date(0).toISOString(),
@@ -288,15 +315,17 @@ export class CompanyContextStore {
         };
       }
     }
-    state.updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt : new Date(0).toISOString();
+    state.updatedAt = typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date(0).toISOString();
     return state;
   }
 
   private write(state: CompanyContextFile): void {
-    fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
+    const directory = path.dirname(this.file);
     const temp = `${this.file}.tmp-${process.pid}-${Date.now()}`;
-    fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     try {
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      try { fs.chmodSync(directory, 0o700); } catch { /* best effort on non-POSIX */ }
+      fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
       fs.renameSync(temp, this.file);
       try { fs.chmodSync(this.file, 0o600); } catch { /* best effort on non-POSIX */ }
     } catch (error) {
