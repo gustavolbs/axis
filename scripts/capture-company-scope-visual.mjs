@@ -176,6 +176,16 @@ try {
   await cdp.send('Page.enable');
   await waitFor(cdp, `document.querySelector('.lc-shell-sidebar') !== null`, 'Axis shell');
   await waitFor(cdp, `document.querySelector('.axis-company-scope[data-placement="chrome"]') !== null`, 'chrome Company selector');
+  const composerVisible = await evaluate(cdp, `document.querySelector('.axis-company-scope[data-placement="composer"]') !== null`);
+  if (!composerVisible) {
+    await evaluate(cdp, `(() => {
+      const button = [...document.querySelectorAll('.lc-shell-primary-nav button')]
+        .find((item) => item.getAttribute('aria-label') === 'New chat' || item.textContent?.trim() === 'New chat');
+      if (!button) throw new Error('New chat button not found');
+      button.click();
+      return true;
+    })()`);
+  }
   await waitFor(cdp, `document.querySelector('.axis-company-scope[data-placement="composer"]') !== null`, 'composer Company selector');
   await assertSelector(cdp, 'chrome');
   await assertSelector(cdp, 'composer');
