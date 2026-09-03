@@ -276,7 +276,7 @@ export class DesktopAppRuntime {
       }
       return { companies: this.companyContext.reorderCompanies(body.ids as string[]) };
     }
-    const companyMatch = /^\/companies\/([^/]+)$/.exec(pathname);
+    const companyMatch = /^\/companies\/(?!(?:context|order)$)([^/]+)$/.exec(pathname);
     if (companyMatch && method === 'GET') {
       return { company: this.companyContext.getCompany(decodeURIComponent(companyMatch[1])) };
     }
