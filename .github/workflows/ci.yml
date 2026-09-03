@@ -119,6 +119,7 @@ jobs:
           node --check scripts/capture-company-scope-visual.mjs
           node --check scripts/capture-connections-visual.mjs
           node --check scripts/capture-api-connection-visual.mjs
+          node --check scripts/capture-shared-connection-form-visual.mjs
           npx tsx --test test/desktop-shell.test.ts test/desktop-ui-contract.test.ts test/connection-center-desktop-contract.test.ts
 
       - name: Render Company and Connection settings states
@@ -127,6 +128,7 @@ jobs:
           node scripts/capture-company-scope-visual.mjs
           node scripts/capture-connections-visual.mjs
           node scripts/capture-api-connection-visual.mjs
+          node scripts/capture-shared-connection-form-visual.mjs
 
       - name: Upload Company and Connection visual smoke
         uses: actions/upload-artifact@v4
