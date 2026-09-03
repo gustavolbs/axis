@@ -4,12 +4,25 @@ import test from 'node:test';
 
 test('Project surface presents Company as identity and workspace only as a folder', () => {
   const source = fs.readFileSync('app/src/ProjectGallery.tsx', 'utf8');
-  assert.match(source, /Company identifier/);
-  assert.match(source, /Company name/);
-  assert.match(source, /workspace is only a folder and never changes this Company/);
+  assert.match(source, /<span>Company<\/span><UiSelect/);
+  assert.match(source, /Project company/);
+  assert.match(source, /folder never changes that ownership/);
   assert.match(source, /project\.companyName \?\? project\.companyId/);
+  assert.doesNotMatch(source, /Company identifier/);
+  assert.doesNotMatch(source, /name="companyId"/);
   assert.doesNotMatch(source, /Organization boundary/);
-  assert.doesNotMatch(source, /<span>Organization name<\/span>/);
+});
+
+test('Project surface selects an existing canonical Company instead of inventing an id from a label', () => {
+  const source = fs.readFileSync('app/src/ProjectGallery.tsx', 'utf8');
+  assert.match(source, /await api\('\/api\/companies\/context'\)/);
+  assert.match(source, /\/api\/companies\?archived=all/);
+  assert.match(source, /const selectedCompany = companies\.find\(\(company\) => company\.id === companyId\)/);
+  assert.match(source, /Choose an existing active company for this Project/);
+  assert.match(source, /Archived companies cannot receive new Projects/);
+  assert.match(source, /organizationId: companyId/);
+  assert.match(source, /organizationName: companyName/);
+  assert.doesNotMatch(source, /function slug\(/);
 });
 
 test('Project surface bridges existing legacy storage without exposing it as the product model', () => {
