@@ -34,7 +34,10 @@ import {
 import type { McpHost } from './agent-tools/mcp/index.js';
 import { currentCancellationSignal } from './cancellation.js';
 import { ClaudeAccountProfileStore } from './claude-account-profiles.js';
-import type { CompanyContextSnapshot } from './company-context.js';
+import {
+  PERSONAL_COMPANY_ID,
+  type CompanyContextSnapshot
+} from './company-context.js';
 import type { LocalEngineerResult } from './local-engineer.js';
 import {
   createProjectMemoryLifecycleSink,
@@ -73,18 +76,24 @@ export interface AgentProductRuntimeOptions {
   readonly executionTargetId?: string;
 }
 
-interface ExactSelection { readonly connectionId: string; readonly modelId: string }
+interface ExactSelection {
+  readonly connectionId: string;
+  readonly modelId: string;
+}
+
 interface ResolvedTransport {
   readonly connection: ProviderConnectionView;
   readonly provider: InferenceProvider;
   readonly model: ModelDefinition;
   readonly adapter: AgentProviderAdapter;
 }
+
 interface PendingPermission {
   readonly requestId: string;
   readonly toolName: string;
   readonly argumentFingerprint: string;
 }
+
 interface PendingSession {
   readonly context: AgentSessionContext;
   readonly provider: AgentProviderAdapter;
@@ -107,6 +116,7 @@ function stableValue(value: unknown): string {
   }
   return JSON.stringify(value);
 }
+
 function argumentFingerprint(value: Readonly<Record<string, unknown>>): string {
   return createHash('sha256').update(stableValue(value)).digest('hex');
 }
@@ -117,7 +127,10 @@ class ProductPermissionGate implements ToolPermissionGate {
   private resolution?: AgentDecisionResolution;
   private consumed = false;
 
-  remember(request: AgentDecisionRequest, call?: { name: string; arguments: Readonly<Record<string, unknown>> }): void {
+  remember(
+    request: AgentDecisionRequest,
+    call?: { name: string; arguments: Readonly<Record<string, unknown>> }
+  ): void {
     if (!call) return;
     this.pending = {
       requestId: request.id,
@@ -136,7 +149,9 @@ class ProductPermissionGate implements ToolPermissionGate {
 
   async authorize(request: ToolPermissionRequest): Promise<ToolPermissionDecision> {
     if (
-      this.pending && this.resolution && !this.consumed &&
+      this.pending &&
+      this.resolution &&
+      !this.consumed &&
       request.tool.name === this.pending.toolName &&
       argumentFingerprint(request.call.arguments) === this.pending.argumentFingerprint
     ) {
@@ -151,11 +166,43 @@ class ProductPermissionGate implements ToolPermissionGate {
   }
 }
 
-function exactSelection(selection: ModelSelection | undefined, project?: ProjectDefinition): ExactSelection | undefined {
+function exactSelection(
+  selection: ModelSelection | undefined,
+  project?: ProjectDefinition
+): ExactSelection | undefined {
   const candidate = selection ?? project?.defaultModel;
   if (!candidate || candidate.mode === 'auto') return undefined;
-  if (candidate.mode === 'local-first') return { connectionId: 'ollama', modelId: candidate.modelId };
+  if (candidate.mode === 'local-first') {
+    return { connectionId: 'ollama', modelId: candidate.modelId };
+  }
   return { connectionId: candidate.providerId, modelId: candidate.modelId };
+}
+
+function companyForProject(snapshot: CompanyContextSnapshot, projectId: string): string {
+  const owners = snapshot.companies.filter((company) => company.projectIds.includes(projectId));
+  if (owners.length !== 1) {
+    throw new Error(
+      `Project ${projectId} must belong to exactly one canonical Company before AgentRuntime composition.`
+    );
+  }
+  return owners[0]!.id;
+}
+
+function canonicalCompanyId(
+  snapshot: CompanyContextSnapshot,
+  project: ProjectDefinition | undefined,
+  requestedCompanyId: string | undefined
+): string {
+  const canonical = project
+    ? companyForProject(snapshot, project.id)
+    : PERSONAL_COMPANY_ID;
+  const requested = requestedCompanyId?.trim();
+  if (requested && requested !== canonical) {
+    throw new Error(
+      `Session Company ${requested} does not match canonical ${project ? `Project ${project.id}` : 'Personal'} Company ${canonical}.`
+    );
+  }
+  return canonical;
 }
 
 function assertProjectConnection(
@@ -164,15 +211,23 @@ function assertProjectConnection(
   connection: ProviderConnectionView
 ): void {
   const policy = effectiveProjectConnectionPolicy(project);
-  const allowed = mode === 'chat' ? policy.chat.allowedConnectionIds : policy.inference.allowedConnectionIds;
+  const allowed = mode === 'chat'
+    ? policy.chat.allowedConnectionIds
+    : policy.inference.allowedConnectionIds;
   if (!allowed.includes(connection.id)) {
-    throw new Error(`Connection ${connection.id} is not allowed for ${mode} in Project ${project.id}.`);
+    throw new Error(
+      `Connection ${connection.id} is not allowed for ${mode} in Project ${project.id}.`
+    );
   }
   if (!project.privacy.allowedProviderIds.includes(connection.providerFamily)) {
-    throw new Error(`Provider family ${connection.providerFamily} is not allowed by Project ${project.id}.`);
+    throw new Error(
+      `Provider family ${connection.providerFamily} is not allowed by Project ${project.id}.`
+    );
   }
   if (connection.providerFamily !== 'ollama' && !project.privacy.cloudAllowed) {
-    throw new Error(`Project ${project.id} does not allow cloud provider ${connection.providerFamily}.`);
+    throw new Error(
+      `Project ${project.id} does not allow cloud provider ${connection.providerFamily}.`
+    );
   }
 }
 
@@ -193,15 +248,43 @@ function rootsFor(
   }];
 }
 
-function resourcesFor(companyId: string, project: ProjectDefinition | undefined, browser: boolean): AgentResourceBinding[] {
+function resourcesFor(
+  companyId: string,
+  project: ProjectDefinition | undefined,
+  browser: boolean,
+  mcpHost?: McpHost
+): AgentResourceBinding[] {
   const scope = project ? 'project' as const : 'personal' as const;
   const resources: AgentResourceBinding[] = [];
-  if (project) resources.push({
-    kind: 'memory', id: 'project-memory', scope, companyId, projectId: project.id
-  });
-  if (browser) resources.push({
-    kind: 'browser', id: 'fetch', scope, companyId, projectId: project?.id
-  });
+  if (project) {
+    resources.push({
+      kind: 'memory',
+      id: 'project-memory',
+      scope,
+      companyId,
+      projectId: project.id
+    });
+  }
+  if (browser) {
+    resources.push({
+      kind: 'browser',
+      id: 'fetch',
+      scope,
+      companyId,
+      projectId: project?.id
+    });
+  }
+  for (const server of mcpHost?.catalog.listConfigured() ?? []) {
+    if (!server.enabled || server.companyId !== companyId) continue;
+    if (server.projectId !== undefined && server.projectId !== project?.id) continue;
+    resources.push({
+      kind: 'mcp',
+      id: server.id,
+      scope,
+      companyId,
+      projectId: server.projectId
+    });
+  }
   return resources;
 }
 
@@ -211,16 +294,25 @@ function browserTools(backend: BrowserBackend | false | undefined): readonly Axi
   const tools = createBrowserToolset({ backend: selected }).tools;
   if (selected.id !== 'fetch') return tools;
   return tools.filter((tool) => [
-    'browser.navigate', 'browser.read', 'browser.state', 'browser.inspect'
+    'browser.navigate',
+    'browser.read',
+    'browser.state',
+    'browser.inspect'
   ].includes(tool.definition.name));
 }
 
 function toolNeedsWorkspace(tool: AxisTool): boolean {
   return tool.definition.requiredCapabilities.some((capability) =>
-    capability.startsWith('filesystem.') || capability.startsWith('process.') || capability.startsWith('git.')
+    capability.startsWith('filesystem.') ||
+    capability.startsWith('process.') ||
+    capability.startsWith('git.')
   );
 }
-function baseTools(roots: readonly AgentRoot[], backend: BrowserBackend | false | undefined): AxisTool[] {
+
+function baseTools(
+  roots: readonly AgentRoot[],
+  backend: BrowserBackend | false | undefined
+): AxisTool[] {
   const tools = [
     ...createFilesystemP12Tools(),
     ...createProcessTools().tools,
@@ -229,15 +321,29 @@ function baseTools(roots: readonly AgentRoot[], backend: BrowserBackend | false 
   ];
   return roots.length > 0 ? tools : tools.filter((tool) => !toolNeedsWorkspace(tool));
 }
-function permissionFor(mode: AgentProductInteractionMode, tool: AxisTool): 'granted' | 'ask' {
-  if (mode === 'chat') return tool.definition.effect === 'read' || tool.definition.effect === 'validation'
-    ? 'granted' : 'ask';
-  if (tool.definition.name.startsWith('browser.') || tool.definition.name.startsWith('mcp.')) {
+
+function chatToolAllowed(tool: AxisTool): boolean {
+  return tool.definition.effect === 'read' || tool.definition.effect === 'validation';
+}
+
+function permissionFor(
+  mode: AgentProductInteractionMode,
+  tool: AxisTool
+): 'granted' | 'ask' {
+  const permissions = tool.definition.requiredPermissions;
+  if (permissions.includes('mcp.invoke.mutate')) return 'ask';
+  if (permissions.includes('mcp.invoke.read')) return 'granted';
+  if (mode === 'chat') return 'granted';
+  if (tool.definition.name.startsWith('browser.')) {
     return tool.definition.effect === 'read' ? 'granted' : 'ask';
   }
   return 'granted';
 }
-function permissionsFor(mode: AgentProductInteractionMode, tools: readonly AxisTool[]): AgentPermissionSet {
+
+function permissionsFor(
+  mode: AgentProductInteractionMode,
+  tools: readonly AxisTool[]
+): AgentPermissionSet {
   const entries: Record<string, 'granted' | 'ask'> = Object.create(null) as Record<string, 'granted' | 'ask'>;
   for (const tool of tools) {
     const status = permissionFor(mode, tool);
@@ -250,10 +356,13 @@ function permissionsFor(mode: AgentProductInteractionMode, tools: readonly AxisT
 
 function transcriptFromChatHistory(input: ProjectEngineerInput): AgentMessage[] {
   return (input.chatHistory ?? []).map((turn, index) => ({
-    id: `history-${index}`, role: turn.role, content: turn.content
+    id: `history-${index}`,
+    role: turn.role,
+    content: turn.content
   }));
 }
-function systemPrompt(
+
+function runtimeSystemPrompt(
   input: ProjectEngineerInput,
   context: AgentSessionContext,
   project: ProjectDefinition | undefined,
@@ -274,14 +383,23 @@ function systemPrompt(
       'Never claim hidden provider-side filesystem, shell, MCP, browser, or mutation work.',
       'Never expose raw chain-of-thought; concise reasoning summaries are allowed.'
     ].join('\n'),
-    project?.instructions?.trim() ? `# PROJECT INSTRUCTIONS\n${project.instructions.trim()}` : undefined,
-    input.context?.trim() ? `# USER CONTEXT\n${input.context.trim()}` : undefined,
-    input.constraints?.length ? `# CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}` : undefined,
+    project?.instructions?.trim()
+      ? `# PROJECT INSTRUCTIONS\n${project.instructions.trim()}`
+      : undefined,
+    input.context?.trim()
+      ? `# USER CONTEXT\n${input.context.trim()}`
+      : undefined,
+    input.constraints?.length
+      ? `# CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}`
+      : undefined,
     memory
   ].filter((item): item is string => Boolean(item)).join('\n\n');
 }
 
-function eventFiles(events: readonly AgentLifecycleEvent[], type: 'read' | 'mutation'): string[] {
+function eventFiles(
+  events: readonly AgentLifecycleEvent[],
+  type: 'read' | 'mutation'
+): string[] {
   const files = new Set<string>();
   for (const event of events) {
     if (event.type !== type || event.status !== 'success') continue;
@@ -290,18 +408,23 @@ function eventFiles(events: readonly AgentLifecycleEvent[], type: 'read' | 'muta
   }
   return [...files];
 }
-function lastDiff(toolResults: readonly { toolName: string; status: string; output?: unknown }[]): string {
+
+function lastDiff(
+  toolResults: readonly { toolName: string; status: string; output?: unknown }[]
+): string {
   for (let index = toolResults.length - 1; index >= 0; index -= 1) {
     const result = toolResults[index];
     if (!result || result.status !== 'success' || !result.toolName.includes('diff')) continue;
     if (typeof result.output === 'string') return result.output;
     if (result.output && typeof result.output === 'object') {
-      const value = (result.output as Record<string, unknown>).diff ?? (result.output as Record<string, unknown>).stdout;
+      const record = result.output as Record<string, unknown>;
+      const value = record.diff ?? record.stdout;
       if (typeof value === 'string') return value;
     }
   }
   return '';
 }
+
 function asEngineerResult(
   input: ProjectEngineerInput,
   status: 'success' | 'needs-guidance',
@@ -344,7 +467,9 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
   constructor(private readonly options: AgentProductRuntimeOptions) {
     this.memoryStore = options.memoryStore ?? new ProjectMemoryStore();
     this.memoryRecorder = createProjectMemoryLifecycleSink(this.memoryStore, {
-      onError: (error) => console.error(`Project Memory lifecycle persistence failed: ${error instanceof Error ? error.message : String(error)}`)
+      onError: (error) => console.error(
+        `Project Memory lifecycle persistence failed: ${error instanceof Error ? error.message : String(error)}`
+      )
     });
     this.claudeProfiles = options.claudeProfiles ?? new ClaudeAccountProfileStore();
     this.targetId = options.executionTargetId?.trim() || 'desktop';
@@ -354,26 +479,44 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
-  resolveAgentDecision(sessionId: string, resolution: AgentDecisionResolution): void {
+
+  resolveAgentDecision(
+    sessionId: string,
+    resolution: AgentDecisionResolution
+  ): void {
     const pending = this.pending.get(sessionId);
-    if (!pending) throw new Error(`Agent session ${sessionId} is not waiting for a decision.`);
+    if (!pending) {
+      throw new Error(`Agent session ${sessionId} is not waiting for a decision.`);
+    }
     if (resolution.requestId !== pending.request.id) {
-      throw new Error(`Decision ${resolution.requestId} does not match pending request ${pending.request.id}.`);
+      throw new Error(
+        `Decision ${resolution.requestId} does not match pending request ${pending.request.id}.`
+      );
     }
     pending.resolution = resolution;
     pending.permissionGate.resolve(resolution);
   }
+
   private emit(event: AgentLifecycleEvent): void {
     this.memoryRecorder.observe(event);
     for (const listener of this.listeners) listener(event);
   }
 
-  private async resolveSelection(project: ProjectDefinition | undefined, requested?: ModelSelection): Promise<ExactSelection> {
+  private async resolveSelection(
+    project: ProjectDefinition | undefined,
+    requested?: ModelSelection
+  ): Promise<ExactSelection> {
     const exact = exactSelection(requested, project);
     if (exact) return exact;
-    if (!project) throw new Error('Personal AgentRuntime execution requires an exact selected connection and model.');
+    if (!project) {
+      throw new Error(
+        'Personal AgentRuntime execution requires an exact selected connection and model.'
+      );
+    }
     const selected = await this.options.providers.projectChatSelection(project);
-    if (selected.mode !== 'explicit') throw new Error(`Project ${project.id} did not resolve an exact default model.`);
+    if (selected.mode !== 'explicit') {
+      throw new Error(`Project ${project.id} did not resolve an exact default model.`);
+    }
     return { connectionId: selected.providerId, modelId: selected.modelId };
   }
 
@@ -387,18 +530,26 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     let model: ModelDefinition | undefined;
     if (project) {
       // Compatibility transport resolution happens only after canonical Company
-      // graph authorization below. Legacy organization metadata is not used to
-      // infer Company/session ownership.
+      // graph authorization. Legacy organization metadata is not an identity source.
       const registry = this.options.providers.buildRegistry(project);
-      if (!registry.has(connection.id)) throw new Error(`Project connection is unavailable: ${connection.id}`);
+      if (!registry.has(connection.id)) {
+        throw new Error(`Project connection is unavailable: ${connection.id}`);
+      }
       provider = registry.get(connection.id);
       model = (await provider.listModels()).find((candidate) => candidate.id === modelId);
     } else {
-      const resolved = await this.options.providers.personalModelDefinition(connection.id, modelId);
+      const resolved = await this.options.providers.personalModelDefinition(
+        connection.id,
+        modelId
+      );
       provider = resolved.provider;
       model = resolved.model;
     }
-    if (!model) throw new Error(`Model ${modelId} is not available through connection ${connection.id}.`);
+    if (!model) {
+      throw new Error(
+        `Model ${modelId} is not available through connection ${connection.id}.`
+      );
+    }
     return {
       connection,
       provider,
@@ -413,18 +564,30 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     };
   }
 
-  private async compose(input: ProjectEngineerInput, sessionId: string): Promise<PendingSession> {
+  private async compose(
+    input: ProjectEngineerInput,
+    sessionId: string
+  ): Promise<PendingSession> {
     const mode = input.interactionMode ?? 'cowork';
-    const companyId = input.companyId?.trim();
-    if (!companyId) throw new Error('AgentRuntime product execution requires canonical companyId.');
-    const project = input.projectId ? this.options.projects.getProject(input.projectId) : undefined;
+    const project = input.projectId
+      ? this.options.projects.getProject(input.projectId)
+      : undefined;
     const snapshot = this.options.companyContext();
+    const companyId = canonicalCompanyId(snapshot, project, input.companyId);
     const selection = await this.resolveSelection(project, input.modelSelection);
     const connection = this.options.connections.view(selection.connectionId);
-    if (!connection) throw new Error(`Unknown provider connection: ${selection.connectionId}`);
+    if (!connection) {
+      throw new Error(`Unknown provider connection: ${selection.connectionId}`);
+    }
     if (project) assertProjectConnection(project, mode, connection);
+
     const roots = rootsFor(companyId, project, input.workspace, mode);
-    const resources = resourcesFor(companyId, project, this.options.browserBackend !== false);
+    const resources = resourcesFor(
+      companyId,
+      project,
+      this.options.browserBackend !== false,
+      this.options.mcpHost
+    );
 
     // Fail closed on mixed Company/Project/Connection/root authority before any
     // credential secret or account transport is invoked.
@@ -435,20 +598,42 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       project: project ? { id: project.id } : undefined,
       connection,
       modelId: selection.modelId,
-      executionTarget: { id: this.targetId, kind: 'desktop', mode: roots.length ? 'workspace' : 'inference-only' },
+      executionTarget: {
+        id: this.targetId,
+        kind: 'desktop',
+        mode: roots.length ? 'workspace' : 'inference-only'
+      },
       roots,
       permissions: { default: 'denied', entries: {} },
       capabilities: { entries: {} },
       resources
     });
 
-    const transport = await this.resolveTransport(project, connection, selection.modelId, companyId);
+    const transport = await this.resolveTransport(
+      project,
+      connection,
+      selection.modelId,
+      companyId
+    );
+
     let tools = baseTools(roots, this.options.browserBackend);
+    if (mode === 'chat') tools = tools.filter(chatToolAllowed);
+
     let permissions = permissionsFor(mode, tools);
-    let capabilities = negotiateEffectiveCapabilities({ offers: [
-      providerModelCapabilityOffer(`connection:${connection.id}/model:${selection.modelId}`, transport.provider.capabilities, transport.model),
-      { source: `execution-target:${this.targetId}`, ids: [...new Set(tools.flatMap((tool) => tool.definition.requiredCapabilities))] }
-    ] });
+    let capabilities = negotiateEffectiveCapabilities({
+      offers: [
+        providerModelCapabilityOffer(
+          `connection:${connection.id}/model:${selection.modelId}`,
+          transport.provider.capabilities,
+          transport.model
+        ),
+        {
+          source: `execution-target:${this.targetId}`,
+          ids: [...new Set(tools.flatMap((tool) => tool.definition.requiredCapabilities))]
+        }
+      ]
+    });
+
     let context = buildAgentSessionContext({
       companyContext: snapshot,
       sessionId,
@@ -456,7 +641,11 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       project: project ? { id: project.id } : undefined,
       connection,
       modelId: selection.modelId,
-      executionTarget: { id: this.targetId, kind: 'desktop', mode: roots.length ? 'workspace' : 'inference-only' },
+      executionTarget: {
+        id: this.targetId,
+        kind: 'desktop',
+        mode: roots.length ? 'workspace' : 'inference-only'
+      },
       roots,
       permissions,
       capabilities,
@@ -464,14 +653,27 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     });
 
     if (this.options.mcpHost) {
-      const discovered = await this.options.mcpHost.toolsForSession(context, currentCancellationSignal());
-      if (discovered.length) {
-        tools = [...tools, ...discovered];
+      const signal = currentCancellationSignal() ?? new AbortController().signal;
+      const discovered = await this.options.mcpHost.toolsForSession(context, signal);
+      const allowedMcp = mode === 'chat'
+        ? discovered.filter(chatToolAllowed)
+        : discovered;
+      if (allowedMcp.length) {
+        tools = [...tools, ...allowedMcp];
         permissions = permissionsFor(mode, tools);
-        capabilities = negotiateEffectiveCapabilities({ offers: [
-          providerModelCapabilityOffer(`connection:${connection.id}/model:${selection.modelId}`, transport.provider.capabilities, transport.model),
-          { source: `execution-target:${this.targetId}`, ids: [...new Set(tools.flatMap((tool) => tool.definition.requiredCapabilities))] }
-        ] });
+        capabilities = negotiateEffectiveCapabilities({
+          offers: [
+            providerModelCapabilityOffer(
+              `connection:${connection.id}/model:${selection.modelId}`,
+              transport.provider.capabilities,
+              transport.model
+            ),
+            {
+              source: `execution-target:${this.targetId}`,
+              ids: [...new Set(tools.flatMap((tool) => tool.definition.requiredCapabilities))]
+            }
+          ]
+        });
         context = buildAgentSessionContext({
           companyContext: snapshot,
           sessionId,
@@ -479,7 +681,11 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
           project: project ? { id: project.id } : undefined,
           connection,
           modelId: selection.modelId,
-          executionTarget: { id: this.targetId, kind: 'desktop', mode: roots.length ? 'workspace' : 'inference-only' },
+          executionTarget: {
+            id: this.targetId,
+            kind: 'desktop',
+            mode: roots.length ? 'workspace' : 'inference-only'
+          },
           roots,
           permissions,
           capabilities,
@@ -488,25 +694,34 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       }
     }
 
-    const memory = await loadProjectMemoryContext({ store: this.memoryStore, session: context, task: input.goal });
+    const memory = await loadProjectMemoryContext({
+      store: this.memoryStore,
+      session: context,
+      task: input.goal
+    });
     const permissionGate = new ProductPermissionGate();
     const runtime = new AgentRuntime({
       tools: new ToolRegistry(tools),
       executionTargets: [new LocalAgentExecutionTarget(this.targetId)],
       permissionGate,
       lifecycle: (event) => {
-        if (event.type === 'decision.requested' && event.request.kind === 'permission' && event.call) {
+        if (
+          event.type === 'decision.requested' &&
+          event.request.kind === 'permission' &&
+          event.call
+        ) {
           permissionGate.remember(event.request, event.call);
         }
         this.emit(event);
       }
     });
+
     return {
       context,
       provider: transport.adapter,
       runtime,
       permissionGate,
-      systemPrompt: systemPrompt(input, context, project, memory?.capsule),
+      systemPrompt: runtimeSystemPrompt(input, context, project, memory?.capsule),
       transcript: transcriptFromChatHistory(input),
       turnIndex: input.chatHistory?.filter((turn) => turn.role === 'user').length ?? 0,
       request: { id: '', kind: 'confirmation', prompt: '' }
@@ -515,9 +730,13 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
 
   async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
     const sessionId = input.budgetJobId?.trim();
-    if (!sessionId) throw new Error('AgentRuntime product execution requires budgetJobId/sessionId.');
+    if (!sessionId) {
+      throw new Error('AgentRuntime product execution requires budgetJobId/sessionId.');
+    }
+
     let session = this.pending.get(sessionId);
     if (!session) session = await this.compose(input, sessionId);
+
     const events: AgentLifecycleEvent[] = [];
     const unsubscribe = this.subscribeAgentLifecycle((event) => {
       if (event.sessionId === sessionId) events.push(event);
@@ -537,6 +756,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
         requireToolUse: (input.interactionMode ?? 'cowork') === 'cowork',
         signal: currentCancellationSignal()
       });
+
       if (result.status === 'paused' && result.decisionRequest) {
         session.transcript = result.messages;
         session.turnIndex += 1;
@@ -544,13 +764,28 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
         session.resolution = undefined;
         this.pending.set(sessionId, session);
         return asEngineerResult(
-          input, 'needs-guidance', result.finalText ?? result.decisionRequest.prompt, events, result.toolResults
+          input,
+          'needs-guidance',
+          result.finalText ?? result.decisionRequest.prompt,
+          events,
+          result.toolResults
         );
       }
+
       this.pending.delete(sessionId);
-      if (result.status === 'cancelled') throw new Error(result.error?.message ?? 'AgentRuntime session cancelled.');
-      if (result.status === 'failed') throw new Error(result.error?.message ?? 'AgentRuntime session failed.');
-      return asEngineerResult(input, 'success', result.finalText?.trim() || 'Completed.', events, result.toolResults);
+      if (result.status === 'cancelled') {
+        throw new Error(result.error?.message ?? 'AgentRuntime session cancelled.');
+      }
+      if (result.status === 'failed') {
+        throw new Error(result.error?.message ?? 'AgentRuntime session failed.');
+      }
+      return asEngineerResult(
+        input,
+        'success',
+        result.finalText?.trim() || 'Completed.',
+        events,
+        result.toolResults
+      );
     } finally {
       unsubscribe();
     }
