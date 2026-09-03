@@ -8,7 +8,15 @@ export type AgentAuthKind =
 export type AgentExecutionTargetKind = 'desktop' | 'worker' | (string & {});
 export type AgentExecutionTargetMode = 'inference-only' | 'workspace';
 export type AgentRootAccess = 'read' | 'write';
-export type AgentResourceKind = 'skill' | 'mcp' | 'agent' | 'hook' | 'pattern' | 'template' | 'memory' | (string & {});
+export type AgentResourceKind =
+  | 'skill'
+  | 'mcp'
+  | 'agent'
+  | 'hook'
+  | 'pattern'
+  | 'template'
+  | 'memory'
+  | (string & {});
 export type AgentResourceScope = 'personal' | 'company' | 'project';
 
 export interface AgentConnectionContext {
@@ -65,11 +73,9 @@ export interface EffectiveCapabilitySet {
 }
 
 /**
- * Immutable execution identity for one Axis agent session.
- *
- * Every field that can change the authority of a run is fixed before the first
- * provider call. The runtime never discovers another Company, Project,
- * connection, model, root, execution target, permission or resource implicitly.
+ * Immutable authority for one Axis agent session. All fields that can broaden
+ * authority are resolved before the first provider call and never discovered
+ * implicitly while the turn is running.
  */
 export interface AgentSessionContext {
   readonly sessionId: string;
@@ -142,7 +148,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/** Snapshot external state once so a running session cannot be re-scoped by mutation. */
+/** Snapshot external state so caller mutation cannot re-scope an active run. */
 export function freezeAgentSessionContext(context: AgentSessionContext): AgentSessionContext {
   const snapshot = structuredClone(context) as AgentSessionContext;
   assertAgentSessionContext(snapshot);
@@ -152,7 +158,13 @@ export function freezeAgentSessionContext(context: AgentSessionContext): AgentSe
 export type ToolEffect = 'read' | 'mutation' | 'command' | 'validation' | 'external';
 export type ToolMutationRisk = 'none' | 'possible' | 'definite';
 export type RetryEligibility = 'never' | 'safe' | 'provider' | 'after-confirmation';
-export type MutationStatus = 'not-applicable' | 'not-started' | 'started' | 'committed' | 'rolled-back' | 'unknown';
+export type MutationStatus =
+  | 'not-applicable'
+  | 'not-started'
+  | 'started'
+  | 'committed'
+  | 'rolled-back'
+  | 'unknown';
 
 export interface ToolDefinition {
   readonly name: string;
@@ -213,25 +225,6 @@ export interface ToolActivity {
   readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
-export interface AgentMessage {
-  readonly id: string;
-  readonly role: 'system' | 'user' | 'assistant' | 'tool';
-  readonly content: string;
-  readonly toolCalls?: readonly ToolCall[];
-  readonly toolCallId?: string;
-  readonly toolName?: string;
-}
-
-export interface AgentTurn {
-  readonly id: string;
-  readonly index: number;
-  readonly startedAt: string;
-  readonly completedAt?: string;
-  readonly status: 'running' | 'completed' | 'failed' | 'cancelled';
-  readonly toolCallCount: number;
-  readonly finalText?: string;
-}
-
 export type AgentFailureKind =
   | 'capability'
   | 'permission'
@@ -256,6 +249,68 @@ export class AgentRuntimeError extends Error {
     super(failure.message);
     this.name = 'AgentRuntimeError';
   }
+}
+
+/** Metadata only; binary payload transport/storage is intentionally outside P1.1. */
+export interface AgentAttachment {
+  readonly id: string;
+  readonly kind: 'file' | 'image' | 'audio' | 'reference' | (string & {});
+  readonly name?: string;
+  readonly mediaType?: string;
+  readonly sizeBytes?: number;
+  /** Opaque reference resolved by the owning transport/resource layer. */
+  readonly ref: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+export interface AgentDecisionOption {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+}
+
+export interface AgentDecisionRequest {
+  readonly id: string;
+  readonly kind: 'permission' | 'clarification' | 'confirmation' | 'provider' | (string & {});
+  readonly prompt: string;
+  readonly options?: readonly AgentDecisionOption[];
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+export interface AgentDecisionResolution {
+  readonly requestId: string;
+  readonly optionId?: string;
+  readonly text?: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Canonical transcript message. Reasoning is intentionally summary-only; raw
+ * provider chain-of-thought is never required by the Axis runtime contract.
+ */
+export interface AgentMessage {
+  readonly id: string;
+  readonly role: 'system' | 'user' | 'assistant' | 'tool';
+  readonly content: string;
+  readonly reasoningSummary?: string;
+  readonly attachments?: readonly AgentAttachment[];
+  readonly toolCalls?: readonly ToolCall[];
+  readonly toolCallId?: string;
+  readonly toolName?: string;
+  readonly error?: AgentRuntimeFailure;
+  readonly decisionRequest?: AgentDecisionRequest;
+  readonly decisionResolution?: AgentDecisionResolution;
+}
+
+export interface AgentTurn {
+  readonly id: string;
+  readonly index: number;
+  readonly startedAt: string;
+  readonly completedAt?: string;
+  readonly status: 'running' | 'completed' | 'paused' | 'failed' | 'cancelled';
+  readonly toolCallCount: number;
+  readonly finalText?: string;
+  readonly decisionRequest?: AgentDecisionRequest;
 }
 
 export interface AgentProgress {
@@ -284,6 +339,8 @@ export type AgentLifecycleEvent = LifecycleBase & (
   | { readonly type: 'provider.completed'; readonly stopReason: string; readonly toolCallCount: number }
   | { readonly type: 'permission.requested'; readonly call: ToolCall; readonly permissions: readonly string[] }
   | { readonly type: 'permission.resolved'; readonly callId: string; readonly allowed: boolean; readonly reason?: string }
+  | { readonly type: 'decision.requested'; readonly request: AgentDecisionRequest; readonly call?: ToolCall }
+  | { readonly type: 'decision.resolved'; readonly resolution: AgentDecisionResolution }
   | { readonly type: 'tool.call'; readonly call: ToolCall; readonly definition?: ToolDefinition }
   | { readonly type: 'tool.progress'; readonly callId: string; readonly toolName: string; readonly progress: ToolProgress }
   | { readonly type: 'tool.result'; readonly result: ToolResult }
@@ -294,7 +351,7 @@ export type AgentLifecycleEvent = LifecycleBase & (
   | { readonly type: 'error'; readonly error: AgentRuntimeFailure; readonly callId?: string; readonly toolName?: string }
   | { readonly type: 'cancelled'; readonly source: 'caller' | 'provider' | 'tool'; readonly callId?: string; readonly toolName?: string }
   | { readonly type: 'turn.completed'; readonly turn: AgentTurn }
-  | { readonly type: 'session.completed'; readonly status: 'completed' | 'failed' | 'cancelled'; readonly error?: AgentRuntimeFailure }
+  | { readonly type: 'session.completed'; readonly status: 'completed' | 'paused' | 'failed' | 'cancelled'; readonly error?: AgentRuntimeFailure }
 );
 
 export type AgentLifecycleSink = (event: AgentLifecycleEvent) => void;
