@@ -210,11 +210,6 @@ export class ProcessExecTool implements AxisTool {
       mutationIntent: input.mutation
     } as const;
 
-    context.reportActivity({
-      kind: 'command',
-      detail: display,
-      metadata: { ...commonMetadata, phase: 'started' }
-    });
     context.reportProgress({
       message: `Running ${display}`,
       metadata: { ...commonMetadata, phase: 'started' }
@@ -254,6 +249,17 @@ export class ProcessExecTool implements AxisTool {
     };
     const status = mutationStatus(input, result.exitCode, result.signal);
 
+    context.reportActivity({
+      kind: 'command',
+      detail: display,
+      metadata: {
+        ...commonMetadata,
+        phase: 'completed',
+        exitCode: result.exitCode,
+        signal: result.signal,
+        mutationStatus: status
+      }
+    });
     context.reportProgress({
       message: result.exitCode === 0
         ? `${input.command} completed successfully.`
