@@ -58,7 +58,12 @@ export interface ProviderConnectionView {
   label: string;
   auth: 'local' | 'api-key' | 'claude-account' | 'chatgpt-account';
   billing: 'local' | 'api' | 'subscription';
+  /** Canonical Axis ownership. Shared local execution intentionally has no companyId. */
+  companyId?: string;
+  companyName?: string;
+  /** @deprecated Provider/runtime migration metadata; product isolation uses companyId. */
   organizationId: string;
+  /** @deprecated Provider/runtime display metadata; not Axis company identity. */
   organizationLabel?: string;
   credentialId?: string;
   accountProfileId?: string;
