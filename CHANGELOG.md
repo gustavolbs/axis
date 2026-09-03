@@ -8,12 +8,20 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added a canonical company-context graph that represents `Company → connections/resources → Projects → sessions` without treating workspace paths, account display labels, or the local execution runtime as company identities.
 - Added persistent one-time migration bindings for existing Account/API-key connections so legacy organization metadata can seed company ownership without allowing a later label rename to silently move a connection between companies.
 - Added the desktop runtime endpoint `GET /api/companies/context` so the canonical hierarchy is inspectable independently of the legacy storage fields while the remaining multi-company migration proceeds.
+- Added local Company lifecycle management in Settings: create, edit, archive, restore, search, explicit ordering, stable generated IDs, color, icon and description.
+- Added an explicit active-Company selector to the desktop chrome, composer, approval flow and completed results. The selected Company is persisted locally and switching scope deliberately reloads the shell after clearing stale navigation IDs.
+- Added real-Electron visual smoke coverage for Company settings plus active-Company controls in the composer, approval and result surfaces.
 
 ### Changed
 - Ollama/local execution is represented as a shared execution capability in the canonical context instead of the former synthetic `local` organization.
+- Projects now select canonical Companies rather than inventing organization IDs from free text; archived Companies retain existing references but cannot receive new Projects.
+- Personal Chat no longer exposes organization-scoped API keys or Claude/ChatGPT subscription Accounts. Corporate identities require an explicitly compatible Project boundary.
+- Jobs and Projects exposed by the standalone desktop are filtered by the server-owned active Company. Cross-company job and Project actions fail closed, and corporate Company scope currently requires selecting one of that Company's Projects before starting a conversation.
 
 ### Security
 - Company-context persistence stores only company metadata and stable resource bindings; it does not persist workspace paths, provider secrets, MCP payloads, or mutable account labels.
+- Personal context no longer implicitly inherits corporate Accounts, API keys, account-scoped MCP resources or projectless history; legacy jobs without explicit Company metadata are resolved through their Project before they can be exposed.
+- The renderer never supplies a trusted Company ID when creating work. Active Company selection is validated and persisted by the desktop runtime, and switching scope is an explicit user action.
 
 ## [0.17.1] - 2026-09-02
 
