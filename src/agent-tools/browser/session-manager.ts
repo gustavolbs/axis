@@ -146,7 +146,7 @@ export class BrowserSessionManager {
         : {})
     };
 
-    return Object.freeze({
+    const facade: BrowserSession = {
       id: backendSession.id,
       scope,
       async navigate(request, context) {
@@ -166,7 +166,8 @@ export class BrowserSessionManager {
       async close() {
         await backendSession.close?.();
       }
-    });
+    };
+    return Object.freeze(facade);
   }
 
   async getOrCreate(
