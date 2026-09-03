@@ -32,6 +32,12 @@ if (process.platform === 'darwin') {
   });
 }
 
+// Canonicalize every provider connection through the stable Company graph
+// before AppRuntime, ProjectProviderRuntime or account IPC instantiate their
+// connection runtimes. Account labels remain display metadata only.
+const { installCompanyConnectionOwnership } = await import('../dist/company-connection-ownership.js');
+installCompanyConnectionOwnership();
+
 // Install the standalone active-Company decorator before main.mjs asks the
 // compiled runtime class to create its singleton. The decorator keeps Company
 // scope server-owned while the existing app runtime remains the implementation
