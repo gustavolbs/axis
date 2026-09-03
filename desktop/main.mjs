@@ -16,6 +16,7 @@ import {
 } from 'electron';
 
 import { installClaudeAccountBridge } from './claude-accounts.mjs';
+import { installConnectionCenterBridge } from './connection-center.mjs';
 
 const DEFAULT_WINDOW_WIDTH = 1280;
 const DEFAULT_WINDOW_HEIGHT = 840;
@@ -240,9 +241,6 @@ function installApplicationMenu() {
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' }
       ]
     },
-    // Required, not cosmetic: on macOS the clipboard and selection accelerators
-    // (Cmd+A/C/V/X/Z) are delivered through these menu roles. A custom
-    // application menu without an Edit menu disables all of them, with no error.
     { role: 'editMenu' },
     {
       label: 'View',
@@ -420,6 +418,10 @@ async function initializeDesktop() {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   installClaudeAccountBridge();
+  // The Connection Center deliberately installs after the provider-account
+  // bridge because it replaces only creation/list handlers with Company-aware
+  // variants while leaving provider-owned login/status/MCP handlers intact.
+  installConnectionCenterBridge();
 
   if (process.platform !== 'darwin') {
     const hasSingleInstanceLock = app.requestSingleInstanceLock();
