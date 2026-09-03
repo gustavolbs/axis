@@ -255,10 +255,6 @@ interface RuntimeInternals {
   capabilities: ProviderCapabilityPolicyManager;
 }
 
-type RuntimeWithProvider = ProviderConnectionRuntime & {
-  provider: (view: ProviderConnectionView) => InferenceProvider;
-};
-
 let installed = false;
 
 /**
@@ -322,6 +318,6 @@ export async function testApiKeyConnection(
   if (!view.available && view.reason === 'Disabled in Connection Center.') {
     throw new Error(`API connection ${view.label} is disabled.`);
   }
-  const provider = (runtime as RuntimeWithProvider).provider(view);
+  const provider = (runtime as unknown as { provider: (connection: ProviderConnectionView) => InferenceProvider }).provider(view);
   return await provider.health();
 }
