@@ -11,6 +11,7 @@ export type FilesystemToolErrorCode =
   | 'filesystem_not_found'
   | 'filesystem_not_file'
   | 'filesystem_not_directory'
+  | 'filesystem_not_empty'
   | 'filesystem_already_exists'
   | 'filesystem_conflict'
   | 'filesystem_binary_file'
@@ -18,6 +19,7 @@ export type FilesystemToolErrorCode =
   | 'filesystem_invalid_regex'
   | 'filesystem_edit_not_found'
   | 'filesystem_edit_ambiguous'
+  | 'filesystem_unsupported_operation'
   | 'filesystem_io_error';
 
 export class FilesystemToolError extends Error {
