@@ -249,6 +249,8 @@ try {
   await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.company-hub-content button')].find((item) => item.textContent?.includes('Open in Work Hub')); if (!button) throw new Error('Open in Work Hub missing'); button.click(); return true; })()`);
   await waitFor(cdp, `document.querySelector('.work-hub-page:not(.company-hub)') !== null`, 'global Work Hub');
   await waitFor(cdp, `document.querySelector('.work-hub-company-filter button[data-company-id=${JSON.stringify(acme.id)}]')?.getAttribute('aria-pressed') === 'true'`, 'Company-filtered global Work Hub');
+  await evaluate(cdp, `(() => { const work = [...document.querySelectorAll('.work-hub-rail button')].find((button) => button.textContent?.trim() === 'My Work'); if (!work) throw new Error('My Work tab missing'); work.click(); return true; })()`);
+  await waitFor(cdp, `document.querySelector('.work-hub-item[data-company-id=${JSON.stringify(acme.id)}]') !== null`, 'Company-filtered work item');
   const deepLink = await evaluate(cdp, `(() => ({
     workHubSurfaces: document.querySelectorAll('.work-hub-page:not(.company-hub)').length,
     filter: localStorage.getItem('local-coder.work-hub-company-filter'),
