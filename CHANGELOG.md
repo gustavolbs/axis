@@ -2,6 +2,19 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.20.0] - 2026-09-03
+
+### Added
+- Added a provider-agnostic Axis MCP host that discovers Company/Project-bound MCP servers and exposes their tools as canonical `AxisTool` definitions guarded by `axis.mcp.invoke` plus read/mutation permissions.
+- Added native MCP JSON-RPC clients for local stdio, Streamable HTTP, and legacy SSE transports, including initialize lifecycle, paginated tool/resource discovery, invocation, progress notifications, cancellation, timeout propagation, session cleanup, and safe stdio environment construction.
+- Added a bridge from the existing Claude/Codex MCP connector discovery model into Axis-owned MCP server configuration without routing execution back through either provider loop.
+- Added MCP runtime tests covering successful invocation, resources, unavailable capability refusal, Company isolation, source Connection ownership, provider-independent auth provenance, timeout/cancellation, mutation status/lifecycle, secret-safe configuration, and canonical MCP error mapping.
+
+### Security
+- MCP authority is resolved from the immutable session Company/Project resource set and canonical source Connection ownership; an MCP source may differ from the inference Connection but cannot cross Company or Project boundaries.
+- Sensitive MCP headers and environment variables must be stored as secret references. Ambient sensitive process environment variables are not inherited by stdio MCP servers, and arbitrary persisted cwd paths are replaced by session-authorized root IDs.
+- MCP tools without an explicit read-only annotation are treated as potentially mutating, and failed or uncertain mutations remain non-retryable without confirmation through the common runtime mutation-safety contract.
+
 ## [0.19.0] - 2026-09-03
 
 ### Added
