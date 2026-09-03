@@ -9,22 +9,25 @@ test('Personal catalog excludes every non-local corporate connection regardless 
   assert.doesNotMatch(source, /Subscription\s+accounts are explicit user-selectable identities and may be used in a\s+project-less Chat/);
 });
 
-test('new conversations receive server-owned Company scope instead of trusting the request body', () => {
-  const source = fs.readFileSync('src/app-runtime.ts', 'utf8');
-  assert.match(source, /const input: StandaloneJobInput & \{ companyId: string \} = \{/);
-  assert.match(source, /companyId: project\?\.organizationId \?\? PERSONAL_COMPANY_ID/);
-  assert.doesNotMatch(source, /companyId:\s*optionalString\(body, 'companyId'\)/);
-  assert.match(source, /this\.assertPersonalModelSelection\(input\.modelSelection\)/);
+test('new conversations receive server-owned canonical Company scope instead of trusting the request body', () => {
+  const app = fs.readFileSync('src/app-runtime.ts', 'utf8');
+  const composition = fs.readFileSync('src/agent-product-runtime.ts', 'utf8');
+  assert.match(app, /const companyId = project \? this\.companyForProject\(project\.id\) : PERSONAL_COMPANY_ID;/);
+  assert.match(app, /const input: StandaloneJobInput & \{ companyId: string \} = \{/);
+  assert.match(app, /companyId,/);
+  assert.doesNotMatch(app, /companyId:\s*optionalString\(body, 'companyId'\)/);
+  assert.match(composition, /const companyId = canonicalCompanyId\(snapshot, project, input\.companyId\);/);
+  assert.match(composition, /companyForProject\(snapshot, project\.id\)/);
+  assert.match(composition, /Session Company .* does not match canonical/);
 });
 
-test('Personal history hides legacy projectless corporate conversations without deleting them', () => {
+test('Personal history hides projectless corporate conversations through canonical session scope without deleting them', () => {
   const source = fs.readFileSync('src/app-runtime.ts', 'utf8');
-  assert.match(source, /const selection = job\.input\.modelSelection;/);
-  assert.match(source, /selection\?\.mode === 'explicit'/);
-  assert.match(source, /connection && connection\.auth !== 'local'/);
+  assert.match(source, /const canonical = job\.input\.projectId\s*\? this\.companyForProject\(job\.input\.projectId\)\s*: existing \?\? PERSONAL_COMPANY_ID;/);
   assert.match(source, /scoped\.input\.projectId \|\| scoped\.input\.companyId === PERSONAL_COMPANY_ID/);
   assert.match(source, /this\.jobs\.list\(\)\.map\(\(job\) => this\.personalVisibleJob\(job\)\)\.filter\(Boolean\)/);
   assert.match(source, /belongs to company scope .* and is not available in Personal/);
+  assert.doesNotMatch(source, /connection && connection\.auth !== 'local'\) companyId = connection\.organizationId/);
 });
 
 test('corporate projectless jobs cannot re-enter Personal through live events, follow-up or direct mutation', () => {
