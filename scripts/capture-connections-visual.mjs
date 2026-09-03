@@ -236,12 +236,22 @@ try {
   await waitFor(cdp, "document.querySelector('.connection-center-settings h1')?.textContent === 'Connections'", 'Connection Center');
   await waitFor(cdp, "document.querySelectorAll('.connection-center-card').length === 5", 'five connection fixtures');
 
-  const inventory = await evaluate(cdp, `(() => {
+  const inventory = await evaluate(cdp, `(async () => {
     const root = document.querySelector('.connection-center-settings');
-    const text = root?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+    const text = root?.textContent?.replace(/\\s+/g, ' ').trim() ?? '';
     const cards = [...document.querySelectorAll('.connection-center-card')];
+    const rawConnections = await window.lc.providerConnections();
     return {
       cardCount: cards.length,
+      cardTexts: cards.map((card) => card.textContent?.replace(/\\s+/g, ' ').trim() ?? ''),
+      rawConnections: rawConnections.map((connection) => ({
+        label: connection.label,
+        auth: connection.auth,
+        organizationId: connection.organizationId,
+        organizationLabel: connection.organizationLabel,
+        companyId: connection.companyId,
+        companyName: connection.companyName
+      })),
       hasAcme: text.includes('Company: Acme Engineering'),
       hasNorthstar: text.includes('Company: Northstar Health'),
       hasPersonal: text.includes('Company: Personal'),
@@ -251,11 +261,11 @@ try {
       cardsOverflow: cards.some((card) => card.scrollWidth > card.clientWidth + 1)
     };
   })()`);
+  console.log(`inventory ${JSON.stringify(inventory)}`);
+  await screenshot(cdp, 'inventory-light-wide');
   if (!inventory || inventory.cardCount !== 5 || !inventory.hasAcme || !inventory.hasNorthstar || !inventory.hasPersonal || inventory.openAiCount < 2 || inventory.apiKeyCount !== 3 || inventory.bodyOverflow || inventory.cardsOverflow) {
     throw new Error(`Connection inventory contract failed: ${JSON.stringify(inventory)}`);
   }
-  console.log(`inventory ${JSON.stringify(inventory)}`);
-  await screenshot(cdp, 'inventory-light-wide');
 
   await evaluate(cdp, "document.documentElement.dataset.lcTheme = 'dark'; true");
   await sleep(100);
@@ -291,7 +301,7 @@ try {
   const dialog = await evaluate(cdp, `(() => {
     const form = document.querySelector('.connection-center-settings .connection-create-dialog');
     const rect = form?.getBoundingClientRect();
-    const text = form?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+    const text = form?.textContent?.replace(/\\s+/g, ' ').trim() ?? '';
     return {
       visible: Boolean(rect && rect.width > 0 && rect.height > 0),
       withinViewport: Boolean(rect && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight),
