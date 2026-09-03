@@ -26,6 +26,10 @@ export interface ProjectMemoryLifecycleRecorderOptions {
   readonly onError?: (error: unknown, event: AgentLifecycleEvent) => void;
 }
 
+function eventIsTransient(event: AgentLifecycleEvent): boolean {
+  return ['provider.started', 'provider.progress', 'provider.completed', 'tool.progress'].includes(event.type);
+}
+
 function boundedPush<T>(values: T[], value: T, maxItems: number): void {
   values.push(value);
   if (values.length > maxItems) values.splice(0, values.length - maxItems);
@@ -350,8 +354,7 @@ function applyEvent(
     case 'provider.progress':
     case 'provider.completed':
     case 'tool.progress':
-      // Provider/progress payloads are intentionally not retained. They are
-      // transient UI/trace signals and can carry verbose or provider-private data.
+      // Transient provider/progress payloads are filtered before persistence.
       break;
   }
 }
@@ -369,6 +372,7 @@ export class ProjectMemoryLifecycleRecorder {
 
   observe(event: AgentLifecycleEvent): void {
     try {
+      if (eventIsTransient(event)) return;
       if (event.type === 'session.started') {
         const roots = projectMemoryRootBindings(event.context);
         if (roots.length === 0) return;
