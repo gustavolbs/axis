@@ -24,6 +24,7 @@ import { UiSelect, type UiSelectOption } from './UiSelect.js';
 
 type CenterSurface = 'connections' | 'connectors';
 type NewConnectionKind = 'claude-account' | 'chatgpt-account' | 'openai-api' | 'anthropic-api';
+type EndpointAwareConnection = ProviderConnectionView & { endpoint?: string };
 
 interface CompanyView {
   id: string;
@@ -66,6 +67,10 @@ function providerLabel(connection: ProviderConnectionView): string {
   return 'Ollama';
 }
 
+function connectionEndpoint(connection: ProviderConnectionView): string | undefined {
+  return (connection as EndpointAwareConnection).endpoint;
+}
+
 function isAccount(connection: ProviderConnectionView): boolean {
   return connection.auth === 'claude-account' || connection.auth === 'chatgpt-account';
 }
@@ -88,6 +93,7 @@ export function ConnectionCenterSettings() {
   const [companyId, setCompanyId] = useState('personal');
   const [connectionId, setConnectionId] = useState('');
   const [connectionName, setConnectionName] = useState('');
+  const [endpoint, setEndpoint] = useState('');
   const [secret, setSecret] = useState('');
 
   function authenticated(
@@ -200,7 +206,8 @@ export function ConnectionCenterSettings() {
         connection.organizationLabel,
         connection.providerFamily,
         connection.auth,
-        connection.id
+        connection.id,
+        connectionEndpoint(connection)
       ].some((value) => value?.toLocaleLowerCase().includes(query));
     });
   }, [connections, search]);
@@ -269,6 +276,7 @@ export function ConnectionCenterSettings() {
   function resetCreateForm() {
     setConnectionId('');
     setConnectionName('');
+    setEndpoint('');
     setSecret('');
     setNewKind('claude-account');
     const personal = companyOptions.find((option) => option.value === 'personal');
@@ -293,8 +301,9 @@ export function ConnectionCenterSettings() {
           name: connectionName.trim(),
           providerFamily: newKind === 'openai-api' ? 'openai' : 'anthropic',
           companyId,
-          secret: secret.trim()
-        });
+          secret: secret.trim(),
+          ...(endpoint.trim() ? { endpoint: endpoint.trim() } : {})
+        } as Parameters<typeof bridge.createApiKeyConnection>[0] & { endpoint?: string });
       }
       const account = newKind === 'claude-account' || newKind === 'chatgpt-account';
       resetCreateForm();
@@ -343,6 +352,7 @@ export function ConnectionCenterSettings() {
           {filteredConnections.map((connection) => {
             const currentState = state(connection);
             const account = isAccount(connection);
+            const customEndpoint = connectionEndpoint(connection);
             const runtimeReady = connection.auth === 'claude-account' ? claudeRuntime?.usable : connection.auth === 'chatgpt-account' ? codexRuntime?.usable : true;
             return <article className="connection-card connection-center-card" key={connection.id} data-connection-id={connection.id}>
               <div className="connection-card-main">
@@ -350,6 +360,7 @@ export function ConnectionCenterSettings() {
                 <div className="connection-copy">
                   <div className="connection-title-row"><strong>{connection.label}</strong><span>{authLabel(connection)}</span></div>
                   <small>{providerLabel(connection)} · Company: {connection.companyName ?? connection.organizationLabel ?? connection.organizationId ?? 'Unassigned'} · {connection.billing}</small>
+                  {connection.auth === 'api-key' ? <small>{customEndpoint ? `Custom endpoint: ${customEndpoint}` : 'Official provider endpoint'}</small> : null}
                   <span className={`connection-state ${currentState.ready ? 'ready' : ''}`}>{currentState.ready ? <CheckCircle2 size={12} /> : null}{currentState.label}</span>
                   <small className="connection-management"><ShieldCheck size={12} />{management(connection)}</small>
                 </div>
@@ -366,18 +377,19 @@ export function ConnectionCenterSettings() {
         </div>
       </section>
 
-      <aside className="connection-note"><ShieldCheck size={16} /><p><strong>One identity, one Company</strong><span>OAuth stays in the provider runtime; API Keys stay in Keychain. Axis persists only stable ownership metadata and never infers Company from a mutable account label after binding.</span></p></aside>
+      <aside className="connection-note"><ShieldCheck size={16} /><p><strong>One identity, one Company</strong><span>OAuth stays in the provider runtime; API Keys stay in Keychain. Axis persists only stable ownership and endpoint metadata and never infers Company from a mutable account label after binding.</span></p></aside>
     </>}
 
     {adding ? <div className="nested-settings-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setAdding(false); }}>
       <form className="nested-settings-dialog connection-create-dialog" onSubmit={(event) => void createConnection(event)}>
         <header><div><h2>Add connection</h2><p>Create a distinct provider identity and bind it to exactly one Company.</p></div></header>
-        <label><span>Authentication</span><UiSelect ariaLabel="Connection authentication" value={newKind} options={connectionKindOptions} onChange={(value) => { setNewKind(value as NewConnectionKind); setSecret(''); }} /></label>
+        <label><span>Authentication</span><UiSelect ariaLabel="Connection authentication" value={newKind} options={connectionKindOptions} onChange={(value) => { setNewKind(value as NewConnectionKind); setEndpoint(''); setSecret(''); }} /></label>
         <label><span>Company</span><UiSelect ariaLabel="Connection Company" value={companyId} options={companyOptions} onChange={setCompanyId} /></label>
         <label><span>{apiKind ? 'Credential ID' : 'Profile ID'}</span><input required autoFocus value={connectionId} onChange={(event) => setConnectionId(event.target.value)} placeholder={apiKind ? 'openai-work-1' : newKind === 'claude-account' ? 'claude-work' : 'chatgpt-work'} spellCheck={false} pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" /></label>
         <label><span>Name</span><input required value={connectionName} onChange={(event) => setConnectionName(event.target.value)} placeholder={apiKind ? 'OpenAI Product Team' : newKind === 'claude-account' ? 'Claude Work' : 'ChatGPT Work'} /></label>
+        {apiKind ? <label><span>Endpoint <small>optional</small></span><input type="url" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder={newKind === 'openai-api' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com'} spellCheck={false} /></label> : null}
         {apiKind ? <label><span>API key</span><input required type="password" autoComplete="off" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder="Stored only in macOS Keychain" /></label> : null}
-        <p className="connector-security-copy">{apiKind ? 'The API key is sent directly to the main process and stored in macOS Keychain. Axis metadata stores only the credential reference and Company binding.' : 'Authentication happens after creation in the provider-owned runtime. Axis stores the profile id and Company binding, not OAuth credentials.'}</p>
+        <p className="connector-security-copy">{apiKind ? 'Leave Endpoint empty to use the official provider API. Custom endpoint metadata stays local; the API key is sent directly to the main process and stored only in macOS Keychain.' : 'Authentication happens after creation in the provider-owned runtime. Axis stores the profile id and Company binding, not OAuth credentials.'}</p>
         <div className="nested-settings-dialog-actions"><button type="button" onClick={() => setAdding(false)}>Cancel</button><button className="settings-save-button" disabled={busy === 'create' || companyOptions.length === 0}>{busy === 'create' ? 'Creating…' : 'Create connection'}</button></div>
       </form>
     </div> : null}
