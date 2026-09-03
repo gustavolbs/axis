@@ -1,13 +1,17 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import type { ProjectDefinition } from './project-store.js';
 import { resolveWorkspace } from './workspace.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_GIT_OUTPUT = 8 * 1024 * 1024;
 
 export type ProjectGitDiffScope = 'working' | 'staged';
+
+export interface ProjectGitReviewSource {
+  id: string;
+  workspace: string;
+}
 
 export interface ProjectGitReview {
   scope: ProjectGitDiffScope;
@@ -44,7 +48,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
  * accepted from the renderer.
  */
 export async function readProjectGitReview(
-  project: ProjectDefinition,
+  project: ProjectGitReviewSource,
   requestedScope?: string | null
 ): Promise<ProjectGitReview> {
   const configuredWorkspace = project.workspace.trim();
