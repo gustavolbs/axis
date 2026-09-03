@@ -16,6 +16,8 @@ import type {
 import type { ProjectEngineerInput } from './project-engineer-backend.js';
 import { reportProgress } from './progress-context.js';
 
+const MAX_UI_LIFECYCLE_EVENTS = 240;
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -25,18 +27,28 @@ function resolutionFromGuidance(
   guidance: string | undefined
 ): AgentDecisionResolution | undefined {
   if (!guidance?.trim()) return undefined;
-  const match = new RegExp(`^-\\s+${escapeRegExp(request.id)}:\\s+([^\\s]+)`, 'm').exec(guidance);
+  const match = new RegExp(
+    `^-\\s+${escapeRegExp(request.id)}:\\s+([^\\s]+)`,
+    'm'
+  ).exec(guidance);
   const optionId = match?.[1]?.trim();
-  if (optionId) return { requestId: request.id, optionId };
-  return undefined;
+  return optionId ? { requestId: request.id, optionId } : undefined;
 }
 
 function legacyDecision(request: AgentDecisionRequest): PremiumDecisionRequest {
   const options = request.options?.length
     ? request.options
     : [
-        { id: 'continue', label: 'Continue', description: 'Continue with the requested action.' },
-        { id: 'deny', label: 'Deny', description: 'Do not perform the requested action.' }
+        {
+          id: 'continue',
+          label: 'Continue',
+          description: 'Continue with the requested action.'
+        },
+        {
+          id: 'deny',
+          label: 'Deny',
+          description: 'Do not perform the requested action.'
+        }
       ];
   return {
     message: request.prompt,
@@ -49,19 +61,25 @@ function legacyDecision(request: AgentDecisionRequest): PremiumDecisionRequest {
       options: options.map((option) => ({
         id: option.id,
         label: option.label,
-        tradeoff: option.description ?? (option.id === 'approve'
-          ? 'Executes the pending action exactly once.'
-          : option.id === 'deny'
-            ? 'The pending action is not executed.'
-            : 'Resume using this decision.')
+        tradeoff: option.description ?? (
+          option.id === 'approve'
+            ? 'Executes the pending action exactly once.'
+            : option.id === 'deny'
+              ? 'The pending action is not executed.'
+              : 'Resume using this decision.'
+        )
       })),
-      recommendedOptionId: request.kind === 'permission' ? undefined : options[0]?.id,
+      recommendedOptionId: request.kind === 'permission'
+        ? undefined
+        : options[0]?.id,
       blocking: true
     }]
   };
 }
 
-function progressFor(event: AgentLifecycleEvent): Partial<EngineeringProgress> | undefined {
+function progressFor(
+  event: AgentLifecycleEvent
+): Partial<EngineeringProgress> | undefined {
   switch (event.type) {
     case 'provider.started':
       return {
@@ -79,76 +97,154 @@ function progressFor(event: AgentLifecycleEvent): Partial<EngineeringProgress> |
       };
     case 'tool.call':
       return {
-        action: event.definition?.effect === 'read' ? 'Reading'
-          : event.definition?.effect === 'mutation' ? 'Editing'
-          : event.definition?.effect === 'command' ? 'Running command'
-          : event.definition?.effect === 'validation' ? 'Validating'
-          : 'Using tool',
+        action: event.definition?.effect === 'read'
+          ? 'Reading'
+          : event.definition?.effect === 'mutation'
+            ? 'Editing'
+            : event.definition?.effect === 'command'
+              ? 'Running command'
+              : event.definition?.effect === 'validation'
+                ? 'Validating'
+                : 'Using tool',
         detail: event.call.name,
-        activityKind: event.definition?.effect === 'read' ? 'reading'
-          : event.definition?.effect === 'validation' ? 'validating'
-          : 'tool'
+        activityKind: event.definition?.effect === 'read'
+          ? 'reading'
+          : event.definition?.effect === 'validation'
+            ? 'validating'
+            : 'tool'
       };
     case 'tool.progress':
-      return { action: event.progress.message || 'Tool progress', detail: event.toolName, activityKind: 'tool' };
+      return {
+        action: event.progress.message || 'Tool progress',
+        detail: event.toolName,
+        activityKind: 'tool'
+      };
     case 'read':
-      return { action: event.status === 'success' ? 'Read completed' : 'Read failed', detail: event.detail || event.toolName, activityKind: 'reading' };
+      return {
+        action: event.status === 'success' ? 'Read completed' : 'Read failed',
+        detail: event.detail || event.toolName,
+        activityKind: 'reading'
+      };
     case 'mutation':
-      return { action: event.status === 'success' ? 'Mutation completed' : 'Mutation failed', detail: event.detail || event.toolName, activityKind: 'tool' };
+      return {
+        action: event.status === 'success' ? 'Mutation completed' : 'Mutation failed',
+        detail: event.detail || event.toolName,
+        activityKind: 'tool'
+      };
     case 'command':
-      return { action: event.status === 'success' ? 'Command completed' : 'Command failed', detail: event.detail || event.toolName, activityKind: 'tool' };
+      return {
+        action: event.status === 'success' ? 'Command completed' : 'Command failed',
+        detail: event.detail || event.toolName,
+        activityKind: 'tool'
+      };
     case 'validation':
-      return { action: event.status === 'success' ? 'Validation passed' : 'Validation failed', detail: event.detail || event.toolName, activityKind: 'validating' };
+      return {
+        action: event.status === 'success' ? 'Validation passed' : 'Validation failed',
+        detail: event.detail || event.toolName,
+        activityKind: 'validating'
+      };
     case 'permission.requested':
-      return { action: 'Approval required', detail: event.call.name, activityKind: 'tool' };
+      return {
+        action: 'Approval required',
+        detail: event.call.name,
+        activityKind: 'tool'
+      };
     case 'decision.requested':
-      return { action: 'Decision required', detail: event.request.prompt, activityKind: 'working' };
+      return {
+        action: 'Decision required',
+        detail: event.request.prompt,
+        activityKind: 'working'
+      };
     case 'cancelled':
-      return { action: 'Cancelled', detail: event.source, activityKind: 'working' };
+      return {
+        action: 'Cancelled',
+        detail: event.source,
+        activityKind: 'working'
+      };
     case 'error':
-      return { action: 'Runtime error', detail: event.error.message, activityKind: 'working' };
+      return {
+        action: 'Runtime error',
+        detail: event.error.message,
+        activityKind: 'working'
+      };
     case 'session.completed':
-      return { action: event.status === 'completed' ? 'Completed' : event.status === 'paused' ? 'Paused' : `Session ${event.status}`, activityKind: 'working' };
+      return {
+        action: event.status === 'completed'
+          ? 'Completed'
+          : event.status === 'paused'
+            ? 'Paused'
+            : `Session ${event.status}`,
+        activityKind: 'working'
+      };
     default:
       return undefined;
   }
 }
 
 /**
- * Compatibility shell for the persisted conversation manager. It translates
- * the old decision picker to canonical AgentDecisionResolution while every
- * actual provider/tool cycle remains inside AgentRuntime.
+ * Compatibility shell for persisted conversation state. Every provider/tool
+ * cycle remains inside AgentRuntime; this bridge only projects canonical
+ * lifecycle/decisions into the existing product API while migration completes.
  */
 export class AgentProductExecutionBridge implements AgentProductLifecycleSource {
   private readonly pending = new Map<string, AgentDecisionRequest>();
+  private readonly events = new Map<string, AgentLifecycleEvent[]>();
 
   constructor(readonly runtime: AgentProductRuntime) {
     this.runtime.subscribeAgentLifecycle((event) => {
-      if (event.type === 'decision.requested') this.pending.set(event.sessionId, event.request);
-      if (event.type === 'decision.resolved' || (
-        event.type === 'session.completed' && event.status !== 'paused'
-      )) this.pending.delete(event.sessionId);
+      const history = [...(this.events.get(event.sessionId) ?? []), event]
+        .slice(-MAX_UI_LIFECYCLE_EVENTS);
+      this.events.set(event.sessionId, history);
+
+      if (event.type === 'decision.requested') {
+        this.pending.set(event.sessionId, event.request);
+      }
+      if (
+        event.type === 'decision.resolved' ||
+        (event.type === 'session.completed' && event.status !== 'paused')
+      ) {
+        this.pending.delete(event.sessionId);
+      }
+
       const progress = progressFor(event);
       if (progress) reportProgress(progress);
     });
   }
 
-  subscribeAgentLifecycle(listener: (event: AgentLifecycleEvent) => void): () => void {
+  lifecycleEvents(sessionId: string): readonly AgentLifecycleEvent[] {
+    return Object.freeze([...(this.events.get(sessionId) ?? [])]);
+  }
+
+  clearSession(sessionId: string): void {
+    this.pending.delete(sessionId);
+    this.events.delete(sessionId);
+  }
+
+  subscribeAgentLifecycle(
+    listener: (event: AgentLifecycleEvent) => void
+  ): () => void {
     return this.runtime.subscribeAgentLifecycle(listener);
   }
 
-  resolveAgentDecision(sessionId: string, resolution: AgentDecisionResolution): void {
+  resolveAgentDecision(
+    sessionId: string,
+    resolution: AgentDecisionResolution
+  ): void {
     this.runtime.resolveAgentDecision(sessionId, resolution);
   }
 
   async executeEngineer(input: ProjectEngineerInput): Promise<LocalEngineerResult> {
     const sessionId = input.budgetJobId?.trim();
-    if (!sessionId) throw new Error('AgentRuntime product execution requires budgetJobId/sessionId.');
+    if (!sessionId) {
+      throw new Error('AgentRuntime product execution requires budgetJobId/sessionId.');
+    }
+
     const pending = this.pending.get(sessionId);
     if (pending) {
       const resolution = resolutionFromGuidance(pending, input.userGuidance);
       if (resolution) this.runtime.resolveAgentDecision(sessionId, resolution);
     }
+
     const result = await this.runtime.executeEngineer(input);
     const decision = this.pending.get(sessionId);
     if (result.status === 'needs-guidance' && decision) {
