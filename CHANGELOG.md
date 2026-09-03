@@ -2,6 +2,19 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.18.0] - 2026-09-02
+
+### Added
+- Added a canonical company-context graph that represents `Company → connections/resources → Projects → sessions` without treating workspace paths, account display labels, or the local execution runtime as company identities.
+- Added persistent one-time migration bindings for existing Account/API-key connections so legacy organization metadata can seed company ownership without allowing a later label rename to silently move a connection between companies.
+- Added the desktop runtime endpoint `GET /api/companies/context` so the canonical hierarchy is inspectable independently of the legacy storage fields while the remaining multi-company migration proceeds.
+
+### Changed
+- Ollama/local execution is represented as a shared execution capability in the canonical context instead of the former synthetic `local` organization.
+
+### Security
+- Company-context persistence stores only company metadata and stable resource bindings; it does not persist workspace paths, provider secrets, MCP payloads, or mutable account labels.
+
 ## [0.17.1] - 2026-09-02
 
 ### Added
