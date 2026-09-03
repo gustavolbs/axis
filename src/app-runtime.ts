@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { readAppSettings, writeAppSettings, type AppSettingsFile } from './app-config.js';
+import { CompanyContextStore } from './company-context.js';
 import { loadConfig } from './config.js';
 import { CredentialManager } from './credential-store.js';
 import { createExecutionRuntime } from './execution-runtime.js';
@@ -168,6 +169,7 @@ export function normalizeBaseUrl(value: string): string {
 export class DesktopAppRuntime {
   private readonly listeners = new Set<AppRuntimeListener>();
   private readonly config = { ...loadConfig(), executionMode: 'remote' as const };
+  private readonly companyContext = new CompanyContextStore();
   private readonly ollama = new OllamaClient(this.config);
   private readonly localProvider = createLocalInferenceProvider(this.config, this.ollama);
   private readonly credentials = new CredentialManager();
@@ -249,6 +251,15 @@ export class DesktopAppRuntime {
     const pathname = url.pathname.replace(/^\/api(?=\/|$)/, '') || '/';
 
     if (method === 'GET' && pathname === '/jobs') return { jobs: this.jobs.list() };
+    if (method === 'GET' && pathname === '/companies/context') {
+      return {
+        context: this.companyContext.reconcile({
+          projects: this.projects.listProjects(),
+          connections: this.projects.listConnections(),
+          sessions: this.jobs.list()
+        })
+      };
+    }
     if (method === 'POST' && pathname === '/jobs') {
       const body = objectBody(request.body);
       const projectId = optionalString(body, 'projectId');
