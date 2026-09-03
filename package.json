@@ -28,6 +28,7 @@
     "release:notes": "node scripts/release-metadata.mjs notes",
     "test": "tsx --test test/**/*.test.ts",
     "check": "npm run release:validate && npm run build && npm test",
+    "visual:runtime-ui": "npm run build && node scripts/capture-agent-runtime-ui-visual.mjs",
     "smoke:cloud": "npm run build && node scripts/smoke-cloud-providers.mjs",
     "benchmark": "npm run build && node scripts/benchmark-local.mjs",
     "eval:agent": "npm run build && node scripts/eval-local-agent.mjs",
