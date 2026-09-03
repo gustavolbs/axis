@@ -12,6 +12,8 @@ import {
   UserRound
 } from 'lucide-react';
 
+import { ApiKeyConnectionDialog } from './ApiKeyConnectionDialog.js';
+import { connectionCenterBridge } from './ConnectionCenterBridge.js';
 import { ConnectionsSettings as LegacyConnectionsSettings } from './LegacyConnectionsSettings.js';
 import type {
   ClaudeAccountStatusView,
@@ -24,7 +26,6 @@ import { UiSelect, type UiSelectOption } from './UiSelect.js';
 
 type CenterSurface = 'connections' | 'connectors';
 type NewConnectionKind = 'claude-account' | 'chatgpt-account' | 'openai-api' | 'anthropic-api';
-type EndpointAwareConnection = ProviderConnectionView & { endpoint?: string };
 
 interface CompanyView {
   id: string;
@@ -68,7 +69,7 @@ function providerLabel(connection: ProviderConnectionView): string {
 }
 
 function connectionEndpoint(connection: ProviderConnectionView): string | undefined {
-  return (connection as EndpointAwareConnection).endpoint;
+  return connection.endpoint;
 }
 
 function isAccount(connection: ProviderConnectionView): boolean {
@@ -76,7 +77,7 @@ function isAccount(connection: ProviderConnectionView): boolean {
 }
 
 export function ConnectionCenterSettings() {
-  const bridge = window.lc;
+  const bridge = connectionCenterBridge();
   const [surface, setSurface] = useState<CenterSurface>('connections');
   const [connections, setConnections] = useState<ProviderConnectionView[]>([]);
   const [companies, setCompanies] = useState<CompanyView[]>([]);
@@ -89,6 +90,7 @@ export function ConnectionCenterSettings() {
   const [busy, setBusy] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [adding, setAdding] = useState(false);
+  const [managingApiId, setManagingApiId] = useState<string>();
   const [newKind, setNewKind] = useState<NewConnectionKind>('claude-account');
   const [companyId, setCompanyId] = useState('personal');
   const [connectionId, setConnectionId] = useState('');
@@ -303,7 +305,7 @@ export function ConnectionCenterSettings() {
           companyId,
           secret: secret.trim(),
           ...(endpoint.trim() ? { endpoint: endpoint.trim() } : {})
-        } as Parameters<typeof bridge.createApiKeyConnection>[0] & { endpoint?: string });
+        });
       }
       const account = newKind === 'claude-account' || newKind === 'chatgpt-account';
       resetCreateForm();
@@ -322,6 +324,7 @@ export function ConnectionCenterSettings() {
   }
 
   const apiKind = newKind === 'openai-api' || newKind === 'anthropic-api';
+  const managingApi = connections.find((connection) => connection.id === managingApiId && connection.auth === 'api-key');
 
   return <div className="focused-settings-page connections-settings-page connection-center-settings">
     <header>
@@ -369,6 +372,8 @@ export function ConnectionCenterSettings() {
                   {!currentState.ready ? <button type="button" className="btn-primary" disabled={!runtimeReady || busy !== undefined} onClick={() => void login(connection)}>Sign in</button> : null}
                   {!currentState.ready && connection.auth === 'claude-account' ? <button type="button" className="btn-secondary" disabled={!runtimeReady || busy !== undefined} onClick={() => void login(connection, true)}>Enterprise SSO</button> : null}
                   {!currentState.ready && connection.auth === 'chatgpt-account' ? <button type="button" className="btn-secondary" disabled={!runtimeReady || busy !== undefined} onClick={() => void login(connection, true)}>Device login</button> : null}
+                </div> : connection.auth === 'api-key' ? <div className="connection-actions">
+                  <button type="button" className="btn-secondary connection-refresh" disabled={busy !== undefined} onClick={() => setManagingApiId(connection.id)}>Manage</button>
                 </div> : null}
               </div>
             </article>;
@@ -393,5 +398,12 @@ export function ConnectionCenterSettings() {
         <div className="nested-settings-dialog-actions"><button type="button" onClick={() => setAdding(false)}>Cancel</button><button className="settings-save-button" disabled={busy === 'create' || companyOptions.length === 0}>{busy === 'create' ? 'Creating…' : 'Create connection'}</button></div>
       </form>
     </div> : null}
+
+    {managingApi ? <ApiKeyConnectionDialog
+      connectionId={managingApi.id}
+      companyName={managingApi.companyName ?? managingApi.organizationLabel ?? managingApi.organizationId ?? 'Personal'}
+      onClose={() => setManagingApiId(undefined)}
+      onChanged={load}
+    /> : null}
   </div>;
 }
