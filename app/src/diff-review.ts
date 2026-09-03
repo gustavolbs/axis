@@ -183,6 +183,9 @@ function enhanceDiff(details: HTMLDetailsElement): void {
   const files = parseUnifiedDiff(raw);
   if (files.length === 0) return;
 
+  summary.textContent = 'Review changes · Last turn';
+  details.dataset.diffScope = 'last-turn';
+
   const review = document.createElement('div');
   review.className = 'diff-review-pane';
   review.setAttribute('aria-label', 'File changes review');
@@ -198,6 +201,7 @@ function enhanceDiff(details: HTMLDetailsElement): void {
       const item = document.createElement('li');
       const button = document.createElement('button');
       button.type = 'button';
+      button.className = 'btn-secondary';
       button.textContent = `${file.path} (+${file.additions} −${file.removals})`;
       button.addEventListener('click', () => {
         const target = document.getElementById(file.id) as HTMLDetailsElement | null;
