@@ -2,6 +2,17 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.19.1] - 2026-09-03
+
+### Added
+- Added a provider-neutral Agent Runtime activity timeline that projects the frozen lifecycle protocol into running/provider progress, tool progress, read, mutation, command, validation, error, cancellation, pause and completion states without provider-specific UI semantics.
+- Added canonical approval and decision surfaces for permission requests and `AgentDecisionRequest`, including accessible native progress controls, attachment metadata rendering and keyboard-operable responses.
+- Added reusable runtime evidence panes prepared for filesystem, process, Git, MCP and browser integration, plus isolated canonical lifecycle fixtures for integration and visual verification without inventing new backend contracts.
+- Added Agent Runtime UI contract tests and real-Electron visual smoke coverage for light/dark themes, narrow layout, keyboard focus, pane navigation, progress, decision/approval resolution and failure states.
+
+### Changed
+- The renderer can enter an isolated `runtime-ui-preview` fixture surface for visual verification; normal Chat/Cowork composition and runtime transport installation are unchanged when the preview is not requested.
+
 ## [0.19.0] - 2026-09-03
 
 ### Added
