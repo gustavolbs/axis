@@ -229,8 +229,9 @@ export class DesktopAppRuntime {
     if (!companyId && job.input.projectId) {
       companyId = this.projects.getProject(job.input.projectId).organizationId;
     }
-    if (!companyId && job.input.modelSelection?.mode === 'explicit') {
-      const connection = this.projects.listConnections().find((item) => item.id === job.input.modelSelection?.providerId);
+    const selection = job.input.modelSelection;
+    if (!companyId && selection?.mode === 'explicit') {
+      const connection = this.projects.listConnections().find((item) => item.id === selection.providerId);
       if (connection && connection.auth !== 'local') companyId = connection.organizationId;
     }
     return {
@@ -256,6 +257,14 @@ export class DesktopAppRuntime {
       throw new Error(`Conversation ${id} belongs to company scope ${scoped.input.companyId} and is not available in Personal.`);
     }
     return scoped;
+  }
+
+  private assertPersonalModelSelection(selection: ModelSelection | undefined): void {
+    if (selection?.mode !== 'explicit') return;
+    const connection = this.projects.listConnections().find((item) => item.id === selection.providerId);
+    if (connection && connection.auth !== 'local' && connection.organizationId !== PERSONAL_COMPANY_ID) {
+      throw new Error(`${connection.label} belongs to company scope ${connection.organizationId} and requires an explicitly bound Project.`);
+    }
   }
 
   private get workerHealthPath(): string {
@@ -394,8 +403,11 @@ export class DesktopAppRuntime {
       ) {
         throw new Error('Model and effort overrides require a configured Project for Cowork.');
       }
-      if (!projectId && interactionMode === 'chat' && input.modelSelection?.mode === 'local-first') {
-        throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+      if (!projectId && interactionMode === 'chat') {
+        if (input.modelSelection?.mode === 'local-first') {
+          throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+        }
+        this.assertPersonalModelSelection(input.modelSelection);
       }
       return { job: this.scopedJob(this.jobs.create(input)) };
     }
@@ -410,8 +422,11 @@ export class DesktopAppRuntime {
       const current = this.requirePersonalJobAccess(followUpMatch[1]);
       const modelSelection = parseModelSelection(body.modelSelection);
       const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
-      if (!current.input.projectId && modelSelection?.mode === 'local-first') {
-        throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+      if (!current.input.projectId) {
+        if (modelSelection?.mode === 'local-first') {
+          throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+        }
+        this.assertPersonalModelSelection(modelSelection);
       }
       return {
         job: this.scopedJob(await this.jobs.followUp(followUpMatch[1], requiredString(body, 'message'), {
@@ -426,8 +441,11 @@ export class DesktopAppRuntime {
       const current = this.requirePersonalJobAccess(turnRetryMatch[1]);
       const modelSelection = parseModelSelection(body.modelSelection);
       const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
-      if (!current.input.projectId && modelSelection?.mode === 'local-first') {
-        throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+      if (!current.input.projectId) {
+        if (modelSelection?.mode === 'local-first') {
+          throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+        }
+        this.assertPersonalModelSelection(modelSelection);
       }
       return {
         job: this.scopedJob(await this.jobs.retryTurn(
@@ -444,6 +462,7 @@ export class DesktopAppRuntime {
     if (method === 'PATCH' && jobMatch) {
       const body = objectBody(request.body);
       const id = jobMatch[1];
+      this.requirePersonalJobAccess(id);
       if (body.title !== undefined) {
         return { job: await this.jobs.rename(id, requiredString(body, 'title')) };
       }
@@ -454,12 +473,17 @@ export class DesktopAppRuntime {
       throw new Error('Supply title or archived.');
     }
     if (method === 'DELETE' && jobMatch) {
+      this.requirePersonalJobAccess(jobMatch[1]);
       return { removed: await this.jobs.remove(jobMatch[1]) };
     }
     const cancelMatch = /^\/jobs\/([A-Za-z0-9-]+)\/cancel$/.exec(pathname);
-    if (method === 'POST' && cancelMatch) return { job: await this.jobs.cancel(cancelMatch[1]) };
+    if (method === 'POST' && cancelMatch) {
+      this.requirePersonalJobAccess(cancelMatch[1]);
+      return { job: await this.jobs.cancel(cancelMatch[1]) };
+    }
     const decisionMatch = /^\/jobs\/([A-Za-z0-9-]+)\/decision$/.exec(pathname);
     if (method === 'POST' && decisionMatch) {
+      this.requirePersonalJobAccess(decisionMatch[1]);
       const body = objectBody(request.body);
       const selections: Record<string, string> = {};
       if (body.selections && typeof body.selections === 'object' && !Array.isArray(body.selections)) {
@@ -471,11 +495,13 @@ export class DesktopAppRuntime {
     }
     const guidanceMatch = /^\/jobs\/([A-Za-z0-9-]+)\/guidance$/.exec(pathname);
     if (method === 'POST' && guidanceMatch) {
+      this.requirePersonalJobAccess(guidanceMatch[1]);
       const body = objectBody(request.body);
       return { job: this.jobs.submitGuidance(guidanceMatch[1], requiredString(body, 'guidance')) };
     }
     const escalationMatch = /^\/jobs\/([A-Za-z0-9-]+)\/escalate$/.exec(pathname);
     if (method === 'POST' && escalationMatch) {
+      this.requirePersonalJobAccess(escalationMatch[1]);
       const body = objectBody(request.body);
       const effort = parseReasoningEffort(body.reasoningEffort);
       return {
