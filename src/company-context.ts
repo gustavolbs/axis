@@ -506,6 +506,9 @@ export class CompanyContextStore {
 
   private assertUniqueName(state: CompanyContextFile, name: string, ignoreId?: string): void {
     const key = companyNameKey(name);
+    if (key === companyNameKey('Personal')) {
+      throw new Error('Personal is a reserved company name.');
+    }
     const conflict = Object.entries(state.companies).find(([id, company]) =>
       id !== PERSONAL_COMPANY_ID && id !== ignoreId && companyNameKey(company.name) === key
     );
