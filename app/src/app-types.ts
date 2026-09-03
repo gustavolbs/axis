@@ -28,7 +28,12 @@ export interface AdminProject {
   workspace: string;
   /** Shared instructions injected into every conversation scoped to this Project. */
   instructions?: string;
+  /** Canonical product isolation identity. */
+  companyId: string;
+  companyName?: string;
+  /** @deprecated Legacy storage/migration alias; UI must use companyId/companyName. */
   organizationId: string;
+  /** @deprecated Legacy storage/migration alias; UI must use companyId/companyName. */
   organizationName?: string;
   defaultRoutingPolicy: RoutingPolicy;
   defaultModel: ModelSelection;
