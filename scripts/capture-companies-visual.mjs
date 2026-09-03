@@ -227,15 +227,22 @@ try {
   await waitFor(cdp, "document.querySelector('.connection-create-dialog') !== null", 'company editor dialog');
   const dialogLayout = await evaluate(cdp, `(() => {
     const dialog = document.querySelector('.connection-create-dialog');
+    const close = dialog?.querySelector('header button[aria-label="Close"]');
     const rect = dialog?.getBoundingClientRect();
+    const closeRect = close?.getBoundingClientRect();
     return {
       visible: Boolean(rect && rect.width > 0 && rect.height > 0),
       withinViewport: Boolean(rect && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight),
+      closeTopRight: Boolean(
+        rect && closeRect &&
+        closeRect.right <= rect.right && closeRect.right >= rect.right - 18 &&
+        closeRect.top >= rect.top && closeRect.top <= rect.top + 36
+      ),
       text: dialog?.textContent?.replace(/\s+/g, ' ').trim()
     };
   })()`);
-  if (!dialogLayout?.visible || !dialogLayout.withinViewport) {
-    throw new Error(`Company editor dialog is outside the viewport: ${JSON.stringify(dialogLayout)}`);
+  if (!dialogLayout?.visible || !dialogLayout.withinViewport || !dialogLayout.closeTopRight) {
+    throw new Error(`Company editor dialog geometry is invalid: ${JSON.stringify(dialogLayout)}`);
   }
   console.log(`dialog-layout ${JSON.stringify(dialogLayout)}`);
   await screenshot(cdp, 'create-company-dialog');
