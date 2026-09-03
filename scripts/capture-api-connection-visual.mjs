@@ -68,9 +68,7 @@ async function target() {
       const targets = await response.json();
       const page = targets.find((item) => item.type === 'page' && String(item.url).includes('app-dist/index.html'));
       if (page?.webSocketDebuggerUrl) return page;
-    } catch (error) {
-      lastError = error;
-    }
+    } catch (error) { lastError = error; }
     await sleep(250);
   }
   throw new Error(`Electron renderer did not expose a CDP target. ${lastError ? String(lastError) : ''}\n${logs}`);
@@ -95,7 +93,6 @@ class Cdp {
       else pending.resolve(response.result);
     });
   }
-
   async send(method, params = {}) {
     await this.ready;
     const id = this.nextId++;
@@ -104,7 +101,6 @@ class Cdp {
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
-
   close() { this.socket.close(); }
 }
 
@@ -113,7 +109,6 @@ async function evaluate(cdp, expression) {
   if (result.exceptionDetails) throw new Error(`Renderer evaluation failed: ${result.exceptionDetails.text}`);
   return result.result?.value;
 }
-
 async function waitFor(cdp, expression, label) {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
@@ -122,16 +117,17 @@ async function waitFor(cdp, expression, label) {
   }
   throw new Error(`Timed out waiting for ${label}.\n${logs}`);
 }
-
 async function screenshot(cdp, name) {
-  const result = await cdp.send('Page.captureScreenshot', {
-    format: 'png',
-    fromSurface: true,
-    captureBeyondViewport: false
-  });
+  const result = await cdp.send('Page.captureScreenshot', { format: 'png', fromSurface: true, captureBeyondViewport: false });
   const targetPath = path.join(outputDir, `${name}.png`);
   fs.writeFileSync(targetPath, Buffer.from(result.data, 'base64'));
   console.log(`captured ${path.relative(root, targetPath)}`);
+}
+async function openPersonalConnections(cdp) {
+  await evaluate(cdp, `(() => { const personal = document.querySelector('.lc-shell-primary-nav button[data-company-id="personal"]'); if (!personal) throw new Error('Personal context not found'); personal.click(); return true; })()`);
+  await waitFor(cdp, `document.querySelector('.company-hub[data-company-id="personal"]') !== null`, 'Personal Company Hub');
+  await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.company-hub-rail > button')].find((item) => item.textContent?.trim() === 'Connections'); if (!button) throw new Error('Company Connections section not found'); button.click(); return true; })()`);
+  await waitFor(cdp, `document.querySelector('.connection-center-settings[data-company-scope="personal"]') !== null`, 'Personal Connection Center');
 }
 
 let cdp;
@@ -141,16 +137,7 @@ try {
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
   await waitFor(cdp, "document.querySelector('.lc-shell-sidebar') !== null", 'Axis shell');
-
-  await evaluate(cdp, "window.dispatchEvent(new CustomEvent('local-coder:open-settings')); true");
-  await waitFor(cdp, "document.querySelector('.settings-modal') !== null", 'Settings modal');
-  await evaluate(cdp, `(() => {
-    const button = [...document.querySelectorAll('.settings-rail button')]
-      .find((item) => item.textContent?.trim() === 'Connections');
-    if (!button) throw new Error('Connections settings tab not found');
-    button.click();
-    return true;
-  })()`);
+  await openPersonalConnections(cdp);
   await waitFor(cdp, "document.querySelectorAll('.connection-center-card').length === 1", 'single API connection');
 
   const inventory = await evaluate(cdp, `(async () => {
@@ -174,28 +161,14 @@ try {
   console.log(`api-inventory ${JSON.stringify(inventory)}`);
   await screenshot(cdp, 'api-custom-endpoint-inventory');
 
-  await evaluate(cdp, `(() => {
-    const button = [...document.querySelectorAll('.connection-center-settings > header button')]
-      .find((item) => item.textContent?.includes('Add connection'));
-    if (!button) throw new Error('Add connection button not found');
-    button.click();
-    return true;
-  })()`);
+  await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.connection-center-settings > header button')].find((item) => item.textContent?.includes('Add connection')); if (!button) throw new Error('Add connection button not found'); button.click(); return true; })()`);
   await waitFor(cdp, "document.querySelector('.connection-create-dialog') !== null", 'Add connection dialog');
-  await evaluate(cdp, `(() => {
-    const trigger = document.querySelector('button[aria-label="Connection authentication"]');
-    if (!trigger) throw new Error('Authentication selector not found');
-    trigger.click();
-    return true;
-  })()`);
+  const fixedScope = await evaluate(cdp, `document.querySelector('.company-connection-fixed-scope')?.textContent?.replace(/\\s+/g, ' ').trim()`);
+  if (!fixedScope?.includes('Personal') || !fixedScope.includes('Ownership is fixed')) throw new Error(`Connection form did not preserve fixed Personal ownership: ${fixedScope}`);
+
+  await evaluate(cdp, `(() => { const trigger = document.querySelector('button[aria-label="Connection authentication"]'); if (!trigger) throw new Error('Authentication selector not found'); trigger.click(); return true; })()`);
   await waitFor(cdp, "document.querySelector('[role=\"listbox\"][aria-label=\"Connection authentication\"]') !== null", 'authentication options');
-  await evaluate(cdp, `(() => {
-    const option = [...document.querySelectorAll('[role="option"]')]
-      .find((item) => item.textContent?.includes('OpenAI API key'));
-    if (!option) throw new Error('OpenAI API key option not found');
-    option.click();
-    return true;
-  })()`);
+  await evaluate(cdp, `(() => { const option = [...document.querySelectorAll('[role="option"]')].find((item) => item.textContent?.includes('OpenAI API key')); if (!option) throw new Error('OpenAI API key option not found'); option.click(); return true; })()`);
   await waitFor(cdp, "document.querySelector('.connection-create-dialog input[type=\"url\"]') !== null", 'API endpoint field');
 
   const form = await evaluate(cdp, `(() => {
@@ -211,13 +184,7 @@ try {
       withinViewport: Boolean(rect && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight),
       endpointPlaceholder: endpoint?.getAttribute('placeholder'),
       hasApiKey: Boolean(key),
-      actionsReachable: Boolean(
-        rect && actionsRect &&
-        actionsRect.top >= rect.top && actionsRect.bottom <= rect.bottom &&
-        buttons.some((button) => button.textContent?.trim() === 'Cancel') &&
-        buttons.some((button) => button.textContent?.trim() === 'Create connection')
-      ),
-      scrolled: Boolean(dialog && dialog.scrollTop > 0),
+      actionsReachable: Boolean(rect && actionsRect && actionsRect.top >= rect.top && actionsRect.bottom <= rect.bottom && buttons.some((button) => button.textContent?.trim() === 'Cancel') && buttons.some((button) => button.textContent?.trim() === 'Create connection')),
       text: dialog?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''
     };
   })()`);
@@ -229,8 +196,5 @@ try {
 } finally {
   cdp?.close();
   child.kill('SIGTERM');
-  await Promise.race([
-    new Promise((resolve) => child.once('exit', resolve)),
-    sleep(3_000).then(() => child.kill('SIGKILL'))
-  ]);
+  await Promise.race([new Promise((resolve) => child.once('exit', resolve)), sleep(3_000).then(() => child.kill('SIGKILL'))]);
 }
