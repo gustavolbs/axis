@@ -39,6 +39,7 @@ import {
   PERSONAL_COMPANY_ID,
   type CompanyContextSnapshot
 } from './company-context.js';
+import { routeCognitiveStage } from './cognitive-router.js';
 import type { LocalEngineerResult } from './local-engineer.js';
 import {
   createProjectMemoryLifecycleSink,
@@ -177,20 +178,57 @@ class ProductPermissionGate implements ToolPermissionGate {
   }
 }
 
-function exactSelection(
-  selection: ModelSelection | undefined,
-  project?: ProjectDefinition
-): ExactSelection {
-  const candidate = selection ?? project?.defaultModel;
-  if (!candidate || candidate.mode === 'auto') {
-    throw new Error(
-      'AgentRuntime product execution requires an exact selected Connection and model before session composition.'
-    );
+function exactSelection(selection: ModelSelection | undefined): ExactSelection | undefined {
+  if (!selection || selection.mode === 'auto') return undefined;
+  if (selection.mode === 'local-first') {
+    return { connectionId: 'ollama', modelId: selection.modelId };
   }
-  if (candidate.mode === 'local-first') {
-    return { connectionId: 'ollama', modelId: candidate.modelId };
+  return { connectionId: selection.providerId, modelId: selection.modelId };
+}
+
+function allowedConnectionIds(
+  project: ProjectDefinition,
+  mode: AgentProductInteractionMode
+): readonly string[] {
+  const policy = effectiveProjectConnectionPolicy(project);
+  return mode === 'chat'
+    ? policy.chat.allowedConnectionIds
+    : policy.inference.allowedConnectionIds;
+}
+
+/**
+ * Auto routing may inspect provider catalogs, so validate every candidate
+ * Connection against the canonical Company graph before provider credentials or
+ * Account transports can be resolved by ProjectProviderRuntime.
+ */
+function assertCanonicalAutoRoutingScope(
+  snapshot: CompanyContextSnapshot,
+  project: ProjectDefinition,
+  mode: AgentProductInteractionMode,
+  companyId: string,
+  connections: ProviderConnectionRuntime
+): void {
+  for (const connectionId of allowedConnectionIds(project, mode)) {
+    const connection = connections.view(connectionId);
+    if (!connection) throw new Error(`Unknown provider connection: ${connectionId}`);
+    buildAgentSessionContext({
+      companyContext: snapshot,
+      sessionId: `selection-preflight:${project.id}:${connection.id}`,
+      companyId,
+      project: { id: project.id },
+      connection,
+      modelId: 'selection-preflight',
+      executionTarget: {
+        id: 'selection-preflight',
+        kind: 'desktop',
+        mode: 'inference-only'
+      },
+      roots: [],
+      permissions: { default: 'denied', entries: {} },
+      capabilities: { entries: {} },
+      resources: []
+    });
   }
-  return { connectionId: candidate.providerId, modelId: candidate.modelId };
 }
 
 function companyForProject(snapshot: CompanyContextSnapshot, projectId: string): string {
@@ -517,6 +555,57 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     for (const listener of this.listeners) listener(event);
   }
 
+  private async resolveSelection(
+    input: ProductEngineerInput,
+    project: ProjectDefinition | undefined,
+    mode: AgentProductInteractionMode,
+    snapshot: CompanyContextSnapshot,
+    companyId: string
+  ): Promise<ExactSelection> {
+    const candidate = input.modelSelection ?? project?.defaultModel;
+    const exact = exactSelection(candidate);
+    if (exact) return exact;
+    if (!project) {
+      throw new Error(
+        'AgentRuntime product execution requires an exact selected Connection and model before Personal session composition.'
+      );
+    }
+
+    assertCanonicalAutoRoutingScope(
+      snapshot,
+      project,
+      mode,
+      companyId,
+      this.options.connections
+    );
+
+    if (mode === 'chat') {
+      const selected = await this.options.providers.projectChatSelection(project);
+      const resolved = exactSelection(selected);
+      if (!resolved) {
+        throw new Error(`Project ${project.id} did not resolve an exact Chat Connection and model.`);
+      }
+      return resolved;
+    }
+
+    const { candidates } = await this.options.providers.routingCandidates(project, {
+      stage: 'implementation',
+      modelSelection: { mode: 'auto' },
+      connectionScope: 'cowork'
+    });
+    const decision = routeCognitiveStage({
+      project,
+      stage: 'implementation',
+      candidates,
+      policy: input.routingPolicy ?? project.defaultRoutingPolicy,
+      modelSelection: { mode: 'auto' }
+    });
+    return {
+      connectionId: decision.selected.providerId,
+      modelId: decision.selected.modelId
+    };
+  }
+
   private async resolveTransport(
     project: ProjectDefinition | undefined,
     connection: ProviderConnectionView,
@@ -571,7 +660,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       : undefined;
     const snapshot = this.options.companyContext();
     const companyId = canonicalCompanyId(snapshot, project, input.companyId);
-    const selection = exactSelection(input.modelSelection, project);
+    const selection = await this.resolveSelection(input, project, mode, snapshot, companyId);
     const connection = this.options.connections.view(selection.connectionId);
     if (!connection) throw new Error(`Unknown provider connection: ${selection.connectionId}`);
     if (project) assertProjectConnection(project, mode, connection);
