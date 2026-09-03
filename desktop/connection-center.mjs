@@ -1,10 +1,10 @@
 import { ipcMain } from 'electron';
 
-const OVERRIDDEN_CHANNELS = [
-  'local-coder:connections',
-  'local-coder:claude-account-create',
-  'local-coder:codex-account-create',
-  'local-coder:api-connection-create'
+const CHANNELS = [
+  'local-coder:connection-center-connections',
+  'local-coder:connection-center-claude-create',
+  'local-coder:connection-center-codex-create',
+  'local-coder:connection-center-api-create'
 ];
 
 let resourcesPromise;
@@ -99,14 +99,17 @@ function canonicalConnectionViews(companies, connections) {
 }
 
 export function installConnectionCenterBridge() {
-  for (const channel of OVERRIDDEN_CHANNELS) ipcMain.removeHandler(channel);
+  // Dedicated channels avoid handler-order coupling with the provider-owned
+  // account bridge. Login/status/MCP remain on that bridge; the Center owns
+  // only canonical inventory and Company-aware creation.
+  for (const channel of CHANNELS) ipcMain.removeHandler(channel);
 
-  ipcMain.handle('local-coder:connections', async () => {
+  ipcMain.handle('local-coder:connection-center-connections', async () => {
     const { connections, companies } = await resources();
     return canonicalConnectionViews(companies, connections);
   });
 
-  ipcMain.handle('local-coder:claude-account-create', async (_event, raw) => {
+  ipcMain.handle('local-coder:connection-center-claude-create', async (_event, raw) => {
     const input = object(raw, 'Claude account input');
     const { claudeProfiles, ownership, connectionIds, personalCompanyId } = await resources();
     const id = requiredString(input.id, 'Profile id');
@@ -127,7 +130,7 @@ export function installConnectionCenterBridge() {
     });
   });
 
-  ipcMain.handle('local-coder:codex-account-create', async (_event, raw) => {
+  ipcMain.handle('local-coder:connection-center-codex-create', async (_event, raw) => {
     const input = object(raw, 'ChatGPT account input');
     const { codexProfiles, ownership, connectionIds, personalCompanyId } = await resources();
     const id = requiredString(input.id, 'Profile id');
@@ -148,7 +151,7 @@ export function installConnectionCenterBridge() {
     });
   });
 
-  ipcMain.handle('local-coder:api-connection-create', async (_event, raw) => {
+  ipcMain.handle('local-coder:connection-center-api-create', async (_event, raw) => {
     const input = object(raw, 'API connection input');
     const { credentials, ownership, connections, connectionIds, personalCompanyId } = await resources();
     const providerFamily = requiredString(input.providerFamily, 'Provider');
