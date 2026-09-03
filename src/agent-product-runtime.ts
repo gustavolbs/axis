@@ -23,15 +23,16 @@ import {
   type ToolPermissionRequest
 } from './agent-runtime/index.js';
 import { createAgentProviderAdapterForConnection } from './agent-provider-adapters/index.js';
-import { createFilesystemP12Tools } from './agent-tools/filesystem/index.js';
-import { createGitTools } from './agent-tools/git/index.js';
-import { createProcessTools } from './agent-tools/process/index.js';
 import {
+  AXIS_BROWSER_TOOL_NAMES,
   FetchBrowserBackend,
   createBrowserToolset,
   type BrowserBackend
 } from './agent-tools/browser/index.js';
+import { createFilesystemP12Tools } from './agent-tools/filesystem/index.js';
+import { createGitTools } from './agent-tools/git/index.js';
 import type { McpHost } from './agent-tools/mcp/index.js';
+import { createProcessTools } from './agent-tools/process/index.js';
 import { currentCancellationSignal } from './cancellation.js';
 import { ClaudeAccountProfileStore } from './claude-account-profiles.js';
 import {
@@ -59,6 +60,11 @@ import type { InferenceProvider, ModelDefinition } from './providers/types.js';
 
 export type AgentProductInteractionMode = 'chat' | 'cowork';
 
+type ProductEngineerInput = ProjectEngineerInput & {
+  /** Canonical Company captured by the product shell; verified against the graph again here. */
+  companyId?: string;
+};
+
 export interface AgentProductLifecycleSource {
   subscribeAgentLifecycle(listener: (event: AgentLifecycleEvent) => void): () => void;
   resolveAgentDecision(sessionId: string, resolution: AgentDecisionResolution): void;
@@ -74,6 +80,8 @@ export interface AgentProductRuntimeOptions {
   readonly browserBackend?: BrowserBackend | false;
   readonly mcpHost?: McpHost;
   readonly executionTargetId?: string;
+  /** Product/plugin extension point. Tools still pass normal capability/permission/resource gates. */
+  readonly extraTools?: readonly AxisTool[];
 }
 
 interface ExactSelection {
@@ -82,7 +90,6 @@ interface ExactSelection {
 }
 
 interface ResolvedTransport {
-  readonly connection: ProviderConnectionView;
   readonly provider: InferenceProvider;
   readonly model: ModelDefinition;
   readonly adapter: AgentProviderAdapter;
@@ -121,6 +128,10 @@ function argumentFingerprint(value: Readonly<Record<string, unknown>>): string {
   return createHash('sha256').update(stableValue(value)).digest('hex');
 }
 
+/**
+ * Interactive permission adapter for the product shell. A resumed approval is
+ * valid for one exact re-issued call only (tool + canonical argument hash).
+ */
 class ProductPermissionGate implements ToolPermissionGate {
   private readonly base = new StaticToolPermissionGate();
   private pending?: PendingPermission;
@@ -169,9 +180,13 @@ class ProductPermissionGate implements ToolPermissionGate {
 function exactSelection(
   selection: ModelSelection | undefined,
   project?: ProjectDefinition
-): ExactSelection | undefined {
+): ExactSelection {
   const candidate = selection ?? project?.defaultModel;
-  if (!candidate || candidate.mode === 'auto') return undefined;
+  if (!candidate || candidate.mode === 'auto') {
+    throw new Error(
+      'AgentRuntime product execution requires an exact selected Connection and model before session composition.'
+    );
+  }
   if (candidate.mode === 'local-first') {
     return { connectionId: 'ollama', modelId: candidate.modelId };
   }
@@ -293,31 +308,34 @@ function browserTools(backend: BrowserBackend | false | undefined): readonly Axi
   const selected = backend ?? new FetchBrowserBackend();
   const tools = createBrowserToolset({ backend: selected }).tools;
   if (selected.id !== 'fetch') return tools;
-  return tools.filter((tool) => [
-    'browser.navigate',
-    'browser.read',
-    'browser.state',
-    'browser.inspect'
-  ].includes(tool.definition.name));
+  const supported = new Set<string>([
+    AXIS_BROWSER_TOOL_NAMES.navigate,
+    AXIS_BROWSER_TOOL_NAMES.read,
+    AXIS_BROWSER_TOOL_NAMES.state,
+    AXIS_BROWSER_TOOL_NAMES.inspect
+  ]);
+  return tools.filter((tool) => supported.has(tool.definition.name));
 }
 
 function toolNeedsWorkspace(tool: AxisTool): boolean {
   return tool.definition.requiredCapabilities.some((capability) =>
-    capability.startsWith('filesystem.') ||
-    capability.startsWith('process.') ||
-    capability.startsWith('git.')
+    capability.startsWith('axis.filesystem.') ||
+    capability.startsWith('axis.process.') ||
+    capability.startsWith('axis.git.')
   );
 }
 
 function baseTools(
   roots: readonly AgentRoot[],
-  backend: BrowserBackend | false | undefined
+  backend: BrowserBackend | false | undefined,
+  extraTools: readonly AxisTool[] = []
 ): AxisTool[] {
   const tools = [
     ...createFilesystemP12Tools(),
     ...createProcessTools().tools,
     ...createGitTools().tools,
-    ...browserTools(backend)
+    ...browserTools(backend),
+    ...extraTools
   ];
   return roots.length > 0 ? tools : tools.filter((tool) => !toolNeedsWorkspace(tool));
 }
@@ -334,7 +352,7 @@ function permissionFor(
   if (permissions.includes('mcp.invoke.mutate')) return 'ask';
   if (permissions.includes('mcp.invoke.read')) return 'granted';
   if (mode === 'chat') return 'granted';
-  if (tool.definition.name.startsWith('browser.')) {
+  if (tool.definition.name.startsWith('axis_browser_')) {
     return tool.definition.effect === 'read' ? 'granted' : 'ask';
   }
   return 'granted';
@@ -453,8 +471,8 @@ function asEngineerResult(
 
 /**
  * Canonical product-composition layer. Both Chat and Cowork execute the same
- * AgentRuntime. Their authority is expressed only by immutable roots,
- * resources, capabilities, permissions and interaction policy.
+ * AgentRuntime. Their authority differs only through the immutable session
+ * context and the tools/capabilities/permissions derived from it.
  */
 export class AgentProductRuntime implements AgentProductLifecycleSource {
   private readonly listeners = new Set<(event: AgentLifecycleEvent) => void>();
@@ -480,10 +498,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     return () => this.listeners.delete(listener);
   }
 
-  resolveAgentDecision(
-    sessionId: string,
-    resolution: AgentDecisionResolution
-  ): void {
+  resolveAgentDecision(sessionId: string, resolution: AgentDecisionResolution): void {
     const pending = this.pending.get(sessionId);
     if (!pending) {
       throw new Error(`Agent session ${sessionId} is not waiting for a decision.`);
@@ -502,24 +517,6 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     for (const listener of this.listeners) listener(event);
   }
 
-  private async resolveSelection(
-    project: ProjectDefinition | undefined,
-    requested?: ModelSelection
-  ): Promise<ExactSelection> {
-    const exact = exactSelection(requested, project);
-    if (exact) return exact;
-    if (!project) {
-      throw new Error(
-        'Personal AgentRuntime execution requires an exact selected connection and model.'
-      );
-    }
-    const selected = await this.options.providers.projectChatSelection(project);
-    if (selected.mode !== 'explicit') {
-      throw new Error(`Project ${project.id} did not resolve an exact default model.`);
-    }
-    return { connectionId: selected.providerId, modelId: selected.modelId };
-  }
-
   private async resolveTransport(
     project: ProjectDefinition | undefined,
     connection: ProviderConnectionView,
@@ -529,8 +526,11 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     let provider: InferenceProvider;
     let model: ModelDefinition | undefined;
     if (project) {
-      // Compatibility transport resolution happens only after canonical Company
-      // graph authorization. Legacy organization metadata is not an identity source.
+      /*
+       * Company authorization already came from the canonical graph above.
+       * buildRegistry is used here only as the existing credential/provider
+       * transport factory; it cannot choose another connection or model.
+       */
       const registry = this.options.providers.buildRegistry(project);
       if (!registry.has(connection.id)) {
         throw new Error(`Project connection is unavailable: ${connection.id}`);
@@ -546,12 +546,9 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       model = resolved.model;
     }
     if (!model) {
-      throw new Error(
-        `Model ${modelId} is not available through connection ${connection.id}.`
-      );
+      throw new Error(`Model ${modelId} is not available through connection ${connection.id}.`);
     }
     return {
-      connection,
       provider,
       model,
       adapter: createAgentProviderAdapterForConnection({
@@ -565,7 +562,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
   }
 
   private async compose(
-    input: ProjectEngineerInput,
+    input: ProductEngineerInput,
     sessionId: string
   ): Promise<PendingSession> {
     const mode = input.interactionMode ?? 'cowork';
@@ -574,11 +571,9 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       : undefined;
     const snapshot = this.options.companyContext();
     const companyId = canonicalCompanyId(snapshot, project, input.companyId);
-    const selection = await this.resolveSelection(project, input.modelSelection);
+    const selection = exactSelection(input.modelSelection, project);
     const connection = this.options.connections.view(selection.connectionId);
-    if (!connection) {
-      throw new Error(`Unknown provider connection: ${selection.connectionId}`);
-    }
+    if (!connection) throw new Error(`Unknown provider connection: ${selection.connectionId}`);
     if (project) assertProjectConnection(project, mode, connection);
 
     const roots = rootsFor(companyId, project, input.workspace, mode);
@@ -589,8 +584,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       this.options.mcpHost
     );
 
-    // Fail closed on mixed Company/Project/Connection/root authority before any
-    // credential secret or account transport is invoked.
+    // Validate graph ownership before resolving credentials or Account transport.
     buildAgentSessionContext({
       companyContext: snapshot,
       sessionId,
@@ -609,88 +603,54 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       resources
     });
 
-    const transport = await this.resolveTransport(
-      project,
-      connection,
-      selection.modelId,
-      companyId
-    );
-
-    let tools = baseTools(roots, this.options.browserBackend);
+    const transport = await this.resolveTransport(project, connection, selection.modelId, companyId);
+    let tools = baseTools(roots, this.options.browserBackend, this.options.extraTools);
     if (mode === 'chat') tools = tools.filter(chatToolAllowed);
 
-    let permissions = permissionsFor(mode, tools);
-    let capabilities = negotiateEffectiveCapabilities({
-      offers: [
-        providerModelCapabilityOffer(
-          `connection:${connection.id}/model:${selection.modelId}`,
-          transport.provider.capabilities,
-          transport.model
-        ),
-        {
-          source: `execution-target:${this.targetId}`,
-          ids: [...new Set(tools.flatMap((tool) => tool.definition.requiredCapabilities))]
-        }
-      ]
-    });
+    const composeContext = (
+      composedTools: readonly AxisTool[]
+    ): AgentSessionContext => {
+      const permissions = permissionsFor(mode, composedTools);
+      const capabilities = negotiateEffectiveCapabilities({
+        offers: [
+          providerModelCapabilityOffer(
+            `connection:${connection.id}/model:${selection.modelId}`,
+            transport.provider.capabilities,
+            transport.model
+          ),
+          {
+            source: `execution-target:${this.targetId}`,
+            ids: [...new Set(composedTools.flatMap((tool) => tool.definition.requiredCapabilities))]
+          }
+        ]
+      });
+      return buildAgentSessionContext({
+        companyContext: snapshot,
+        sessionId,
+        companyId,
+        project: project ? { id: project.id } : undefined,
+        connection,
+        modelId: selection.modelId,
+        executionTarget: {
+          id: this.targetId,
+          kind: 'desktop',
+          mode: roots.length ? 'workspace' : 'inference-only'
+        },
+        roots,
+        permissions,
+        capabilities,
+        resources
+      });
+    };
 
-    let context = buildAgentSessionContext({
-      companyContext: snapshot,
-      sessionId,
-      companyId,
-      project: project ? { id: project.id } : undefined,
-      connection,
-      modelId: selection.modelId,
-      executionTarget: {
-        id: this.targetId,
-        kind: 'desktop',
-        mode: roots.length ? 'workspace' : 'inference-only'
-      },
-      roots,
-      permissions,
-      capabilities,
-      resources
-    });
-
+    let context = composeContext(tools);
     if (this.options.mcpHost) {
       const signal = currentCancellationSignal() ?? new AbortController().signal;
       const discovered = await this.options.mcpHost.toolsForSession(context, signal);
-      const allowedMcp = mode === 'chat'
-        ? discovered.filter(chatToolAllowed)
-        : discovered;
+      const allowedMcp = mode === 'chat' ? discovered.filter(chatToolAllowed) : discovered;
       if (allowedMcp.length) {
         tools = [...tools, ...allowedMcp];
-        permissions = permissionsFor(mode, tools);
-        capabilities = negotiateEffectiveCapabilities({
-          offers: [
-            providerModelCapabilityOffer(
-              `connection:${connection.id}/model:${selection.modelId}`,
-              transport.provider.capabilities,
-              transport.model
-            ),
-            {
-              source: `execution-target:${this.targetId}`,
-              ids: [...new Set(tools.flatMap((tool) => tool.definition.requiredCapabilities))]
-            }
-          ]
-        });
-        context = buildAgentSessionContext({
-          companyContext: snapshot,
-          sessionId,
-          companyId,
-          project: project ? { id: project.id } : undefined,
-          connection,
-          modelId: selection.modelId,
-          executionTarget: {
-            id: this.targetId,
-            kind: 'desktop',
-            mode: roots.length ? 'workspace' : 'inference-only'
-          },
-          roots,
-          permissions,
-          capabilities,
-          resources
-        });
+        context = composeContext(tools);
       }
     }
 
@@ -704,7 +664,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       tools: new ToolRegistry(tools),
       executionTargets: [new LocalAgentExecutionTarget(this.targetId)],
       permissionGate,
-      lifecycle: (event) => {
+      lifecycle: [(event: AgentLifecycleEvent) => {
         if (
           event.type === 'decision.requested' &&
           event.request.kind === 'permission' &&
@@ -713,7 +673,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
           permissionGate.remember(event.request, event.call);
         }
         this.emit(event);
-      }
+      }]
     });
 
     return {
@@ -733,9 +693,9 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     if (!sessionId) {
       throw new Error('AgentRuntime product execution requires budgetJobId/sessionId.');
     }
-
+    const productInput = input as ProductEngineerInput;
     let session = this.pending.get(sessionId);
-    if (!session) session = await this.compose(input, sessionId);
+    if (!session) session = await this.compose(productInput, sessionId);
 
     const events: AgentLifecycleEvent[] = [];
     const unsubscribe = this.subscribeAgentLifecycle((event) => {
