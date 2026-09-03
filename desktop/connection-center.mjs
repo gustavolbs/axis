@@ -31,13 +31,15 @@ async function resources() {
       import('../dist/provider-connections.js'),
       import('../dist/credential-store.js'),
       import('../dist/company-context.js'),
-      import('../dist/company-connection-ownership.js')
-    ]).then(([claude, codex, connectionsModule, credentialModule, companyModule, ownershipModule]) => {
+      import('../dist/company-connection-ownership.js'),
+      import('../dist/api-connection-endpoints.js')
+    ]).then(([claude, codex, connectionsModule, credentialModule, companyModule, ownershipModule, endpointModule]) => {
       const claudeProfiles = new claude.ClaudeAccountProfileStore();
       const codexProfiles = new codex.CodexAccountProfileStore();
       const credentials = new credentialModule.CredentialManager();
       const companies = new companyModule.CompanyContextStore();
       const ownership = new ownershipModule.CompanyConnectionOwnership(companies);
+      const apiEndpoints = new endpointModule.ApiConnectionEndpointStore();
       const connections = new connectionsModule.ProviderConnectionRuntime({
         credentials,
         claudeProfiles,
@@ -49,6 +51,7 @@ async function resources() {
         credentials,
         companies,
         ownership,
+        apiEndpoints,
         connections,
         connectionIds: {
           claude: connectionsModule.claudeAccountConnectionId,
@@ -153,7 +156,7 @@ export function installConnectionCenterBridge() {
 
   ipcMain.handle('local-coder:connection-center-api-create', async (_event, raw) => {
     const input = object(raw, 'API connection input');
-    const { credentials, ownership, connections, connectionIds, personalCompanyId } = await resources();
+    const { credentials, ownership, apiEndpoints, connections, connectionIds, personalCompanyId } = await resources();
     const providerFamily = requiredString(input.providerFamily, 'Provider');
     if (providerFamily !== 'openai' && providerFamily !== 'anthropic') {
       throw new Error('Provider must be openai or anthropic for an API Key connection.');
@@ -161,6 +164,7 @@ export function installConnectionCenterBridge() {
     const id = requiredString(input.id, 'Credential id');
     const name = requiredString(input.name, 'Connection name');
     const secret = requiredString(input.secret, 'API key');
+    const endpoint = optionalString(input.endpoint);
     if (credentials.getProfile(id)) throw new Error(`Credential already exists: ${id}`);
     const companyId = selectedCompanyId(input, personalCompanyId);
     const company = ownership.company(companyId);
@@ -184,6 +188,19 @@ export function installConnectionCenterBridge() {
       organizationId: company.id,
       secret
     });
+    try {
+      apiEndpoints.upsert({
+        connectionId,
+        providerFamily,
+        credentialId: id,
+        endpoint
+      });
+    } catch (error) {
+      // Endpoint metadata is part of the connection contract. Do not leave a
+      // newly-created Keychain credential behind if its transport config fails.
+      try { credentials.remove(id); } catch { /* best effort rollback */ }
+      throw error;
+    }
 
     const connection = connections.view(connectionId);
     if (!connection) throw new Error(`Connection ${connectionId} was not created.`);
