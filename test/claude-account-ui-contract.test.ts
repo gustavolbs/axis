@@ -20,26 +20,44 @@ test('preload exposes bounded connection and Work Hub actions without generic ac
   for (const method of [
     'claudeDiscover', 'claudeAccounts', 'createClaudeAccount', 'claudeAccountStatus', 'loginClaudeAccount', 'listClaudeAccountMcps', 'addClaudeAccountMcp', 'removeClaudeAccountMcp', 'loginClaudeAccountMcp',
     'codexDiscover', 'codexAccounts', 'createCodexAccount', 'codexAccountStatus', 'loginCodexAccount', 'listCodexAccountMcps', 'addCodexAccountMcp', 'removeCodexAccountMcp', 'loginCodexAccountMcp',
-    'providerConnections', 'workHubSnapshot', 'upsertWorkHubSource', 'removeWorkHubSource', 'markWorkHubMessageRead', 'dismissWorkHubMessage', 'refreshWorkHub'
+    'providerConnections', 'createApiKeyConnection', 'workHubSnapshot', 'upsertWorkHubSource', 'removeWorkHubSource', 'markWorkHubMessageRead', 'dismissWorkHubMessage', 'refreshWorkHub'
   ]) assert.match(preload, new RegExp(`\\b${method}\\b`));
 
   assert.doesNotMatch(preload, /setup-token|oauthToken|credentials\.json|Keychain/i);
   assert.doesNotMatch(preload, /invokeClaudeAccount|claudeAccountInvoke|invokeCodexAccount|codexAccountInvoke|spawn\(|exec\(/);
 });
 
-test('Settings exposes a first-class provider Connections page', () => {
+test('Settings exposes a first-class provider Connections center', () => {
   const settings = source('app/src/SettingsModal.tsx');
-  const connections = source('app/src/ConnectionsSettings.tsx');
+  const entry = source('app/src/ConnectionsSettings.tsx');
+  const center = source('app/src/ConnectionCenterSettings.tsx');
+  const legacy = source('app/src/LegacyConnectionsSettings.tsx');
   const styles = source('app/src/lc-app.css');
+
   assert.match(settings, /ConnectionsSettings/);
   assert.match(settings, />Connections</);
-  assert.match(connections, /Enterprise SSO/);
-  assert.match(connections, /Device login/);
-  assert.match(connections, /Search connectors/);
-  assert.match(connections, /Add custom connector/);
-  assert.match(connections, /Account-isolated and cached/);
-  assert.match(connections, /nested-settings-dialog connection-create-dialog/);
-  assert.doesNotMatch(connections, /<style>/);
+  assert.match(entry, /ConnectionCenterSettings as ConnectionsSettings/);
+
+  // The new Connection Center owns provider identities and Company assignment.
+  assert.match(center, /Add connection/);
+  assert.match(center, /OpenAI API key/);
+  assert.match(center, /Anthropic API key/);
+  assert.match(center, /companyId/);
+  assert.match(center, /Managed restrictions/);
+  assert.match(center, /createApiKeyConnection/);
+  assert.match(center, /LegacyConnectionsSettings/);
+
+  // Provider-specific login and MCP controls remain delegated to the existing
+  // official-runtime surface that the center composes under Connectors.
+  assert.match(legacy, /Enterprise SSO/);
+  assert.match(legacy, /Device login/);
+  assert.match(legacy, /Search connectors/);
+  assert.match(legacy, /Add custom connector/);
+  assert.match(legacy, /Account-isolated and cached/);
+  assert.match(legacy, /nested-settings-dialog connection-create-dialog/);
+  assert.doesNotMatch(center, /<style>/);
+  assert.doesNotMatch(legacy, /<style>/);
+
   for (const selector of [
     '.connections-settings-page',
     '.connections-runtime-grid',
