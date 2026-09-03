@@ -20,6 +20,10 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added session-owned background process lifecycle tools: `process_start`, `process_poll`, `process_wait`, `process_stdin`, `process_signal`, `process_terminate` and `process_list`. Background commands expose stable process IDs, incremental cursor-based output, explicit retention gaps, bounded stdin, controlled signals and final mutation status without requiring a PTY.
 - Added `process_which` diagnostics for the exact executable PATH visible to Axis plus a `createProcessTools()` suite so Git, validation and later runtime composition can reuse one policy/environment/registry boundary instead of inventing process execution separately.
 - Added process runtime coverage for successful and non-zero commands, timeout, tree cancellation, cwd escapes, environment filtering, exact execution-target selection, command lifecycle, permission denial, mutation status, read-only fail-closed policy, provider/auth independence, background process isolation, cursored/truncated logs, wait cancellation, stdin, signals and session cleanup.
+- Added provider-neutral Project Memory capture from the canonical `AgentLifecycleSink`, with structured session handoffs for goals, repository reads and mutations, commands, validations, decisions, failures, cancellations and current work state.
+- Added local atomic persistence and bounded task-ranked recovery partitioned by Company + Project + repository/root identity, so a later authorized agent or provider can continue the same Project without replaying a full transcript.
+- Added a Project Memory retrieval API that composes lifecycle handoff state with the existing evidence-backed Repo Intelligence capsule instead of creating a second durable repository-knowledge system.
+- Added retention and compaction for completed history while preserving active and paused sessions, plus restart, cross-provider sharing, multi-root isolation and structured-handoff coverage.
 
 ### Changed
 - The renderer can enter an isolated `runtime-ui-preview` fixture surface for visual verification; normal Chat/Cowork composition and runtime transport installation are unchanged when the preview is not requested.
@@ -33,6 +37,9 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Claude Account AgentRuntime calls now execute in an Axis-owned empty temporary working directory with Claude Code `--bare`, an empty built-in tool catalog, explicit MCP denial, no session persistence, and sanitized environment inheritance, so filesystem/shell/MCP execution cannot occur behind the canonical Axis tool host.
 - Direct inference adapters reject provider-returned tool names that were not exposed by Axis for the exact model cycle and independently re-check provider family, connection, model, and bound Company identity.
 - ChatGPT/Codex Account remains fail-closed for the canonical runtime: current `codex exec` has no proven all-tools-disabled mode, and `read-only` plus `shell_tool=false` does not prove model-dependent core tools such as `apply_patch` are absent. Axis will not route Codex Account work through the unsafe generic bridge until tool calls can be intercepted before provider execution.
+- Project Memory ownership never includes provider, model, authentication method, API key or conversation identity; those values are retained only as non-secret provenance inside a scoped handoff.
+- Lifecycle persistence is allowlisted and redacted: tool arguments and result payloads, provider progress payloads and reasoning fields are not stored, while common secret/token/private-key patterns are removed from retained text.
+- The same physical repository remains isolated across Companies and Projects, and ambiguous multi-root tool activity is not copied into another root's memory.
 
 ## [0.19.0] - 2026-09-03
 
