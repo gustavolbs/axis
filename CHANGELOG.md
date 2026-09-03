@@ -2,7 +2,7 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
-## [0.18.0] - 2026-09-02
+## [0.18.0] - 2026-09-03
 
 ### Added
 - Added a canonical company-context graph that represents `Company → connections/resources → Projects → sessions` without treating workspace paths, account display labels, or the local execution runtime as company identities.
@@ -17,6 +17,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Projects now select canonical Companies rather than inventing organization IDs from free text; archived Companies retain existing references but cannot receive new Projects.
 - Personal Chat no longer exposes organization-scoped API keys or Claude/ChatGPT subscription Accounts. Corporate identities require an explicitly compatible Project boundary.
 - Jobs and Projects exposed by the standalone desktop are filtered by the server-owned active Company. Cross-company job and Project actions fail closed, and corporate Company scope currently requires selecting one of that Company's Projects before starting a conversation.
+- Company Connections now use a quieter, narrower information hierarchy: redundant helper copy and security callouts are removed from the primary scan path, runtimes and connections render as lightweight rows instead of stacked cards, and semantic accent/status colors distinguish actions, providers, healthy states and attention states.
 
 ### Security
 - Company-context persistence stores only company metadata and stable resource bindings; it does not persist workspace paths, provider secrets, MCP payloads, or mutable account labels.
@@ -77,7 +78,3 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - macOS releases are created automatically from `main` after validation, tests, packaging, signature verification, and changelog extraction.
 - Release notes are generated from the matching version section in this file.
 - The desktop entrypoint now uses a small updater bootstrap before loading the existing Electron main process.
-
-### Notes
-- `0.16.0` is the bootstrap release for automatic updates. Existing installs from before this release must install this version manually once because they do not yet contain the updater or the stable self-signed signing identity.
-- Self-signed signing does not notarize the app. Gatekeeper may still require the normal first-install override; subsequent in-app updates use the stable signing identity.
