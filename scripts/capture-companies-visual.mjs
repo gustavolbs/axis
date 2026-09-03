@@ -219,7 +219,7 @@ try {
     contexts: [...document.querySelectorAll('.lc-shell-primary-nav button[data-company-id]')].map((button) => ({ id: button.dataset.companyId, label: button.getAttribute('aria-label') })),
     text: document.querySelector('.lc-shell-primary-nav')?.textContent?.replace(/\\s+/g, ' ').trim()
   }))()`);
-  if (primary?.workHubs !== 1 || !primary.contexts.some((entry) => entry.id === 'personal' && entry.label === 'Personal') || !primary.contexts.some((entry) => entry.id === ${JSON.stringify(acme.id)} && entry.label === 'Acme Engineering')) fail('Primary navigation architecture is invalid', primary);
+  if (primary?.workHubs !== 1 || !primary.contexts.some((entry) => entry.id === 'personal' && entry.label === 'Personal') || !primary.contexts.some((entry) => entry.id === acme.id && entry.label === 'Acme Engineering')) fail('Primary navigation architecture is invalid', primary);
   console.log(`primary-navigation ${JSON.stringify(primary)}`);
 
   await evaluate(cdp, `document.querySelector('.lc-shell-primary-nav button[data-company-id=${JSON.stringify(acme.id)}]')?.click(); true`);
@@ -240,7 +240,7 @@ try {
     sources: [...document.querySelectorAll('.company-source-settings [data-source-id]')].map((item) => ({ sourceId: item.dataset.sourceId, companyId: item.dataset.companyId, text: item.textContent?.replace(/\\s+/g, ' ').trim() })),
     hasAdd: [...document.querySelectorAll('.company-source-settings button')].some((button) => button.textContent?.includes('Add source'))
   }))()`);
-  if (companySources?.heading !== 'Work Hub sources' || !companySources.hasAdd || companySources.sources.length !== 1 || companySources.sources[0]?.companyId !== ${JSON.stringify(acme.id)} || companySources.sources[0]?.sourceId !== 'acme-jira') fail('Company source administration is not scoped', companySources);
+  if (companySources?.heading !== 'Work Hub sources' || !companySources.hasAdd || companySources.sources.length !== 1 || companySources.sources[0]?.companyId !== acme.id || companySources.sources[0]?.sourceId !== 'acme-jira') fail('Company source administration is not scoped', companySources);
   console.log(`company-sources ${JSON.stringify(companySources)}`);
   await screenshot(cdp, 'company-connections-sources');
 
@@ -258,7 +258,7 @@ try {
     ticket: document.querySelector('.work-hub-item[data-company-id=${JSON.stringify(acme.id)}]')?.textContent?.replace(/\\s+/g, ' ').trim(),
     leakedPersonal: document.querySelector('.work-hub-item[data-company-id="personal"]') !== null
   }))()`);
-  if (deepLink?.workHubSurfaces !== 1 || deepLink.filter !== ${JSON.stringify(acme.id)} || deepLink.activeScope !== 'Acme Engineering' || !deepLink.hasAll || !deepLink.hasPersonal || !deepLink.ticket?.includes('Acme Engineering') || deepLink.leakedPersonal) fail('Company → global Work Hub deep-link is invalid', deepLink);
+  if (deepLink?.workHubSurfaces !== 1 || deepLink.filter !== acme.id || deepLink.activeScope !== 'Acme Engineering' || !deepLink.hasAll || !deepLink.hasPersonal || !deepLink.ticket?.includes('Acme Engineering') || deepLink.leakedPersonal) fail('Company → global Work Hub deep-link is invalid', deepLink);
   console.log(`work-hub-deep-link ${JSON.stringify(deepLink)}`);
   await screenshot(cdp, 'work-hub-acme-filtered');
 
@@ -270,7 +270,7 @@ try {
     removeButtons: [...document.querySelectorAll('.work-hub-main button')].filter((button) => /remove/i.test(button.textContent || '')).length,
     copy: document.querySelector('.work-hub-header p')?.textContent
   }))()`);
-  if (globalSources?.sourceRows.length !== 2 || !globalSources.sourceRows.some((row) => row.companyId === 'personal') || !globalSources.sourceRows.some((row) => row.companyId === ${JSON.stringify(acme.id)}) || globalSources.addButtons !== 0 || globalSources.removeButtons !== 0 || !globalSources.copy?.includes('Configure sources inside the owning Company')) fail('Global Sources must be aggregation/health only', globalSources);
+  if (globalSources?.sourceRows.length !== 2 || !globalSources.sourceRows.some((row) => row.companyId === 'personal') || !globalSources.sourceRows.some((row) => row.companyId === acme.id) || globalSources.addButtons !== 0 || globalSources.removeButtons !== 0 || !globalSources.copy?.includes('Configure sources inside the owning Company')) fail('Global Sources must be aggregation/health only', globalSources);
   console.log(`global-sources ${JSON.stringify(globalSources)}`);
   await screenshot(cdp, 'work-hub-sources-global');
 
