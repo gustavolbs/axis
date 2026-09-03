@@ -40,13 +40,6 @@ function SidebarVersion() {
     <div
       className="lc-shell-version"
       aria-label={`Axis version ${__AXIS_VERSION__}`}
-      style={{
-        padding: '1px 8px 0',
-        color: 'var(--lc-faint)',
-        fontSize: '10px',
-        lineHeight: 1.4,
-        letterSpacing: '0.01em'
-      }}
     >
       Axis v{__AXIS_VERSION__}
     </div>,
@@ -66,7 +59,9 @@ function CompanyScopeSelector(props: {
   onSwitch: (companyId: string) => Promise<void>;
 }) {
   return <label className="axis-company-scope" data-placement={props.placement} title={`Active Company: ${props.snapshot.company.name}`}>
-    <span className="axis-company-scope-dot" style={{ background: props.snapshot.company.color }} aria-hidden="true" />
+    <svg className="axis-company-scope-dot" viewBox="0 0 8 8" aria-hidden="true">
+      <circle cx="4" cy="4" r="4" fill={props.snapshot.company.color} />
+    </svg>
     <span className="axis-company-scope-label">Company</span>
     <select
       aria-label={`Active Company in ${props.placement}`}
@@ -155,56 +150,9 @@ const theme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : 
 document.documentElement.dataset.lcTheme = theme;
 void window.localCoder?.setTheme(theme);
 
-const runtimeStyles = `
-.sidebar-collapsed .lc-shell-version { display: none !important; }
-.axis-company-scope {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 190px;
-  height: 26px;
-  align-items: center;
-  gap: 5px;
-  padding: 0 7px;
-  border: 1px solid var(--lc-border);
-  border-radius: 7px;
-  background: var(--lc-surface-2);
-  color: var(--lc-muted);
-  font-size: 10px;
-  line-height: 1;
-  -webkit-app-region: no-drag;
-}
-.axis-company-scope-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; box-shadow: 0 0 0 1px rgba(255,255,255,.15); }
-.axis-company-scope-label { color: var(--lc-faint); }
-.axis-company-scope select {
-  min-width: 0;
-  max-width: 112px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--lc-text-soft);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-.axis-company-scope select:disabled { cursor: wait; opacity: .65; }
-.axis-company-scope[data-placement="chrome"] { margin-left: auto; margin-right: 9px; }
-.axis-company-scope[data-placement="composer"] { max-width: 170px; }
-.decision-picker-head > .axis-company-scope[data-placement="approval"] { order: 2; margin-left: auto; }
-.decision-picker-head > button { order: 3; }
-.assistant-result-message > .axis-company-scope[data-placement="result"] { margin-top: 9px; }
-@media (max-width: 820px) {
-  .axis-company-scope-label { display: none; }
-  .axis-company-scope { max-width: 145px; }
-  .axis-company-scope select { max-width: 118px; }
-}
-`;
-
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <AppRoot />
-    <style>{runtimeStyles}</style>
     <SidebarVersion />
     <CompanyScopeController />
   </React.StrictMode>
