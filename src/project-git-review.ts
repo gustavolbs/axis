@@ -6,7 +6,7 @@ import { resolveWorkspace } from './workspace.js';
 const execFileAsync = promisify(execFile);
 const MAX_GIT_OUTPUT = 8 * 1024 * 1024;
 
-export type ProjectGitDiffScope = 'working' | 'staged';
+export type ProjectGitDiffScope = 'working' | 'staged' | 'branch';
 
 export interface ProjectGitReviewSource {
   id: string;
@@ -20,11 +20,13 @@ export interface ProjectGitReview {
   diff: string;
   status: string[];
   clean: boolean;
+  baseRef?: string;
   generatedAt: string;
 }
 
 function normalizeScope(value: string | null | undefined): ProjectGitDiffScope {
-  return value === 'staged' ? 'staged' : 'working';
+  if (value === 'staged' || value === 'branch') return value;
+  return 'working';
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
@@ -42,6 +44,25 @@ async function git(cwd: string, args: string[]): Promise<string> {
   return result.stdout.trimEnd();
 }
 
+async function tryGit(cwd: string, args: string[]): Promise<string | undefined> {
+  try {
+    const output = await git(cwd, args);
+    return output || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function branchBase(workspace: string): Promise<string> {
+  const upstream = await tryGit(workspace, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+  if (upstream) return upstream;
+  for (const candidate of ['origin/main', 'origin/master', 'main', 'master']) {
+    const exists = await tryGit(workspace, ['rev-parse', '--verify', '--quiet', candidate]);
+    if (exists) return candidate;
+  }
+  throw new Error('No upstream, main, or master ref is available for Branch review.');
+}
+
 /**
  * Read Git state only from a Project-owned workspace. The caller must resolve
  * Company ownership before invoking this helper; no arbitrary cwd or path is
@@ -56,9 +77,12 @@ export async function readProjectGitReview(
   const workspace = await resolveWorkspace(configuredWorkspace);
   const repositoryRoot = await git(workspace, ['rev-parse', '--show-toplevel']);
   const scope = normalizeScope(requestedScope);
+  const baseRef = scope === 'branch' ? await branchBase(workspace) : undefined;
   const diffArgs = scope === 'staged'
     ? ['diff', '--cached', '--no-ext-diff', '--no-color', '--unified=3', '--']
-    : ['diff', '--no-ext-diff', '--no-color', '--unified=3', '--'];
+    : scope === 'branch'
+      ? ['diff', '--no-ext-diff', '--no-color', '--unified=3', `${baseRef}...HEAD`, '--']
+      : ['diff', '--no-ext-diff', '--no-color', '--unified=3', '--'];
   const [diff, porcelain] = await Promise.all([
     git(workspace, diffArgs),
     git(workspace, ['status', '--porcelain=v1', '--untracked-files=normal'])
@@ -71,6 +95,7 @@ export async function readProjectGitReview(
     diff,
     status,
     clean: status.length === 0,
+    baseRef,
     generatedAt: new Date().toISOString()
   };
 }
