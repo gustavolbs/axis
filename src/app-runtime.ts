@@ -5,6 +5,7 @@ import path from 'node:path';
 import { readAppSettings, writeAppSettings, type AppSettingsFile } from './app-config.js';
 import {
   CompanyContextStore,
+  PERSONAL_COMPANY_ID,
   type CreateCompanyInput,
   type UpdateCompanyInput
 } from './company-context.js';
@@ -43,6 +44,9 @@ export type AppRuntimeEvent =
 export type AppRuntimeListener = (event: AppRuntimeEvent) => void;
 
 type JsonObject = Record<string, unknown>;
+type CompanyScopedJob = NonNullable<ReturnType<StandaloneJobManager['get']>> & {
+  input: StandaloneJobInput & { companyId?: string };
+};
 
 function objectBody(value: unknown): JsonObject {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -219,6 +223,41 @@ export class DesktopAppRuntime {
     writeAppSettings({ ...readAppSettings(), archivedProjectIds: [...current] });
   }
 
+  private scopedJob(job: NonNullable<ReturnType<StandaloneJobManager['get']>>): CompanyScopedJob {
+    const existing = (job.input as StandaloneJobInput & { companyId?: string }).companyId?.trim();
+    let companyId = existing;
+    if (!companyId && job.input.projectId) {
+      companyId = this.projects.getProject(job.input.projectId).organizationId;
+    }
+    if (!companyId && job.input.modelSelection?.mode === 'explicit') {
+      const connection = this.projects.listConnections().find((item) => item.id === job.input.modelSelection?.providerId);
+      if (connection && connection.auth !== 'local') companyId = connection.organizationId;
+    }
+    return {
+      ...job,
+      input: {
+        ...job.input,
+        companyId: companyId || PERSONAL_COMPANY_ID
+      }
+    } as CompanyScopedJob;
+  }
+
+  private personalVisibleJob(job: NonNullable<ReturnType<StandaloneJobManager['get']>>): CompanyScopedJob | undefined {
+    const scoped = this.scopedJob(job);
+    if (scoped.input.projectId || scoped.input.companyId === PERSONAL_COMPANY_ID) return scoped;
+    return undefined;
+  }
+
+  private requirePersonalJobAccess(id: string): CompanyScopedJob {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error('Job not found.');
+    const scoped = this.scopedJob(job);
+    if (!scoped.input.projectId && scoped.input.companyId !== PERSONAL_COMPANY_ID) {
+      throw new Error(`Conversation ${id} belongs to company scope ${scoped.input.companyId} and is not available in Personal.`);
+    }
+    return scoped;
+  }
+
   private get workerHealthPath(): string {
     return readAppSettings()?.workerHealthPath ?? DEFAULT_WORKER_HEALTH_PATH;
   }
@@ -233,7 +272,10 @@ export class DesktopAppRuntime {
   static async create(): Promise<DesktopAppRuntime> {
     const runtime = new DesktopAppRuntime();
     await runtime.jobs.restore();
-    runtime.jobs.subscribe((_event, job) => runtime.emit({ type: 'job', payload: { job } }));
+    runtime.jobs.subscribe((_event, job) => {
+      const visible = runtime.personalVisibleJob(job);
+      if (visible) runtime.emit({ type: 'job', payload: { job: visible } });
+    });
     runtime.startWorkerMonitor();
     return runtime;
   }
@@ -309,7 +351,9 @@ export class DesktopAppRuntime {
       };
     }
 
-    if (method === 'GET' && pathname === '/jobs') return { jobs: this.jobs.list() };
+    if (method === 'GET' && pathname === '/jobs') {
+      return { jobs: this.jobs.list().map((job) => this.personalVisibleJob(job)).filter(Boolean) };
+    }
     if (method === 'POST' && pathname === '/jobs') {
       const body = objectBody(request.body);
       const projectId = optionalString(body, 'projectId');
@@ -321,7 +365,8 @@ export class DesktopAppRuntime {
           ? optionalString(body, 'workspace') ?? ''
           : requiredString(body, 'workspace');
       const requestedModelSelection = parseModelSelection(body.modelSelection);
-      const input: StandaloneJobInput = {
+      const input: StandaloneJobInput & { companyId: string } = {
+        companyId: project?.organizationId ?? PERSONAL_COMPANY_ID,
         projectId,
         workspace,
         goal: requiredString(body, 'goal'),
@@ -352,40 +397,40 @@ export class DesktopAppRuntime {
       if (!projectId && interactionMode === 'chat' && input.modelSelection?.mode === 'local-first') {
         throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
       }
-      return { job: this.jobs.create(input) };
+      return { job: this.scopedJob(this.jobs.create(input)) };
     }
 
     const jobMatch = /^\/jobs\/([A-Za-z0-9-]+)$/.exec(pathname);
     if (method === 'GET' && jobMatch) {
-      const job = this.jobs.get(jobMatch[1]);
-      if (!job) throw new Error('Job not found.');
-      return { job };
+      return { job: this.requirePersonalJobAccess(jobMatch[1]) };
     }
     const followUpMatch = /^\/jobs\/([A-Za-z0-9-]+)\/follow-up$/.exec(pathname);
     if (method === 'POST' && followUpMatch) {
       const body = objectBody(request.body);
+      const current = this.requirePersonalJobAccess(followUpMatch[1]);
       const modelSelection = parseModelSelection(body.modelSelection);
       const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
-      if (!this.jobs.get(followUpMatch[1])?.input.projectId && modelSelection?.mode === 'local-first') {
+      if (!current.input.projectId && modelSelection?.mode === 'local-first') {
         throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
       }
       return {
-        job: await this.jobs.followUp(followUpMatch[1], requiredString(body, 'message'), {
+        job: this.scopedJob(await this.jobs.followUp(followUpMatch[1], requiredString(body, 'message'), {
           modelSelection,
           reasoningEffort
-        })
+        }))
       };
     }
     const turnRetryMatch = /^\/jobs\/([A-Za-z0-9-]+)\/turns\/([A-Za-z0-9-]+)\/retry$/.exec(pathname);
     if (method === 'POST' && turnRetryMatch) {
       const body = objectBody(request.body ?? {});
+      const current = this.requirePersonalJobAccess(turnRetryMatch[1]);
       const modelSelection = parseModelSelection(body.modelSelection);
       const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
-      if (!this.jobs.get(turnRetryMatch[1])?.input.projectId && modelSelection?.mode === 'local-first') {
+      if (!current.input.projectId && modelSelection?.mode === 'local-first') {
         throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
       }
       return {
-        job: await this.jobs.retryTurn(
+        job: this.scopedJob(await this.jobs.retryTurn(
           turnRetryMatch[1],
           turnRetryMatch[2],
           optionalString(body, 'message'),
@@ -393,7 +438,7 @@ export class DesktopAppRuntime {
             modelSelection,
             reasoningEffort
           }
-        )
+        ))
       };
     }
     if (method === 'PATCH' && jobMatch) {
