@@ -113,11 +113,12 @@ jobs:
           npm run build
           node --check desktop/bootstrap.mjs
           node --check desktop/main.mjs
+          node --check desktop/connection-center.mjs
           node --check scripts/run-desktop.mjs
           node --check scripts/capture-companies-visual.mjs
           node --check scripts/capture-company-scope-visual.mjs
           node --check scripts/capture-connections-visual.mjs
-          npx tsx --test test/desktop-shell.test.ts test/desktop-ui-contract.test.ts
+          npx tsx --test test/desktop-shell.test.ts test/desktop-ui-contract.test.ts test/connection-center-desktop-contract.test.ts
 
       - name: Render Company and Connection settings states
         run: |
