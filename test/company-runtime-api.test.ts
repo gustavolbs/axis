@@ -17,6 +17,12 @@ test('desktop runtime exposes complete local company lifecycle endpoints', () =>
   assert.match(source, /setCompanyArchived/);
 });
 
+test('reserved Company collection routes cannot be captured as company ids', () => {
+  const source = fs.readFileSync('src/app-runtime.ts', 'utf8');
+  assert.match(source, /pathname === '\/companies\/context'/);
+  assert.match(source, /\(\?:context\|order\)\$/);
+});
+
 test('company lifecycle API intentionally exposes no destructive delete endpoint', () => {
   const source = fs.readFileSync('src/app-runtime.ts', 'utf8');
   assert.doesNotMatch(source, /companyMatch && method === 'DELETE'/);
