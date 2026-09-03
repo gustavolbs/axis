@@ -47,6 +47,7 @@ async function resources() {
         claudeProfiles,
         codexProfiles,
         credentials,
+        companies,
         ownership,
         connections,
         connectionIds: {
@@ -71,12 +72,38 @@ function assertNewProfile(store, id, label) {
   }
 }
 
+function canonicalConnectionViews(companies, connections) {
+  const views = connections.list();
+  const snapshot = companies.reconcile({
+    projects: [],
+    sessions: [],
+    connections: views
+  });
+  const ownerByConnection = new Map();
+  for (const company of snapshot.companies) {
+    for (const connectionId of company.connectionIds) ownerByConnection.set(connectionId, company);
+  }
+
+  return views.map((connection) => {
+    if (connection.auth === 'local') return { ...connection };
+    const company = ownerByConnection.get(connection.id);
+    if (!company) throw new Error(`Connection ${connection.id} is missing a canonical Company binding.`);
+    return {
+      ...connection,
+      organizationId: company.id,
+      companyId: company.id,
+      companyName: company.name,
+      companyArchived: Boolean(company.archivedAt)
+    };
+  });
+}
+
 export function installConnectionCenterBridge() {
   for (const channel of OVERRIDDEN_CHANNELS) ipcMain.removeHandler(channel);
 
   ipcMain.handle('local-coder:connections', async () => {
-    const { connections, ownership } = await resources();
-    return ownership.canonicalize(connections.list());
+    const { connections, companies } = await resources();
+    return canonicalConnectionViews(companies, connections);
   });
 
   ipcMain.handle('local-coder:claude-account-create', async (_event, raw) => {
