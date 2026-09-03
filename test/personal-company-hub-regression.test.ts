@@ -28,7 +28,7 @@ test('Personal Connections shows owned cloud identities plus shared local execut
 });
 
 test('Company Hub embeds canonical settings surfaces instead of nesting standalone Settings chrome', () => {
-  assert.match(companyHub, /<CompanyPageHeader eyebrow=\{company\.name\} title="Connections"/);
+  assert.match(companyHub, /<CompanyPageHeader title="Connections"/);
   assert.match(companyHub, /<ConnectionCenterSettings[^>]*embedded/);
   assert.match(connectionCenter, /embedded \? '' : 'focused-settings-page connections-settings-page '/);
   assert.doesNotMatch(companyHub, /className="nested-settings-dialog company-settings-form"/);
@@ -36,9 +36,10 @@ test('Company Hub embeds canonical settings surfaces instead of nesting standalo
   assert.match(companyHub, /className="btn-primary"/);
 });
 
-test('Company projects read the canonical chat connection policy', () => {
-  assert.match(companyHub, /project\.connectionPolicy\?\.chat\.defaultConnectionId/);
+test('Company project rows keep implementation-specific connection ids out of the primary scan path', () => {
+  assert.match(companyHub, /project\.workspace \|\| 'Workspace not selected'/);
   assert.doesNotMatch(companyHub, /project\.defaultConnectionId/);
+  assert.doesNotMatch(companyHub, /project\.connectionPolicy\?\.chat\.defaultConnectionId/);
 });
 
 test('global Work Hub scopes also consume the canonical snapshot so Personal is filterable', () => {
