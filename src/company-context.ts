@@ -166,6 +166,13 @@ function displayName(value: string | undefined, fallbackId: string): string {
     .join(' ') || fallbackId;
 }
 
+function companyName(value: string): string {
+  const clean = value.trim();
+  if (!clean || clean.length > 160) throw new Error('Company name must be 1-160 characters.');
+  if (/[\0\r\n]/.test(clean)) throw new Error('Company name contains unsupported control characters.');
+  return clean;
+}
+
 function description(value: string | undefined): string | undefined {
   const clean = value?.trim();
   if (!clean) return undefined;
@@ -281,7 +288,7 @@ export class CompanyContextStore {
 
   createCompany(input: CreateCompanyInput): CompanyDefinition {
     const state = this.read();
-    const name = displayName(input.name, 'Company');
+    const name = companyName(input.name);
     this.assertUniqueName(state, name);
     const now = new Date().toISOString();
     const activeOrders = Object.entries(state.companies)
@@ -310,7 +317,7 @@ export class CompanyContextStore {
     const state = this.read();
     const current = hasOwn(state.companies, id) ? state.companies[id] : undefined;
     if (!current) throw new Error(`Company not found: ${id}`);
-    const name = patch.name === undefined ? current.name : displayName(patch.name, id);
+    const name = patch.name === undefined ? current.name : companyName(patch.name);
     if (name !== current.name) this.assertUniqueName(state, name, id);
     const next: PersistedCompany = {
       ...current,
