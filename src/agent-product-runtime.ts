@@ -63,9 +63,7 @@ export interface AgentProductLifecycleSource {
 
 export interface AgentProductRuntimeOptions {
   readonly companyContext: () => CompanyContextSnapshot;
-  readonly projects: {
-    getProject(id: string): ProjectDefinition;
-  };
+  readonly projects: { getProject(id: string): ProjectDefinition };
   readonly connections: ProviderConnectionRuntime;
   readonly providers: ProjectProviderRuntime;
   readonly claudeProfiles?: ClaudeAccountProfileStore;
@@ -75,18 +73,18 @@ export interface AgentProductRuntimeOptions {
   readonly executionTargetId?: string;
 }
 
-interface ExactSelection {
-  readonly connectionId: string;
-  readonly modelId: string;
-}
-
+interface ExactSelection { readonly connectionId: string; readonly modelId: string }
 interface ResolvedTransport {
   readonly connection: ProviderConnectionView;
   readonly provider: InferenceProvider;
   readonly model: ModelDefinition;
   readonly adapter: AgentProviderAdapter;
 }
-
+interface PendingPermission {
+  readonly requestId: string;
+  readonly toolName: string;
+  readonly argumentFingerprint: string;
+}
 interface PendingSession {
   readonly context: AgentSessionContext;
   readonly provider: AgentProviderAdapter;
@@ -99,12 +97,6 @@ interface PendingSession {
   resolution?: AgentDecisionResolution;
 }
 
-interface PendingPermission {
-  readonly requestId: string;
-  readonly toolName: string;
-  readonly argumentFingerprint: string;
-}
-
 function stableValue(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableValue).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -115,7 +107,6 @@ function stableValue(value: unknown): string {
   }
   return JSON.stringify(value);
 }
-
 function argumentFingerprint(value: Readonly<Record<string, unknown>>): string {
   return createHash('sha256').update(stableValue(value)).digest('hex');
 }
@@ -126,14 +117,13 @@ class ProductPermissionGate implements ToolPermissionGate {
   private resolution?: AgentDecisionResolution;
   private consumed = false;
 
-  setPending(request: AgentDecisionRequest): void {
-    const metadata = request.metadata;
-    const toolName = typeof metadata?.toolName === 'string' ? metadata.toolName : undefined;
-    const fingerprint = typeof metadata?.argumentFingerprint === 'string'
-      ? metadata.argumentFingerprint
-      : undefined;
-    if (!toolName || !fingerprint) return;
-    this.pending = { requestId: request.id, toolName, argumentFingerprint: fingerprint };
+  remember(request: AgentDecisionRequest, call?: { name: string; arguments: Readonly<Record<string, unknown>> }): void {
+    if (!call) return;
+    this.pending = {
+      requestId: request.id,
+      toolName: call.name,
+      argumentFingerprint: argumentFingerprint(call.arguments)
+    };
     this.resolution = undefined;
     this.consumed = false;
   }
@@ -161,42 +151,29 @@ class ProductPermissionGate implements ToolPermissionGate {
   }
 }
 
-function toolIsAvailableForRoots(tool: AxisTool, roots: readonly AgentRoot[]): boolean {
-  if (roots.length > 0) return true;
-  const capabilities = tool.definition.requiredCapabilities;
-  return !capabilities.some((capability) =>
-    capability.startsWith('filesystem.') || capability.startsWith('process.') || capability.startsWith('git.')
-  );
+function exactSelection(selection: ModelSelection | undefined, project?: ProjectDefinition): ExactSelection | undefined {
+  const candidate = selection ?? project?.defaultModel;
+  if (!candidate || candidate.mode === 'auto') return undefined;
+  if (candidate.mode === 'local-first') return { connectionId: 'ollama', modelId: candidate.modelId };
+  return { connectionId: candidate.providerId, modelId: candidate.modelId };
 }
 
-function permissionStatusForTool(mode: AgentProductInteractionMode, tool: AxisTool): 'granted' | 'ask' {
-  if (mode === 'chat') {
-    return tool.definition.effect === 'read' || tool.definition.effect === 'validation'
-      ? 'granted'
-      : 'ask';
+function assertProjectConnection(
+  project: ProjectDefinition,
+  mode: AgentProductInteractionMode,
+  connection: ProviderConnectionView
+): void {
+  const policy = effectiveProjectConnectionPolicy(project);
+  const allowed = mode === 'chat' ? policy.chat.allowedConnectionIds : policy.inference.allowedConnectionIds;
+  if (!allowed.includes(connection.id)) {
+    throw new Error(`Connection ${connection.id} is not allowed for ${mode} in Project ${project.id}.`);
   }
-  if (tool.definition.name.startsWith('browser.') || tool.definition.name.startsWith('mcp.')) {
-    return tool.definition.effect === 'read' ? 'granted' : 'ask';
+  if (!project.privacy.allowedProviderIds.includes(connection.providerFamily)) {
+    throw new Error(`Provider family ${connection.providerFamily} is not allowed by Project ${project.id}.`);
   }
-  return 'granted';
-}
-
-function permissionsFor(mode: AgentProductInteractionMode, tools: readonly AxisTool[]): AgentPermissionSet {
-  const entries: Record<string, 'granted' | 'ask'> = Object.create(null) as Record<string, 'granted' | 'ask'>;
-  for (const tool of tools) {
-    const status = permissionStatusForTool(mode, tool);
-    for (const permission of tool.definition.requiredPermissions) {
-      const current = entries[permission];
-      if (current !== 'ask') entries[permission] = status;
-    }
+  if (connection.providerFamily !== 'ollama' && !project.privacy.cloudAllowed) {
+    throw new Error(`Project ${project.id} does not allow cloud provider ${connection.providerFamily}.`);
   }
-  return Object.freeze({ default: 'denied', entries: Object.freeze(entries) });
-}
-
-function filterDeniedTools(tools: readonly AxisTool[], permissions: AgentPermissionSet): AxisTool[] {
-  return tools.filter((tool) => tool.definition.requiredPermissions.every((permission) =>
-    (permissions.entries[permission] ?? permissions.default) !== 'denied'
-  ));
 }
 
 function rootsFor(
@@ -219,132 +196,113 @@ function rootsFor(
 function resourcesFor(companyId: string, project: ProjectDefinition | undefined, browser: boolean): AgentResourceBinding[] {
   const scope = project ? 'project' as const : 'personal' as const;
   const resources: AgentResourceBinding[] = [];
-  if (project) {
-    resources.push({
-      kind: 'memory',
-      id: 'project-memory',
-      scope,
-      companyId,
-      projectId: project.id
-    });
-  }
-  if (browser) {
-    resources.push({
-      kind: 'browser',
-      id: 'fetch',
-      scope,
-      companyId,
-      projectId: project?.id
-    });
-  }
+  if (project) resources.push({
+    kind: 'memory', id: 'project-memory', scope, companyId, projectId: project.id
+  });
+  if (browser) resources.push({
+    kind: 'browser', id: 'fetch', scope, companyId, projectId: project?.id
+  });
   return resources;
 }
 
 function browserTools(backend: BrowserBackend | false | undefined): readonly AxisTool[] {
   if (backend === false) return [];
-  const toolset = createBrowserToolset({ backend: backend ?? new FetchBrowserBackend() });
-  if ((backend ?? undefined) && (backend as BrowserBackend).id !== 'fetch') return toolset.tools;
-  return toolset.tools.filter((tool) => [
-    'browser.navigate',
-    'browser.read',
-    'browser.state',
-    'browser.inspect'
+  const selected = backend ?? new FetchBrowserBackend();
+  const tools = createBrowserToolset({ backend: selected }).tools;
+  if (selected.id !== 'fetch') return tools;
+  return tools.filter((tool) => [
+    'browser.navigate', 'browser.read', 'browser.state', 'browser.inspect'
   ].includes(tool.definition.name));
 }
 
+function toolNeedsWorkspace(tool: AxisTool): boolean {
+  return tool.definition.requiredCapabilities.some((capability) =>
+    capability.startsWith('filesystem.') || capability.startsWith('process.') || capability.startsWith('git.')
+  );
+}
 function baseTools(roots: readonly AgentRoot[], backend: BrowserBackend | false | undefined): AxisTool[] {
-  const filesystem = createFilesystemP12Tools();
-  const process = createProcessTools().tools;
-  const git = createGitTools().tools;
-  return [...filesystem, ...process, ...git, ...browserTools(backend)]
-    .filter((tool) => toolIsAvailableForRoots(tool, roots));
+  const tools = [
+    ...createFilesystemP12Tools(),
+    ...createProcessTools().tools,
+    ...createGitTools().tools,
+    ...browserTools(backend)
+  ];
+  return roots.length > 0 ? tools : tools.filter((tool) => !toolNeedsWorkspace(tool));
 }
-
-function exactSelection(selection: ModelSelection | undefined, project: ProjectDefinition | undefined): ExactSelection | undefined {
-  const candidate = selection ?? project?.defaultModel;
-  if (!candidate || candidate.mode === 'auto') return undefined;
-  if (candidate.mode === 'local-first') return { connectionId: 'ollama', modelId: candidate.modelId };
-  return { connectionId: candidate.providerId, modelId: candidate.modelId };
+function permissionFor(mode: AgentProductInteractionMode, tool: AxisTool): 'granted' | 'ask' {
+  if (mode === 'chat') return tool.definition.effect === 'read' || tool.definition.effect === 'validation'
+    ? 'granted' : 'ask';
+  if (tool.definition.name.startsWith('browser.') || tool.definition.name.startsWith('mcp.')) {
+    return tool.definition.effect === 'read' ? 'granted' : 'ask';
+  }
+  return 'granted';
 }
-
-function assertProjectConnection(project: ProjectDefinition, mode: AgentProductInteractionMode, connection: ProviderConnectionView): void {
-  const policy = effectiveProjectConnectionPolicy(project);
-  const allowed = mode === 'chat'
-    ? policy.chat.allowedConnectionIds
-    : policy.inference.allowedConnectionIds;
-  if (!allowed.includes(connection.id)) {
-    throw new Error(`Connection ${connection.id} is not allowed for ${mode} in Project ${project.id}.`);
+function permissionsFor(mode: AgentProductInteractionMode, tools: readonly AxisTool[]): AgentPermissionSet {
+  const entries: Record<string, 'granted' | 'ask'> = Object.create(null) as Record<string, 'granted' | 'ask'>;
+  for (const tool of tools) {
+    const status = permissionFor(mode, tool);
+    for (const permission of tool.definition.requiredPermissions) {
+      if (entries[permission] !== 'ask') entries[permission] = status;
+    }
   }
-  if (!project.privacy.allowedProviderIds.includes(connection.providerFamily)) {
-    throw new Error(`Provider family ${connection.providerFamily} is not allowed by Project ${project.id}.`);
-  }
-  if (connection.providerFamily !== 'ollama' && !project.privacy.cloudAllowed) {
-    throw new Error(`Project ${project.id} does not allow cloud provider ${connection.providerFamily}.`);
-  }
-}
-
-function runtimeSystemPrompt(
-  input: ProjectEngineerInput,
-  context: AgentSessionContext,
-  project: ProjectDefinition | undefined,
-  memoryCapsule: string | undefined
-): string {
-  const authority = [
-    '# AXIS SESSION AUTHORITY',
-    `Company: ${context.companyId}`,
-    `Project: ${context.project?.id ?? '(none)'}`,
-    `Connection: ${context.connection.id}`,
-    `Provider family: ${context.connection.providerFamily}`,
-    `Auth kind: ${context.connection.authKind}`,
-    `Model: ${context.modelId}`,
-    `Execution target: ${context.executionTarget.id}`,
-    `Roots: ${context.roots.map((root) => `${root.id}:${root.access}:${root.path}`).join(', ') || '(none)'}`,
-    'Use only the Axis tools advertised for this session. Explore dynamically: search/read before editing, inspect failures, repair, validate, and inspect Git diff when repository work is requested.',
-    'Never claim a mutation, command, validation, or read that is not visible in the Axis lifecycle.',
-    'Do not emit raw chain-of-thought; concise reasoning summaries are allowed.'
-  ].join('\n');
-  return [
-    authority,
-    project?.instructions?.trim() ? `# PROJECT INSTRUCTIONS\n${project.instructions.trim()}` : undefined,
-    input.context?.trim() ? `# USER CONTEXT\n${input.context.trim()}` : undefined,
-    input.constraints?.length ? `# CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}` : undefined,
-    memoryCapsule
-  ].filter((section): section is string => Boolean(section)).join('\n\n');
+  return Object.freeze({ default: 'denied', entries: Object.freeze(entries) });
 }
 
 function transcriptFromChatHistory(input: ProjectEngineerInput): AgentMessage[] {
   return (input.chatHistory ?? []).map((turn, index) => ({
-    id: `history-${index}`,
-    role: turn.role,
-    content: turn.content
+    id: `history-${index}`, role: turn.role, content: turn.content
   }));
 }
+function systemPrompt(
+  input: ProjectEngineerInput,
+  context: AgentSessionContext,
+  project: ProjectDefinition | undefined,
+  memory?: string
+): string {
+  return [
+    [
+      '# AXIS SESSION AUTHORITY',
+      `Company: ${context.companyId}`,
+      `Project: ${context.project?.id ?? '(none)'}`,
+      `Connection: ${context.connection.id}`,
+      `Provider family: ${context.connection.providerFamily}`,
+      `Auth kind: ${context.connection.authKind}`,
+      `Model: ${context.modelId}`,
+      `Execution target: ${context.executionTarget.id}`,
+      `Roots: ${context.roots.map((root) => `${root.id}:${root.access}:${root.path}`).join(', ') || '(none)'}`,
+      'Use only tools advertised by Axis. Explore dynamically: search/read, edit when authorized, run validation, inspect failures, repair, and inspect Git diff.',
+      'Never claim hidden provider-side filesystem, shell, MCP, browser, or mutation work.',
+      'Never expose raw chain-of-thought; concise reasoning summaries are allowed.'
+    ].join('\n'),
+    project?.instructions?.trim() ? `# PROJECT INSTRUCTIONS\n${project.instructions.trim()}` : undefined,
+    input.context?.trim() ? `# USER CONTEXT\n${input.context.trim()}` : undefined,
+    input.constraints?.length ? `# CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}` : undefined,
+    memory
+  ].filter((item): item is string => Boolean(item)).join('\n\n');
+}
 
-function changedFiles(events: readonly AgentLifecycleEvent[]): string[] {
+function eventFiles(events: readonly AgentLifecycleEvent[], type: 'read' | 'mutation'): string[] {
   const files = new Set<string>();
   for (const event of events) {
-    if (event.type !== 'mutation' || event.status !== 'success' || event.mutationStatus !== 'committed') continue;
+    if (event.type !== type || event.status !== 'success') continue;
     const value = event.metadata?.relativePath ?? event.metadata?.path;
     if (typeof value === 'string' && value.trim()) files.add(value.trim());
   }
   return [...files];
 }
-
-function diffFromResult(toolResults: readonly { toolName: string; status: string; output?: unknown }[]): string {
+function lastDiff(toolResults: readonly { toolName: string; status: string; output?: unknown }[]): string {
   for (let index = toolResults.length - 1; index >= 0; index -= 1) {
     const result = toolResults[index];
     if (!result || result.status !== 'success' || !result.toolName.includes('diff')) continue;
     if (typeof result.output === 'string') return result.output;
     if (result.output && typeof result.output === 'object') {
-      const record = result.output as Record<string, unknown>;
-      if (typeof record.diff === 'string') return record.diff;
-      if (typeof record.stdout === 'string') return record.stdout;
+      const value = (result.output as Record<string, unknown>).diff ?? (result.output as Record<string, unknown>).stdout;
+      if (typeof value === 'string') return value;
     }
   }
   return '';
 }
-
-function engineerResult(
+function asEngineerResult(
   input: ProjectEngineerInput,
   status: 'success' | 'needs-guidance',
   summary: string,
@@ -359,24 +317,21 @@ function engineerResult(
     summary,
     investigation: {
       searchQueries: [],
-      evidenceFiles: events
-        .filter((event) => event.type === 'read')
-        .map((event) => event.metadata?.relativePath ?? event.metadata?.path)
-        .filter((value): value is string => typeof value === 'string'),
+      evidenceFiles: eventFiles(events, 'read'),
       researchRequests: []
     },
     repairRounds: 0,
-    changedFiles: changedFiles(events),
-    diff: diffFromResult(toolResults),
+    changedFiles: eventFiles(events, 'mutation'),
+    diff: lastDiff(toolResults),
     validation: [],
     modelCalls: []
   };
 }
 
 /**
- * Sequential product-composition layer. Chat and Cowork enter the same
- * AgentRuntime; their authority differs only through immutable roots,
- * capabilities, resources and permissions.
+ * Canonical product-composition layer. Both Chat and Cowork execute the same
+ * AgentRuntime. Their authority is expressed only by immutable roots,
+ * resources, capabilities, permissions and interaction policy.
  */
 export class AgentProductRuntime implements AgentProductLifecycleSource {
   private readonly listeners = new Set<(event: AgentLifecycleEvent) => void>();
@@ -384,7 +339,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
   private readonly memoryStore: ProjectMemoryStore;
   private readonly memoryRecorder: ReturnType<typeof createProjectMemoryLifecycleSink>;
   private readonly claudeProfiles: ClaudeAccountProfileStore;
-  private readonly executionTargetId: string;
+  private readonly targetId: string;
 
   constructor(private readonly options: AgentProductRuntimeOptions) {
     this.memoryStore = options.memoryStore ?? new ProjectMemoryStore();
@@ -392,62 +347,70 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       onError: (error) => console.error(`Project Memory lifecycle persistence failed: ${error instanceof Error ? error.message : String(error)}`)
     });
     this.claudeProfiles = options.claudeProfiles ?? new ClaudeAccountProfileStore();
-    this.executionTargetId = options.executionTargetId?.trim() || 'desktop';
+    this.targetId = options.executionTargetId?.trim() || 'desktop';
   }
 
   subscribeAgentLifecycle(listener: (event: AgentLifecycleEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
-
   resolveAgentDecision(sessionId: string, resolution: AgentDecisionResolution): void {
     const pending = this.pending.get(sessionId);
     if (!pending) throw new Error(`Agent session ${sessionId} is not waiting for a decision.`);
-    if (pending.request.id !== resolution.requestId) {
+    if (resolution.requestId !== pending.request.id) {
       throw new Error(`Decision ${resolution.requestId} does not match pending request ${pending.request.id}.`);
     }
     pending.resolution = resolution;
     pending.permissionGate.resolve(resolution);
   }
-
   private emit(event: AgentLifecycleEvent): void {
     this.memoryRecorder.observe(event);
     for (const listener of this.listeners) listener(event);
   }
 
-  private async resolveSelection(
-    project: ProjectDefinition | undefined,
-    selection: ModelSelection | undefined
-  ): Promise<ExactSelection> {
-    const exact = exactSelection(selection, project);
+  private async resolveSelection(project: ProjectDefinition | undefined, requested?: ModelSelection): Promise<ExactSelection> {
+    const exact = exactSelection(requested, project);
     if (exact) return exact;
-    if (!project) {
-      throw new Error('Personal AgentRuntime execution requires an exact selected connection and model.');
-    }
-    const resolved = await this.options.providers.projectChatSelection(project);
-    if (resolved.mode !== 'explicit') {
-      throw new Error(`Project ${project.id} did not resolve an exact default connection/model.`);
-    }
-    return { connectionId: resolved.providerId, modelId: resolved.modelId };
+    if (!project) throw new Error('Personal AgentRuntime execution requires an exact selected connection and model.');
+    const selected = await this.options.providers.projectChatSelection(project);
+    if (selected.mode !== 'explicit') throw new Error(`Project ${project.id} did not resolve an exact default model.`);
+    return { connectionId: selected.providerId, modelId: selected.modelId };
   }
 
   private async resolveTransport(
-    companyId: string,
     project: ProjectDefinition | undefined,
-    selection: ExactSelection
+    connection: ProviderConnectionView,
+    modelId: string,
+    companyId: string
   ): Promise<ResolvedTransport> {
-    const connection = this.options.connections.view(selection.connectionId);
-    if (!connection) throw new Error(`Unknown provider connection: ${selection.connectionId}`);
-    if (project) assertProjectConnection(project, 'cowork', connection);
-    const resolved = await this.options.connections.resolveSelected(selection.connectionId, selection.modelId);
-    const adapter = createAgentProviderAdapterForConnection({
+    let provider: InferenceProvider;
+    let model: ModelDefinition | undefined;
+    if (project) {
+      // Compatibility transport resolution happens only after canonical Company
+      // graph authorization below. Legacy organization metadata is not used to
+      // infer Company/session ownership.
+      const registry = this.options.providers.buildRegistry(project);
+      if (!registry.has(connection.id)) throw new Error(`Project connection is unavailable: ${connection.id}`);
+      provider = registry.get(connection.id);
+      model = (await provider.listModels()).find((candidate) => candidate.id === modelId);
+    } else {
+      const resolved = await this.options.providers.personalModelDefinition(connection.id, modelId);
+      provider = resolved.provider;
+      model = resolved.model;
+    }
+    if (!model) throw new Error(`Model ${modelId} is not available through connection ${connection.id}.`);
+    return {
       connection,
-      modelId: selection.modelId,
-      companyId: connection.auth === 'local' ? null : companyId,
-      provider: resolved.provider,
-      claudeProfiles: this.claudeProfiles
-    });
-    return { connection, provider: resolved.provider, model: resolved.model, adapter };
+      provider,
+      model,
+      adapter: createAgentProviderAdapterForConnection({
+        connection,
+        modelId,
+        companyId: connection.auth === 'local' ? null : companyId,
+        provider,
+        claudeProfiles: this.claudeProfiles
+      })
+    };
   }
 
   private async compose(input: ProjectEngineerInput, sessionId: string): Promise<PendingSession> {
@@ -460,12 +423,11 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     const connection = this.options.connections.view(selection.connectionId);
     if (!connection) throw new Error(`Unknown provider connection: ${selection.connectionId}`);
     if (project) assertProjectConnection(project, mode, connection);
-
     const roots = rootsFor(companyId, project, input.workspace, mode);
     const resources = resourcesFor(companyId, project, this.options.browserBackend !== false);
 
-    // Validate canonical Company/Project/Connection/root ownership before any
-    // credential secret is resolved or provider transport is invoked.
+    // Fail closed on mixed Company/Project/Connection/root authority before any
+    // credential secret or account transport is invoked.
     buildAgentSessionContext({
       companyContext: snapshot,
       sessionId,
@@ -473,34 +435,20 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       project: project ? { id: project.id } : undefined,
       connection,
       modelId: selection.modelId,
-      executionTarget: { id: this.executionTargetId, kind: 'desktop', mode: roots.length ? 'workspace' : 'inference-only' },
+      executionTarget: { id: this.targetId, kind: 'desktop', mode: roots.length ? 'workspace' : 'inference-only' },
       roots,
       permissions: { default: 'denied', entries: {} },
       capabilities: { entries: {} },
       resources
     });
 
-    const resolved = await this.options.connections.resolveSelected(selection.connectionId, selection.modelId);
-    const provider = createAgentProviderAdapterForConnection({
-      connection,
-      modelId: selection.modelId,
-      companyId: connection.auth === 'local' ? null : companyId,
-      provider: resolved.provider,
-      claudeProfiles: this.claudeProfiles
-    });
-
+    const transport = await this.resolveTransport(project, connection, selection.modelId, companyId);
     let tools = baseTools(roots, this.options.browserBackend);
-    const preliminaryPermissions = permissionsFor(mode, tools);
-    tools = filterDeniedTools(tools, preliminaryPermissions);
-
-    const toolCapabilities = [...new Set(tools.flatMap((tool) => tool.definition.requiredCapabilities))];
-    const capabilities = negotiateEffectiveCapabilities({
-      offers: [
-        providerModelCapabilityOffer(`connection:${connection.id}/model:${selection.modelId}`, resolved.provider.capabilities, resolved.model),
-        { source: `execution-target:${this.executionTargetId}`, ids: toolCapabilities }
-      ]
-    });
-    const permissions = permissionsFor(mode, tools);
+    let permissions = permissionsFor(mode, tools);
+    let capabilities = negotiateEffectiveCapabilities({ offers: [
+      providerModelCapabilityOffer(`connection:${connection.id}/model:${selection.modelId}`, transport.provider.capabilities, transport.model),
+      { source: `execution-target:${this.targetId}`, ids: [...new Set(tools.flatMap((tool) => tool.definition.requiredCapabilities))] }
+    ] });
     let context = buildAgentSessionContext({
       companyContext: snapshot,
       sessionId,
@@ -508,7 +456,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       project: project ? { id: project.id } : undefined,
       connection,
       modelId: selection.modelId,
-      executionTarget: { id: this.executionTargetId, kind: 'desktop', mode: roots.length ? 'workspace' : 'inference-only' },
+      executionTarget: { id: this.targetId, kind: 'desktop', mode: roots.length ? 'workspace' : 'inference-only' },
       roots,
       permissions,
       capabilities,
@@ -516,16 +464,14 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     });
 
     if (this.options.mcpHost) {
-      const mcpTools = await this.options.mcpHost.toolsForSession(context, currentCancellationSignal());
-      if (mcpTools.length > 0) {
-        tools = [...tools, ...mcpTools];
-        const mergedPermissions = permissionsFor(mode, tools);
-        const mergedCapabilities = negotiateEffectiveCapabilities({
-          offers: [
-            providerModelCapabilityOffer(`connection:${connection.id}/model:${selection.modelId}`, resolved.provider.capabilities, resolved.model),
-            { source: `execution-target:${this.executionTargetId}`, ids: [...new Set(tools.flatMap((tool) => tool.definition.requiredCapabilities))] }
-          ]
-        });
+      const discovered = await this.options.mcpHost.toolsForSession(context, currentCancellationSignal());
+      if (discovered.length) {
+        tools = [...tools, ...discovered];
+        permissions = permissionsFor(mode, tools);
+        capabilities = negotiateEffectiveCapabilities({ offers: [
+          providerModelCapabilityOffer(`connection:${connection.id}/model:${selection.modelId}`, transport.provider.capabilities, transport.model),
+          { source: `execution-target:${this.targetId}`, ids: [...new Set(tools.flatMap((tool) => tool.definition.requiredCapabilities))] }
+        ] });
         context = buildAgentSessionContext({
           companyContext: snapshot,
           sessionId,
@@ -533,51 +479,34 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
           project: project ? { id: project.id } : undefined,
           connection,
           modelId: selection.modelId,
-          executionTarget: { id: this.executionTargetId, kind: 'desktop', mode: roots.length ? 'workspace' : 'inference-only' },
+          executionTarget: { id: this.targetId, kind: 'desktop', mode: roots.length ? 'workspace' : 'inference-only' },
           roots,
-          permissions: mergedPermissions,
-          capabilities: mergedCapabilities,
+          permissions,
+          capabilities,
           resources
         });
       }
     }
 
-    const memory = await loadProjectMemoryContext({
-      store: this.memoryStore,
-      session: context,
-      task: input.goal
-    });
-    const systemPrompt = runtimeSystemPrompt(input, context, project, memory?.capsule);
+    const memory = await loadProjectMemoryContext({ store: this.memoryStore, session: context, task: input.goal });
     const permissionGate = new ProductPermissionGate();
     const runtime = new AgentRuntime({
       tools: new ToolRegistry(tools),
-      executionTargets: [new LocalAgentExecutionTarget(this.executionTargetId)],
+      executionTargets: [new LocalAgentExecutionTarget(this.targetId)],
       permissionGate,
       lifecycle: (event) => {
         if (event.type === 'decision.requested' && event.request.kind === 'permission' && event.call) {
-          const augmented: AgentLifecycleEvent = {
-            ...event,
-            request: {
-              ...event.request,
-              metadata: {
-                ...(event.request.metadata ?? {}),
-                argumentFingerprint: argumentFingerprint(event.call.arguments)
-              }
-            }
-          };
-          permissionGate.setPending(augmented.request);
-          this.emit(augmented);
-          return;
+          permissionGate.remember(event.request, event.call);
         }
         this.emit(event);
       }
     });
     return {
       context,
-      provider,
+      provider: transport.adapter,
       runtime,
       permissionGate,
-      systemPrompt,
+      systemPrompt: systemPrompt(input, context, project, memory?.capsule),
       transcript: transcriptFromChatHistory(input),
       turnIndex: input.chatHistory?.filter((turn) => turn.role === 'user').length ?? 0,
       request: { id: '', kind: 'confirmation', prompt: '' }
@@ -589,19 +518,17 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     if (!sessionId) throw new Error('AgentRuntime product execution requires budgetJobId/sessionId.');
     let session = this.pending.get(sessionId);
     if (!session) session = await this.compose(input, sessionId);
-
     const events: AgentLifecycleEvent[] = [];
-    const capture = (event: AgentLifecycleEvent) => {
+    const unsubscribe = this.subscribeAgentLifecycle((event) => {
       if (event.sessionId === sessionId) events.push(event);
-    };
-    const unsubscribe = this.subscribeAgentLifecycle(capture);
+    });
     try {
       const resolution = session.resolution;
       const result = await session.runtime.run({
         context: session.context,
         provider: session.provider,
         userInput: resolution
-          ? `Resume after decision ${resolution.requestId}. Apply the resolution exactly once.`
+          ? `Resume after decision ${resolution.requestId}. Apply that resolution exactly once.`
           : input.goal,
         decisionResolution: resolution,
         systemPrompt: session.systemPrompt,
@@ -615,18 +542,15 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
         session.turnIndex += 1;
         session.request = result.decisionRequest;
         session.resolution = undefined;
-        session.permissionGate.setPending(result.decisionRequest);
         this.pending.set(sessionId, session);
-        return engineerResult(input, 'needs-guidance', result.finalText ?? result.decisionRequest.prompt, events, result.toolResults);
+        return asEngineerResult(
+          input, 'needs-guidance', result.finalText ?? result.decisionRequest.prompt, events, result.toolResults
+        );
       }
       this.pending.delete(sessionId);
-      if (result.status === 'cancelled') {
-        throw new Error(result.error?.message ?? 'AgentRuntime session cancelled.');
-      }
-      if (result.status === 'failed') {
-        throw new Error(result.error?.message ?? 'AgentRuntime session failed.');
-      }
-      return engineerResult(input, 'success', result.finalText?.trim() || 'Completed.', events, result.toolResults);
+      if (result.status === 'cancelled') throw new Error(result.error?.message ?? 'AgentRuntime session cancelled.');
+      if (result.status === 'failed') throw new Error(result.error?.message ?? 'AgentRuntime session failed.');
+      return asEngineerResult(input, 'success', result.finalText?.trim() || 'Completed.', events, result.toolResults);
     } finally {
       unsubscribe();
     }
