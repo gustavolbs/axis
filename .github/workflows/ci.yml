@@ -121,9 +121,10 @@ jobs:
           node --check scripts/capture-api-connection-visual.mjs
           node --check scripts/capture-shared-connection-form-visual.mjs
           node --check scripts/capture-api-key-lifecycle-visual.mjs
+          node --check scripts/capture-agent-runtime-ui-visual.mjs
           npx tsx --test test/desktop-shell.test.ts test/desktop-ui-contract.test.ts test/connection-center-desktop-contract.test.ts
 
-      - name: Render Company and Connection settings states
+      - name: Render Company, Connection, and Agent Runtime states
         run: |
           node scripts/capture-companies-visual.mjs
           node scripts/capture-company-scope-visual.mjs
@@ -131,14 +132,16 @@ jobs:
           node scripts/capture-api-connection-visual.mjs
           node scripts/capture-shared-connection-form-visual.mjs
           node scripts/capture-api-key-lifecycle-visual.mjs
+          node scripts/capture-agent-runtime-ui-visual.mjs
 
-      - name: Upload Company and Connection visual smoke
+      - name: Upload desktop visual smoke
         uses: actions/upload-artifact@v4
         with:
-          name: axis-companies-visual-smoke
+          name: axis-desktop-visual-smoke
           path: |
             visual-artifacts/companies/*.png
             visual-artifacts/connections/*.png
+            visual-artifacts/runtime-ui/*.png
           if-no-files-found: error
           retention-days: 7
 
