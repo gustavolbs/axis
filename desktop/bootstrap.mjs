@@ -45,4 +45,12 @@ installCompanyConnectionOwnership();
 const { installCompanyScopedDesktopRuntime } = await import('../dist/company-scoped-desktop-runtime.js');
 installCompanyScopedDesktopRuntime();
 
+// main.mjs owns the legacy Account/MCP bridge. Schedule the Connection Center
+// override one macrotask after Electron becomes ready: initializeDesktop first
+// installs the legacy handlers, then this replaces only connection inventory
+// and creation while leaving login/status/MCP handlers provider-owned.
+const { app } = await import('electron');
+const { installConnectionCenterBridge } = await import('./connection-center.mjs');
+void app.whenReady().then(() => setImmediate(installConnectionCenterBridge));
+
 await import('./main.mjs');
