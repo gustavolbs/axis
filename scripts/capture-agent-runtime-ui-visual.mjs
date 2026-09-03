@@ -174,7 +174,7 @@ try {
     location.href = next.href;
     return true;
   })()`);
-  await waitFor(cdp, "document.querySelector('[data-runtime-ui-preview=" + '"active"' + "]') !== null", 'runtime UI preview');
+  await waitFor(cdp, "document.querySelector('[data-runtime-ui-preview=\"active\"]') !== null", 'runtime UI preview');
 
   await setViewport(cdp, 1280, 900);
   await setTheme(cdp, 'light');
@@ -203,7 +203,7 @@ try {
   await assertLayout(cdp, 'active dark');
   await screenshot(cdp, 'runtime-active-dark');
 
-  await setViewport(cdp, 760, 840);
+  await setViewport(cdp, 700, 840);
   await setTheme(cdp, 'light');
   await assertLayout(cdp, 'active narrow');
   await screenshot(cdp, 'runtime-active-narrow-light');
@@ -219,20 +219,22 @@ try {
   await assertLayout(cdp, 'failure dark');
   await screenshot(cdp, 'runtime-failure-dark');
 
-  const interactiveResolution = await evaluate(cdp, `(() => {
-    const active = [...document.querySelectorAll('[aria-label="Preview scenarios"] button')]
-      .find((candidate) => candidate.textContent?.trim() === 'active');
-    active?.click();
+  await chooseScenario(cdp, 'active');
+  const controlsFound = await evaluate(cdp, `(() => {
     const allow = [...document.querySelectorAll('[aria-label="Approval actions"] button')]
       .find((candidate) => candidate.textContent?.includes('Allow'));
     const option = [...document.querySelectorAll('[aria-label="Decision options"] button')]
       .find((candidate) => candidate.textContent?.includes('Review first'));
-    allow?.click();
-    option?.click();
+    if (!allow || !option) return false;
+    allow.click();
+    option.click();
+    return true;
+  })()`);
+  if (!controlsFound) throw new Error('Approval/decision fixture controls were not found.');
+  await waitFor(cdp, `(() => {
     const status = document.querySelector('.decision-picker-echo')?.textContent ?? '';
     return status.includes('Permission allowed') && status.includes('review');
-  })()`);
-  if (!interactiveResolution) throw new Error('Approval/decision fixture did not resolve through the canonical callbacks.');
+  })()`, 'approval and decision resolution');
   await setTheme(cdp, 'light');
   await screenshot(cdp, 'runtime-decision-resolution-light');
 } finally {
