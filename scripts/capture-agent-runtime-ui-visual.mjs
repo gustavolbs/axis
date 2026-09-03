@@ -209,6 +209,11 @@ try {
   await screenshot(cdp, 'runtime-active-narrow-light');
 
   await setViewport(cdp, 1280, 900);
+  await chooseScenario(cdp, 'empty');
+  await setTheme(cdp, 'light');
+  await assertLayout(cdp, 'empty light');
+  await screenshot(cdp, 'runtime-empty-light');
+
   await chooseScenario(cdp, 'resolved');
   await setTheme(cdp, 'light');
   await assertLayout(cdp, 'resolved light');
