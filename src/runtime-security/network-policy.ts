@@ -1,6 +1,9 @@
 import { isIP } from 'node:net';
 
-import { redactRuntimeUrlForDisplay } from './redaction.js';
+import {
+  isRuntimeSecretField,
+  redactRuntimeUrlForDisplay
+} from './redaction.js';
 
 export type RuntimeNetworkClass = 'public' | 'loopback' | 'private-network' | 'link-local' | 'reserved-network' | 'metadata-service' | 'invalid';
 
@@ -20,7 +23,12 @@ export interface RuntimeNetworkDecision {
   readonly reason?: string;
 }
 
-const METADATA_NAMES = new Set(['metadata.google.internal', 'metadata.google', 'instance-data.ec2.internal']);
+const METADATA_NAMES = new Set([
+  'metadata.google.internal',
+  'metadata.google',
+  'instance-data.ec2.internal',
+  'metadata.azure.internal'
+]);
 const METADATA_IPS = new Set(['169.254.169.254', '169.254.170.2', '100.100.100.200']);
 
 function host(value: string): string {
@@ -30,10 +38,21 @@ function host(value: string): string {
 
 function pattern(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/\.$/, '');
-  if (!normalized || normalized.includes('/') || (normalized.includes(':') && !normalized.startsWith('*.'))) {
+  if (!normalized || normalized.includes('/')) {
     throw new Error(`Invalid runtime network host pattern: ${value}`);
   }
-  return normalized;
+  if (normalized.startsWith('*.')) {
+    const suffix = normalized.slice(2);
+    if (!suffix || suffix.includes(':') || isIP(suffix) !== 0) {
+      throw new Error(`Invalid runtime network wildcard pattern: ${value}`);
+    }
+    return normalized;
+  }
+  const normalizedHost = host(normalized);
+  if (!normalizedHost || (normalizedHost.includes(':') && isIP(normalizedHost) !== 6)) {
+    throw new Error(`Invalid runtime network host pattern: ${value}`);
+  }
+  return normalizedHost;
 }
 
 function matches(value: string, rule: string): boolean {
@@ -45,11 +64,20 @@ function matches(value: string, rule: string): boolean {
 function ipv4(value: string): RuntimeNetworkClass {
   if (METADATA_IPS.has(value)) return 'metadata-service';
   const parts = value.split('.').map((part) => Number.parseInt(part, 10));
-  const [a = -1, b = -1] = parts;
+  const [a = -1, b = -1, c = -1] = parts;
   if (a === 127) return 'loopback';
   if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return 'private-network';
   if (a === 169 && b === 254) return 'link-local';
-  if (a === 0 || (a === 100 && b >= 64 && b <= 127) || a >= 224) return 'reserved-network';
+  if (
+    a === 0 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 192 && b === 0) ||
+    (a === 192 && b === 2) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
+    a >= 224
+  ) return 'reserved-network';
   return 'public';
 }
 
@@ -63,6 +91,7 @@ function ipv6(value: string): RuntimeNetworkClass {
     const mapped = normalized.slice('::ffff:'.length);
     if (isIP(mapped) === 4) return ipv4(mapped);
   }
+  if (normalized.startsWith('2001:db8:')) return 'reserved-network';
   return 'public';
 }
 
@@ -80,13 +109,22 @@ function verdict(allowed: boolean, normalizedUrl: string, targetHost: string, cl
   return { allowed, normalizedUrl, host: targetHost, classification, ...(reason ? { reason } : {}) };
 }
 
+function hasCredentialQuery(url: URL): boolean {
+  for (const key of url.searchParams.keys()) {
+    if (isRuntimeSecretField(key)) return true;
+  }
+  return false;
+}
+
 export function authorizeRuntimeNetworkUrl(rawUrl: string, policy: RuntimeNetworkPolicy = {}): RuntimeNetworkDecision {
   let url: URL;
   try { url = new URL(rawUrl); } catch { return verdict(false, redactRuntimeUrlForDisplay(rawUrl), '', 'invalid', 'Invalid outbound URL.'); }
   const targetHost = host(url.hostname);
   const classification = classifyRuntimeNetworkHost(targetHost);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return verdict(false, redactRuntimeUrlForDisplay(url.toString()), targetHost, 'invalid', 'Only http/https outbound URLs are supported.');
-  if (url.username || url.password) return verdict(false, redactRuntimeUrlForDisplay(url.toString()), targetHost, 'invalid', 'URLs with embedded credentials are blocked.');
+  if (url.username || url.password || hasCredentialQuery(url)) {
+    return verdict(false, redactRuntimeUrlForDisplay(url.toString()), targetHost, 'invalid', 'Credential-bearing URLs are blocked.');
+  }
   if (url.protocol === 'http:' && policy.allowInsecureHttp !== true) return verdict(false, url.toString(), targetHost, classification, 'HTTPS is required by policy.');
   const blocked = (policy.blockedHosts ?? []).map(pattern);
   const allowed = (policy.allowedHosts ?? []).map(pattern);
