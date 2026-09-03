@@ -3,6 +3,7 @@ import { ArrowUp, ChevronDown, Folder, MoreHorizontal, Pencil, Pin, Plus, Search
 
 import type { AdminProject, ModelSelection } from './app-types.js';
 import { ProjectConnectionsPanel } from './ProjectConnectionsPanel.js';
+import { ProjectGitReview } from './ProjectGitReview.js';
 
 export interface ProjectConversation {
   id: string;
@@ -149,6 +150,7 @@ export function ProjectDetail(props: {
           </button>)}
           {conversations.length === 0 ? <p>No conversations in this project yet.</p> : null}
         </section>
+        <ProjectGitReview project={props.project} />
       </main>
 
       <aside className="project-detail-panel">
