@@ -1,3 +1,4 @@
+import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -37,7 +38,7 @@ async function copyTree(
     filesystemError('filesystem_unsupported_operation', `copy_path refuses symbolic links inside the copied tree: ${relativeLabel}`);
   }
   if (stat.isFile()) {
-    await fs.copyFile(sourcePath, destinationPath, fs.constants.COPYFILE_EXCL);
+    await fs.copyFile(sourcePath, destinationPath, constants.COPYFILE_EXCL);
     await fs.chmod(destinationPath, stat.mode & 0o777);
     return { files: 1, directories: 0 };
   }
@@ -208,7 +209,8 @@ export const setFileModeTool: AxisTool = {
   async execute(context) {
     const rootId = stringArg(context.call.arguments, 'rootId', { required: true });
     const relativePath = stringArg(context.call.arguments, 'path', { required: true });
-    const mode = integerArg(context.call.arguments, 'mode', 0o644, 0, 0o777);
+    if (context.call.arguments.mode === undefined) filesystemError('filesystem_invalid_arguments', 'mode is required.');
+    const mode = integerArg(context.call.arguments, 'mode', 0, 0, 0o777);
     const resolved = await resolveFilesystemPath(context.session, rootId, relativePath, { access: 'write', mustExist: true });
     await assertNotTopLevelSymlink(resolved.realPath, resolved.relativePath);
     activity(context, 'mutation', `Changing mode for ${relativePath}`, { rootId, path: relativePath, mode });
