@@ -14,6 +14,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 
 ### Fixed
 - Fixed a product integration mismatch where Cowork could advertise managed-worktree tools even though its immutable product session contained no authorized worktree storage/task-checkout root capable of satisfying those tool contracts.
+- Fixed the API Key lifecycle Electron smoke so it validates the current cloud-provider network boundary: unsafe loopback/insecure endpoints must fail closed before any request, while edit/rotation/sibling isolation remain verified through UI and Keychain state.
 
 ### Security
 - P1 remains explicitly FAIL rather than silently falling back: product-level worktree orchestration, durable restart checkpoints, real Local Worker execution-target composition, the accepted ChatGPT/Codex Account G2 blocker, and live multi-Connection evidence remain blockers.
