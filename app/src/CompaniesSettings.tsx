@@ -222,7 +222,7 @@ export function CompaniesSettings() {
 
     {editing !== undefined ? <div className="nested-settings-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) closeEditor(); }}>
       <form className="nested-settings-dialog connection-create-dialog" onSubmit={(event) => void save(event)}>
-        <header><div><h2>{editing ? 'Edit company' : 'Add company'}</h2><p>The internal company ID is generated once and never changes when you rename this company.</p></div><button type="button" onClick={closeEditor} aria-label="Close"><X size={17} /></button></header>
+        <header className="lc-shell-modal-title"><div><h2>{editing ? 'Edit company' : 'Add company'}</h2><p>The internal company ID is generated once and never changes when you rename this company.</p></div><button type="button" onClick={closeEditor} aria-label="Close"><X size={17} /></button></header>
         <label><span>Name</span><input required autoFocus maxLength={160} value={name} onChange={(event) => setName(event.target.value)} placeholder="Acme Engineering" /></label>
         <label><span>Description <small>optional</small></span><textarea rows={4} maxLength={2000} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this company context is for" /></label>
         <label><span>Color</span><input type="color" value={color} onChange={(event) => setColor(event.target.value.toUpperCase())} /></label>
