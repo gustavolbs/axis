@@ -341,15 +341,24 @@ export function GlobalWorkHubLauncher({ tab, onTabChange: setTab }: GlobalWorkHu
 
       {tab === 'sources' ? <>
         <div className="work-hub-source-toolbar"><div><strong>{scopedSources.length} source{scopedSources.length === 1 ? '' : 's'}</strong><span>Read-only aggregation and health. Add, remove or reassign sources only inside their owning Company.</span></div></div>
-        <div className="work-hub-source-list">
+        <div className="work-hub-list">
           {scopedSources.map((source) => {
             const state = scopedStates.find((candidate) => candidate.sourceId === source.id);
-            const syncing = state?.status === 'syncing' || busy === `refresh:${source.id}`;
-            return <article className={`work-hub-source-row ${companyClass(source.companyId)}`} key={source.id} data-company-id={source.companyId} data-source-id={source.id}>
-              <div className="work-hub-source-identity"><Settings2 size={15} /><span><strong>{source.label}</strong><small>{source.companyName} · {kindLabel(source.kind)} · {source.connectionId}</small></span></div>
-              <div className="work-hub-source-state"><CompanyBadge name={source.companyName} /><span className={`status-${state?.status ?? 'idle'}`}>{state?.status ?? 'idle'}</span><small>{state?.itemCount ?? 0} items{state?.durationMs ? ` · ${durationLabel(state.durationMs)}` : ''}</small></div>
-              <div className="work-hub-source-actions"><button className="btn-secondary" disabled={busy !== undefined} onClick={() => void refreshSource(source)}><RefreshCw className={syncing ? 'spin' : ''} size={12} />{syncing ? 'Syncing…' : 'Sync'}</button></div>
-              {state?.error ? <div className="work-hub-source-error">{state.error}</div> : null}
+            const status = state?.status ?? 'idle';
+            const syncing = status === 'syncing' || busy === `refresh:${source.id}`;
+            const detail = syncing
+              ? `${syncStageLabel(state)}${state?.syncStartedAt ? ` · ${elapsedLabel(state.syncStartedAt, clock)}` : ''}`
+              : `${stateLabel(status)} · ${state?.itemCount ?? 0} item${state?.itemCount === 1 ? '' : 's'}${state?.durationMs ? ` · ${durationLabel(state.durationMs)}` : ''}`;
+            const SourceIcon = source.kind === 'calendar' ? CalendarDays : source.kind === 'tickets' ? BriefcaseBusiness : Inbox;
+            return <article className={`work-hub-source-card ${companyClass(source.companyId)} status-${status}`} key={source.id} data-company-id={source.companyId} data-source-id={source.id}>
+              <div className="work-hub-source-icon"><SourceIcon size={17} /></div>
+              <div className="work-hub-source-copy">
+                <strong>{source.label}</strong>
+                <small>{source.companyName} · {kindLabel(source.kind)} · {source.connectionId}</small>
+                <span className="work-hub-state">{syncing ? <LoaderCircle className="spin" size={11} /> : status === 'ready' ? <CheckCircle2 size={11} /> : status === 'error' ? <AlertCircle size={11} /> : <Settings2 size={11} />}{detail}</span>
+              </div>
+              <div className="work-hub-source-actions"><CompanyBadge name={source.companyName} /><button className="btn-secondary" disabled={busy !== undefined} onClick={() => void refreshSource(source)}><RefreshCw className={syncing ? 'spin' : ''} size={12} />{syncing ? 'Syncing…' : status === 'error' ? 'Try again' : 'Sync'}</button></div>
+              {state?.error ? <div className="work-hub-source-error"><AlertCircle size={13} /><span>{state.error}</span></div> : null}
             </article>;
           })}
           {scopedSources.length === 0 ? <div className="work-hub-empty large"><Settings2 size={24} /><strong>No sources for this scope</strong><span>Open the owning Company → Connections to configure Work Hub sources.</span></div> : null}
