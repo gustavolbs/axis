@@ -23,7 +23,10 @@ const MAX_SECURITY_SCAN_CHARS = 200_000;
 export function assessBrowserContentSecurity(
   content: string | readonly string[]
 ): BrowserContentSecurity {
-  const joined = (Array.isArray(content) ? content.join('\n') : content).slice(0, MAX_SECURITY_SCAN_CHARS);
+  const joined = (typeof content === 'string' ? content : content.join('\n')).slice(
+    0,
+    MAX_SECURITY_SCAN_CHARS
+  );
   const signals = SIGNALS.filter((signal) => signal.pattern.test(joined)).map((signal) => signal.id);
   return Object.freeze({
     trust: 'untrusted-external',
