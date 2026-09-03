@@ -197,4 +197,4 @@ test('decision resolution is recorded canonically on the resumed turn input', as
   assert.ok(events.some((event) =>
     event.type === 'decision.resolved' && event.resolution.requestId === 'decision-provider-1'
   ));
-}
+});
