@@ -21,6 +21,8 @@ import { resolveProcessScope } from './scope.js';
 export const PROCESS_START_TOOL_NAME = 'process_start';
 export const PROCESS_POLL_TOOL_NAME = 'process_poll';
 export const PROCESS_WAIT_TOOL_NAME = 'process_wait';
+export const PROCESS_STDIN_TOOL_NAME = 'process_stdin';
+export const PROCESS_SIGNAL_TOOL_NAME = 'process_signal';
 export const PROCESS_TERMINATE_TOOL_NAME = 'process_terminate';
 export const PROCESS_LIST_TOOL_NAME = 'process_list';
 export const PROCESS_EXEC_CAPABILITY = 'axis.process.exec';
@@ -28,6 +30,7 @@ export const PROCESS_EXEC_PERMISSION = 'process.exec';
 
 const START_TIMEOUT_MS = 15_000;
 const CONTROL_TIMEOUT_MS = 30_000;
+const MAX_STDIN_CHARS = 64 * 1024;
 
 export interface BackgroundProcessToolOptions {
   readonly registry?: ManagedProcessRegistry;
@@ -143,7 +146,7 @@ export class ProcessStartTool extends RegistryTool implements AxisTool {
   readonly definition: ToolDefinition = {
     name: PROCESS_START_TOOL_NAME,
     description:
-      'Start one allowlisted executable in the background inside an authorized session root. Returns a processId for later poll, wait, or terminate operations.',
+      'Start one allowlisted executable in the background inside an authorized session root. Returns a processId for later poll, wait, stdin, signal, or terminate operations.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -299,6 +302,123 @@ export class ProcessWaitTool extends RegistryTool implements AxisTool {
   }
 }
 
+export class ProcessStdinTool extends RegistryTool implements AxisTool {
+  readonly definition: ToolDefinition = {
+    name: PROCESS_STDIN_TOOL_NAME,
+    description:
+      'Write a bounded UTF-8 chunk to stdin of a running background process owned by this exact session, optionally closing stdin afterwards.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['processId', 'data'],
+      properties: {
+        processId: { type: 'string', minLength: 1 },
+        data: { type: 'string', maxLength: MAX_STDIN_CHARS },
+        end: { type: 'boolean' },
+        stdoutOffset: { type: 'integer', minimum: 0 },
+        stderrOffset: { type: 'integer', minimum: 0 }
+      }
+    },
+    requiredCapabilities: [PROCESS_EXEC_CAPABILITY],
+    requiredPermissions: [PROCESS_EXEC_PERMISSION],
+    effect: 'command',
+    mutationRisk: 'possible',
+    retryOnFailure: 'after-confirmation',
+    timeoutMs: 5_000
+  };
+
+  async execute(context: ToolExecutionContext): Promise<ToolExecutionOutput> {
+    const control = parseControlInput(context.call.arguments);
+    const data = context.call.arguments.data;
+    const end = context.call.arguments.end;
+    if (typeof data !== 'string') throw new Error('process_stdin data must be a string.');
+    if (data.length > MAX_STDIN_CHARS) throw new Error(`process_stdin data exceeds ${MAX_STDIN_CHARS} characters.`);
+    if (end !== undefined && typeof end !== 'boolean') throw new Error('process_stdin end must be a boolean.');
+
+    const snapshot = await this.registry.writeStdin(
+      context.session,
+      control.processId,
+      data,
+      end === true,
+      cursorFrom(control)
+    );
+    const status = processMutationStatus(snapshot);
+    return {
+      output: output(snapshot),
+      mutationStatus: status,
+      retry: 'after-confirmation',
+      metadata: {
+        processId: snapshot.processId,
+        stdinOpen: snapshot.stdinOpen,
+        status: snapshot.status,
+        executionTargetId: snapshot.executionTargetId
+      }
+    };
+  }
+}
+
+function allowedSignals(): readonly NodeJS.Signals[] {
+  return process.platform === 'win32'
+    ? ['SIGINT', 'SIGTERM', 'SIGBREAK']
+    : ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGUSR1', 'SIGUSR2'];
+}
+
+export class ProcessSignalTool extends RegistryTool implements AxisTool {
+  readonly definition: ToolDefinition = {
+    name: PROCESS_SIGNAL_TOOL_NAME,
+    description:
+      'Send one allowlisted operating-system signal to a running background process owned by this exact session. Use process_terminate for forced tree termination.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['processId', 'signal'],
+      properties: {
+        processId: { type: 'string', minLength: 1 },
+        signal: { type: 'string' },
+        stdoutOffset: { type: 'integer', minimum: 0 },
+        stderrOffset: { type: 'integer', minimum: 0 }
+      }
+    },
+    requiredCapabilities: [PROCESS_EXEC_CAPABILITY],
+    requiredPermissions: [PROCESS_EXEC_PERMISSION],
+    effect: 'command',
+    mutationRisk: 'possible',
+    retryOnFailure: 'after-confirmation',
+    timeoutMs: 5_000
+  };
+
+  async execute(context: ToolExecutionContext): Promise<ToolExecutionOutput> {
+    const control = parseControlInput(context.call.arguments);
+    const rawSignal = context.call.arguments.signal;
+    if (typeof rawSignal !== 'string' || !rawSignal.trim()) {
+      throw new Error('process_signal signal must be a non-empty string.');
+    }
+    const signal = rawSignal.trim().toUpperCase() as NodeJS.Signals;
+    if (!allowedSignals().includes(signal)) {
+      throw new Error(`Signal ${signal} is not allowed on ${process.platform}.`);
+    }
+
+    const snapshot = this.registry.sendSignal(
+      context.session,
+      control.processId,
+      signal,
+      cursorFrom(control)
+    );
+    const status = processMutationStatus(snapshot);
+    return {
+      output: output(snapshot),
+      mutationStatus: status,
+      retry: 'after-confirmation',
+      metadata: {
+        processId: snapshot.processId,
+        signal,
+        status: snapshot.status,
+        executionTargetId: snapshot.executionTargetId
+      }
+    };
+  }
+}
+
 export class ProcessTerminateTool extends RegistryTool implements AxisTool {
   readonly definition = controlDefinition(
     PROCESS_TERMINATE_TOOL_NAME,
@@ -368,6 +488,8 @@ export function createProcessBackgroundTools(
       new ProcessStartTool(shared),
       new ProcessPollTool(registry),
       new ProcessWaitTool(registry),
+      new ProcessStdinTool(registry),
+      new ProcessSignalTool(registry),
       new ProcessTerminateTool(registry),
       new ProcessListTool(registry)
     ]
