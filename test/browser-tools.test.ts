@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { test } from 'node:test';
 
 import { OperationCancelledError } from '../src/cancellation.js';
@@ -19,6 +20,7 @@ import {
   AXIS_BROWSER_PERMISSION_IDS,
   AXIS_BROWSER_TOOL_NAMES,
   BrowserSessionManager,
+  FetchBrowserBackend,
   createBrowserToolset,
   type BrowserBackend,
   type BrowserBackendSession,
@@ -144,7 +146,20 @@ class MockBrowserBackend implements BrowserBackend {
     this.openedScopes.push(scope);
     let currentUrl = 'https://example.test/initial';
     const backend = this;
-    const opened: BrowserBackendSession = {
+    const interaction = this.interactive
+      ? {
+          async interact(request: BrowserInteractRequest) {
+            backend.interactCalls += 1;
+            return {
+              action: request.action,
+              url: currentUrl,
+              detail: request.selector,
+              mutationStatus: 'unknown' as const
+            };
+          }
+        }
+      : {};
+    return {
       id: `browser-${scope.sessionId}`,
       scope,
       async navigate(request, context): Promise<BrowserNavigationResult> {
@@ -181,20 +196,9 @@ class MockBrowserBackend implements BrowserBackend {
               : { content: 'Example page body' }),
           truncated: false
         };
-      }
+      },
+      ...interaction
     };
-    if (this.interactive) {
-      opened.interact = async (request: BrowserInteractRequest) => {
-        backend.interactCalls += 1;
-        return {
-          action: request.action,
-          url: currentUrl,
-          detail: request.selector,
-          mutationStatus: 'unknown'
-        };
-      };
-    }
-    return opened;
   }
 }
 
@@ -245,6 +249,82 @@ test('browser tools register in ToolRegistry without runtime or provider changes
   assert.ok(events.some((event) => event.type === 'read' && event.toolName === AXIS_BROWSER_TOOL_NAMES.read));
 });
 
+test('fetch backend performs explicit navigation, text/link extraction, and bounded search without Computer Use', async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === '/missing') {
+      response.statusCode = 503;
+      response.end('unavailable');
+      return;
+    }
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    response.end(`<!doctype html>
+      <html><head><title>Docs &amp; Guide</title><style>.hidden{display:none}</style></head>
+      <body><h1>Axis Browser</h1><p>Needle alpha content.</p>
+      <a href="/next">Next page</a><script>doNotExpose()</script></body></html>`);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const origin = `http://127.0.0.1:${address.port}`;
+  const operation: BrowserOperationContext = {
+    signal: new AbortController().signal,
+    reportProgress: () => undefined
+  };
+  const manager = new BrowserSessionManager(new FetchBrowserBackend({ maxResponseBytes: 20_000 }));
+  const browser = await manager.getOrCreate(session({ sessionId: 'fetch-session' }), operation);
+
+  const navigation = await browser.navigate({ url: `${origin}/page` }, operation);
+  assert.equal(navigation.status, 200);
+  assert.equal(navigation.title, 'Docs & Guide');
+
+  const text = await browser.read({ format: 'text', maxChars: 1_000, maxMatches: 10 }, operation);
+  assert.match(text.content ?? '', /Axis Browser/);
+  assert.match(text.content ?? '', /Needle alpha content/);
+  assert.doesNotMatch(text.content ?? '', /doNotExpose/);
+
+  const links = await browser.read({ format: 'links', maxChars: 1_000, maxMatches: 10 }, operation);
+  assert.deepEqual(links.links, [{ text: 'Next page', href: `${origin}/next` }]);
+
+  const extracted = await browser.read({
+    format: 'extract',
+    query: 'needle alpha',
+    maxChars: 500,
+    maxMatches: 5
+  }, operation);
+  assert.equal(extracted.matches?.length, 1);
+  assert.match(extracted.matches?.[0] ?? '', /Needle alpha content/);
+
+  await assert.rejects(
+    () => browser.navigate({ url: `${origin}/missing` }, operation),
+    /failed with HTTP 503/
+  );
+  await assert.rejects(
+    () => browser.navigate({ url: 'file:///tmp/secret' }, operation),
+    /only supports http\/https URLs/
+  );
+
+  const emptyBrowser = await manager.getOrCreate(
+    session({ sessionId: 'fetch-empty-session' }),
+    operation
+  );
+  await assert.rejects(
+    () => emptyBrowser.read({ format: 'text', maxChars: 100, maxMatches: 5 }, operation),
+    /Navigate explicitly before reading/
+  );
+  await manager.closeAll();
+});
+
 test('navigation failure is explicit and does not switch browser backend', async () => {
   const backend = new MockBrowserBackend();
   backend.navigationError = new Error('navigation failed: DNS lookup');
@@ -264,6 +344,30 @@ test('navigation failure is explicit and does not switch browser backend', async
   assert.match(result.toolResults[0]?.error?.message ?? '', /navigation failed: DNS lookup/);
   assert.equal(backend.openedScopes.length, 1);
   assert.equal(toolset.sessions.backend.id, 'mock-browser');
+});
+
+test('external navigation permission is checked before a browser session or request starts', async () => {
+  const backend = new MockBrowserBackend();
+  const toolset = createBrowserToolset({ backend });
+  const runtime = new AgentRuntime({ tools: toolset.tools });
+  const axisSession = session({
+    permissions: {
+      ...allBrowserPermissions,
+      [AXIS_BROWSER_PERMISSION_IDS.external]: 'denied'
+    }
+  });
+  const result = await runtime.run({
+    context: axisSession,
+    provider: adapterFor(axisSession, [
+      { name: AXIS_BROWSER_TOOL_NAMES.navigate, arguments: { url: 'https://example.test' } }
+    ]),
+    userInput: 'Open the external page.'
+  });
+
+  assert.equal(result.toolResults[0]?.status, 'error');
+  assert.equal(result.toolResults[0]?.error?.kind, 'permission');
+  assert.equal(backend.openedScopes.length, 0);
+  assert.equal(backend.navigateCalls, 0);
 });
 
 test('browser navigation timeout aborts the active backend operation canonically', async () => {
