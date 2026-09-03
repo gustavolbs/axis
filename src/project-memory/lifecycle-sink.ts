@@ -97,6 +97,17 @@ function activityPath(metadata: Readonly<Record<string, unknown>> | undefined): 
     ?? safeProjectMemoryStringArray(metadata?.paths, 1, 800)[0];
 }
 
+function previousActivityPath(
+  activities: readonly ProjectMemoryActivity[],
+  callId: string
+): string | undefined {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (activity?.callId === callId && activity.path) return activity.path;
+  }
+  return undefined;
+}
+
 function updateLocationHints(record: ProjectMemorySessionRecord, metadata: Readonly<Record<string, unknown>> | undefined): void {
   record.branch = stringMetadata(metadata, 'branch', 300) ?? record.branch;
   record.worktree = stringMetadata(metadata, 'worktree', 800)
@@ -275,7 +286,20 @@ function applyEvent(
       const metadata = event.metadata;
       updateLocationHints(record, metadata);
       const detail = safeProjectMemoryString(event.detail, textLimit);
-      const candidatePath = activityPath(metadata);
+      const target = event.type === 'read'
+        ? record.reads
+        : event.type === 'mutation'
+          ? record.mutations
+          : event.type === 'command'
+            ? record.commands
+            : record.validations;
+      // Axis tools can report rich activity metadata while running and the
+      // runtime can then emit a final committed/success effect without
+      // repeating that metadata. Correlate the same call so a real committed
+      // edit retains the file path in Project Memory instead of becoming a
+      // pathless mutation in the handoff.
+      const candidatePath = activityPath(metadata)
+        ?? previousActivityPath(target, event.callId);
       const activity: ProjectMemoryActivity = {
         callId: event.callId,
         toolName: event.toolName,
@@ -287,13 +311,6 @@ function applyEvent(
           ? { mutationStatus: event.mutationStatus }
           : {})
       };
-      const target = event.type === 'read'
-        ? record.reads
-        : event.type === 'mutation'
-          ? record.mutations
-          : event.type === 'command'
-            ? record.commands
-            : record.validations;
       boundedPush(target, activity, maxActivity);
       if (candidatePath) {
         boundedUniquePush(record.activeFiles, candidatePath, maxFiles);
