@@ -1,5 +1,6 @@
 import {
   authorizeRuntimeNetworkUrl,
+  type RuntimeNetworkDecision,
   type RuntimeNetworkPolicy
 } from '../../runtime-security/network-policy.js';
 import type {
@@ -21,6 +22,27 @@ export interface StaticBrowserNavigationPolicyOptions {
   readonly allowInsecureHttp?: boolean;
 }
 
+function browserDecisionReason(result: RuntimeNetworkDecision): string | undefined {
+  if (result.allowed) return undefined;
+  if (result.reason === `Host ${result.host} is not allowed by policy.`) {
+    return `Browser host ${result.host} is not in the session allowlist.`;
+  }
+  if (result.classification === 'loopback' && result.reason?.includes('explicit policy opt-in')) {
+    return `Loopback browser host ${result.host} is blocked by session policy.`;
+  }
+  if (result.classification === 'metadata-service') {
+    return `Metadata-service browser host ${result.host} is blocked by session policy.`;
+  }
+  if (
+    result.classification === 'private-network' ||
+    result.classification === 'link-local' ||
+    result.classification === 'reserved-network'
+  ) {
+    return `Private/non-public browser host ${result.host} is blocked by session policy.`;
+  }
+  return result.reason;
+}
+
 /** Browser adapter over Axis's canonical outbound network policy. */
 export class StaticBrowserNavigationPolicy implements BrowserNavigationPolicy {
   private readonly policy: RuntimeNetworkPolicy;
@@ -37,12 +59,13 @@ export class StaticBrowserNavigationPolicy implements BrowserNavigationPolicy {
 
   authorize(request: BrowserNavigationPolicyRequest): BrowserNavigationPolicyDecision {
     const result = authorizeRuntimeNetworkUrl(request.url, this.policy);
+    const reason = browserDecisionReason(result);
     return {
       allowed: result.allowed,
       normalizedUrl: result.normalizedUrl,
       host: result.host,
       classification: result.classification,
-      ...(result.reason ? { reason: result.reason } : {})
+      ...(reason ? { reason } : {})
     };
   }
 }
