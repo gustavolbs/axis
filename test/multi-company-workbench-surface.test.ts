@@ -11,6 +11,9 @@ const read = (relative: string) => fs.readFileSync(path.join(root, relative), 'u
 const projectChatContext = read('src/project-chat-context.ts');
 const projectBackend = read('src/project-engineer-backend.ts');
 const projectDetail = read('app/src/ProjectDetail.tsx');
+const projectGitReview = read('app/src/ProjectGitReview.tsx');
+const projectGitSource = read('src/project-git-review.ts');
+const companyRuntime = read('src/company-scoped-desktop-runtime.ts');
 const main = read('app/src/main.tsx');
 const diffReview = read('app/src/diff-review.ts');
 
@@ -32,7 +35,24 @@ test('Project surface keeps Company and Chat/Cowork identity visible', () => {
   assert.match(projectDetail, /const companyLabel = props\.project\.companyName \?\? props\.project\.companyId/);
   assert.match(projectDetail, /job\.input\.interactionMode === 'cowork' \? 'Cowork' : 'Chat'/);
   assert.match(projectDetail, /Chat can read bounded repository context from this folder\. Cowork can inspect, edit and validate it\./);
+  assert.match(projectDetail, /<ProjectGitReview project=\{props\.project\}/);
   assert.doesNotMatch(projectDetail, /project\.organizationName \?\? project\.organizationId/);
+});
+
+test('Project Git review is read-only and cannot bypass the active Company Project boundary', () => {
+  assert.match(projectGitSource, /git\(workspace, diffArgs\)/);
+  assert.match(projectGitSource, /\['diff', '--cached'/);
+  assert.match(projectGitSource, /\['diff', '--no-ext-diff'/);
+  assert.match(projectGitSource, /GIT_OPTIONAL_LOCKS: '0'/);
+  assert.match(projectGitSource, /const configuredWorkspace = project\.workspace\.trim\(\)/);
+  assert.doesNotMatch(projectGitSource, /request\.body|cwdInput|workspaceInput/);
+
+  assert.match(companyRuntime, /projectGitReviewPath/);
+  assert.match(companyRuntime, /const project = await this\.requireActiveProject/);
+  assert.match(companyRuntime, /readProjectGitReview/);
+  assert.match(projectGitReview, />Unstaged<\/button>/);
+  assert.match(projectGitReview, />Staged<\/button>/);
+  assert.match(projectGitReview, /Git state from this Project folder only/);
 });
 
 test('unified diff parser separates files, hunks, line numbers and add/remove counts', () => {
@@ -71,6 +91,7 @@ test('unified diff parser separates files, hunks, line numbers and add/remove co
 test('desktop installs structured diff review without adding another stylesheet', () => {
   assert.match(main, /installDiffReviewEnhancements\(\)/);
   assert.match(diffReview, /File changes review/);
+  assert.match(diffReview, /Review changes · Last turn/);
   assert.match(diffReview, /Raw unified diff/);
   assert.match(diffReview, /scrollIntoView/);
   assert.match(diffReview, /validation-ok/);
