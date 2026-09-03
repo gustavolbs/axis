@@ -1,0 +1,232 @@
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  Archive,
+  ArchiveRestore,
+  ArrowDown,
+  ArrowUp,
+  BriefcaseBusiness,
+  Building2,
+  Code2,
+  GraduationCap,
+  HeartPulse,
+  Landmark,
+  Palette,
+  Pencil,
+  Plus,
+  Rocket,
+  Search,
+  X
+} from 'lucide-react';
+
+import type { CompanyDefinition, CompanyIconId } from './app-types.js';
+import { UiSelect, type UiSelectOption } from './UiSelect.js';
+
+async function api<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const response = await fetch(url, {
+    method: init?.method ?? 'GET',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: init?.body === undefined ? undefined : JSON.stringify(init.body)
+  });
+  const body = (await response.json()) as T & { error?: string };
+  if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+  return body;
+}
+
+type CompanyView = 'active' | 'archived';
+
+const iconOptions: UiSelectOption[] = [
+  { value: 'building-2', label: 'Building' },
+  { value: 'briefcase-business', label: 'Briefcase' },
+  { value: 'code-2', label: 'Code' },
+  { value: 'rocket', label: 'Rocket' },
+  { value: 'landmark', label: 'Landmark' },
+  { value: 'heart-pulse', label: 'Health' },
+  { value: 'graduation-cap', label: 'Education' },
+  { value: 'palette', label: 'Creative' }
+];
+
+function CompanyIcon({ icon, size = 16 }: { icon: CompanyIconId; size?: number }) {
+  if (icon === 'briefcase-business') return <BriefcaseBusiness size={size} />;
+  if (icon === 'code-2') return <Code2 size={size} />;
+  if (icon === 'rocket') return <Rocket size={size} />;
+  if (icon === 'landmark') return <Landmark size={size} />;
+  if (icon === 'heart-pulse') return <HeartPulse size={size} />;
+  if (icon === 'graduation-cap') return <GraduationCap size={size} />;
+  if (icon === 'palette') return <Palette size={size} />;
+  return <Building2 size={size} />;
+}
+
+function relative(value: string): string {
+  const minutes = Math.floor((Date.now() - new Date(value).getTime()) / 60_000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+export function CompaniesSettings() {
+  const [companies, setCompanies] = useState<CompanyDefinition[]>([]);
+  const [view, setView] = useState<CompanyView>('active');
+  const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState<CompanyDefinition | null | undefined>();
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [color, setColor] = useState('#64748B');
+  const [icon, setIcon] = useState<CompanyIconId>('building-2');
+  const [busy, setBusy] = useState<string>();
+  const [notice, setNotice] = useState<string>();
+
+  async function load() {
+    const { companies: next } = await api<{ companies: CompanyDefinition[] }>('/api/companies?archived=all');
+    setCompanies(next);
+  }
+
+  useEffect(() => {
+    void load().catch((error) => setNotice(error instanceof Error ? error.message : String(error)));
+  }, []);
+
+  const active = useMemo(
+    () => companies.filter((company) => !company.archivedAt).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)),
+    [companies]
+  );
+  const archived = useMemo(
+    () => companies.filter((company) => company.archivedAt).sort((a, b) => (b.archivedAt ?? '').localeCompare(a.archivedAt ?? '')),
+    [companies]
+  );
+  const visible = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    const source = view === 'active' ? active : archived;
+    return source.filter((company) => !needle || [company.name, company.description ?? '']
+      .some((value) => value.toLocaleLowerCase().includes(needle)));
+  }, [active, archived, query, view]);
+
+  function openEditor(company: CompanyDefinition | null) {
+    setEditing(company);
+    setName(company?.name ?? '');
+    setDescription(company?.description ?? '');
+    setColor(company?.color ?? '#64748B');
+    setIcon(company?.icon ?? 'building-2');
+    setNotice(undefined);
+  }
+
+  function closeEditor() {
+    setEditing(undefined);
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return;
+    setBusy('save');
+    setNotice(undefined);
+    try {
+      const body = { name: name.trim(), description: description.trim(), color, icon };
+      if (editing) {
+        await api(`/api/companies/${encodeURIComponent(editing.id)}`, { method: 'PATCH', body });
+        setNotice(`${name.trim()} updated.`);
+      } else {
+        await api('/api/companies', { method: 'POST', body });
+        setNotice(`${name.trim()} created.`);
+      }
+      closeEditor();
+      await load();
+      window.dispatchEvent(new CustomEvent('local-coder:companies-changed'));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  async function setArchived(company: CompanyDefinition, archivedState: boolean) {
+    setBusy(`archive:${company.id}`);
+    setNotice(undefined);
+    try {
+      await api(`/api/companies/${encodeURIComponent(company.id)}/archive`, {
+        method: 'POST', body: { archived: archivedState }
+      });
+      await load();
+      setNotice(archivedState ? `${company.name} archived.` : `${company.name} restored.`);
+      window.dispatchEvent(new CustomEvent('local-coder:companies-changed'));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  async function move(company: CompanyDefinition, direction: -1 | 1) {
+    const index = active.findIndex((item) => item.id === company.id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= active.length) return;
+    const ids = active.map((item) => item.id);
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    setBusy(`order:${company.id}`);
+    setNotice(undefined);
+    try {
+      await api('/api/companies/order', { method: 'POST', body: { ids } });
+      await load();
+      window.dispatchEvent(new CustomEvent('local-coder:companies-changed'));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  return <div className="focused-settings-page connections-settings-page">
+    <header>
+      <div><h1>Companies</h1><p>Keep company identities stable while their name, appearance and lifecycle remain editable on this device.</p></div>
+      <button type="button" className="settings-save-button" onClick={() => openEditor(null)}><Plus size={14} />Add company</button>
+    </header>
+
+    <nav className="connections-surface-tabs" aria-label="Company status">
+      <button type="button" className={view === 'active' ? 'active' : ''} onClick={() => setView('active')}>Active <span>{active.length}</span></button>
+      <button type="button" className={view === 'archived' ? 'active' : ''} onClick={() => setView('archived')}>Archived <span>{archived.length}</span></button>
+    </nav>
+
+    <section className="connector-browser">
+      <div className="connector-toolbar">
+        <label className="connector-search"><Search size={14} /><input aria-label="Search companies" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search companies" /></label>
+      </div>
+      {notice ? <div className="settings-inline-message" role="status">{notice}</div> : null}
+      <div className="connection-list">
+        {visible.map((company) => {
+          const activeIndex = active.findIndex((item) => item.id === company.id);
+          const disabled = busy !== undefined;
+          return <article className="connection-card" key={company.id}>
+            <div className="connection-card-main">
+              <span className="connection-icon" style={{ color: company.color }}><CompanyIcon icon={company.icon} /></span>
+              <div className="connection-copy">
+                <div className="connection-title-row"><strong>{company.name}</strong><span>{company.archivedAt ? 'Archived' : `#${activeIndex + 1}`}</span></div>
+                <small>{company.description || 'No description'}</small>
+                <span className="connection-state">Updated {relative(company.updatedAt)}</span>
+              </div>
+              <div className="connection-actions">
+                {!company.archivedAt ? <>
+                  <button type="button" className="btn-secondary connection-refresh" aria-label={`Move ${company.name} up`} title="Move up" disabled={disabled || activeIndex <= 0} onClick={() => void move(company, -1)}><ArrowUp size={13} /></button>
+                  <button type="button" className="btn-secondary connection-refresh" aria-label={`Move ${company.name} down`} title="Move down" disabled={disabled || activeIndex < 0 || activeIndex >= active.length - 1} onClick={() => void move(company, 1)}><ArrowDown size={13} /></button>
+                  <button type="button" className="btn-secondary connection-refresh" disabled={disabled} onClick={() => openEditor(company)}><Pencil size={13} />Edit</button>
+                  <button type="button" className="btn-secondary connection-refresh" disabled={disabled} onClick={() => void setArchived(company, true)}><Archive size={13} />Archive</button>
+                </> : <button type="button" className="btn-secondary connection-refresh" disabled={disabled} onClick={() => void setArchived(company, false)}><ArchiveRestore size={13} />Restore</button>}
+              </div>
+            </div>
+          </article>;
+        })}
+        {visible.length === 0 ? <div className="settings-empty-state connection-empty-state">{query.trim() ? 'No companies match your search.' : view === 'active' ? 'No companies yet. Add one to create a stable work boundary.' : 'No archived companies.'}</div> : null}
+      </div>
+    </section>
+
+    {editing !== undefined ? <div className="nested-settings-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) closeEditor(); }}>
+      <form className="nested-settings-dialog connection-create-dialog" onSubmit={(event) => void save(event)}>
+        <header><div><h2>{editing ? 'Edit company' : 'Add company'}</h2><p>The internal company ID is generated once and never changes when you rename this company.</p></div><button type="button" onClick={closeEditor} aria-label="Close"><X size={17} /></button></header>
+        <label><span>Name</span><input required autoFocus maxLength={160} value={name} onChange={(event) => setName(event.target.value)} placeholder="Acme Engineering" /></label>
+        <label><span>Description <small>optional</small></span><textarea rows={4} maxLength={2000} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this company context is for" /></label>
+        <label><span>Color</span><input type="color" value={color} onChange={(event) => setColor(event.target.value.toUpperCase())} /></label>
+        <label><span>Icon</span><UiSelect ariaLabel="Company icon" value={icon} options={iconOptions} onChange={(value) => setIcon(value as CompanyIconId)} /></label>
+        {notice ? <div className="settings-inline-message" role="status">{notice}</div> : null}
+        <div className="nested-settings-dialog-actions"><button type="button" onClick={closeEditor}>Cancel</button><button className="settings-save-button" disabled={busy === 'save'}>{busy === 'save' ? 'Saving…' : editing ? 'Save company' : 'Create company'}</button></div>
+      </form>
+    </div> : null}
+  </div>;
+}
