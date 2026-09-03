@@ -2,6 +2,17 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.20.0] - 2026-09-03
+
+### Added
+- Added provider-agnostic filesystem tools for bounded file reads, directory listings, metadata/stat inspection, glob/file search, text search, atomic file creation/replacement, and exact text edits through the unified `AxisTool` runtime contract.
+- Added namespaced `axis.filesystem.read` and `axis.filesystem.write` capabilities with existing `workspace.read`/`workspace.write` permission gates, progress/activity reporting, per-tool timeouts, explicit mutation status, SHA-256 conflict detection, binary-file handling, and `.gitignore`-aware search.
+- Added focused runtime tests covering allowed roots, traversal and absolute-path refusal, symlink escapes, Company/Project isolation, read-only roots and denied permissions, cancellation, mutations, explicit filesystem errors, search behavior, and provider-neutral execution through different fake adapters.
+
+### Security
+- Filesystem execution now resolves only explicit `AgentSessionContext.roots`, canonicalizes real paths, rejects root/path scope mismatches, prevents path traversal and symlink escapes, and never follows symlink directories during recursive search.
+- File creation uses atomic no-clobber commit semantics, while replacement/edit operations use atomic rename plus optional or internally captured SHA-256 preconditions to avoid silently overwriting externally changed content.
+
 ## [0.19.0] - 2026-09-03
 
 ### Added
