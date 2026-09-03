@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import { OperationCancelledError } from '../src/cancellation.js';
 import {
+  AgentProviderProtocolError,
   AgentRuntime,
   InferenceProviderAgentAdapter,
   LocalAgentExecutionTarget,
@@ -150,6 +151,28 @@ function runInput(
   };
 }
 
+function fakeProvider(): InferenceProvider {
+  return {
+    id: 'openai',
+    kind: 'cloud',
+    capabilities: providerCapabilities,
+    async listModels() { return [{ providerId: 'openai', id: 'model-test', displayName: 'Test' }]; },
+    async health() { return { providerId: 'openai', ok: true, checkedAt: new Date(0).toISOString(), latencyMs: 0 }; },
+    async invoke(request) {
+      const hasToolResult = request.userPrompt.includes('"role":"tool"');
+      return {
+        providerId: 'openai',
+        model: request.model,
+        content: hasToolResult
+          ? JSON.stringify({ complete: true, text: 'done', toolCalls: [] })
+          : JSON.stringify({ complete: false, toolCalls: [{ name: 'probe_context', arguments: {} }] }),
+        latencyMs: 0,
+        usage: {}
+      };
+    }
+  };
+}
+
 test('different provider adapters use the same canonical runtime and tool contract', async () => {
   const runtime = new AgentRuntime({ tools: [probeTool] });
   const openaiContext = context({ connectionId: 'openai-account', providerFamily: 'openai', authKind: 'chatgpt-account' });
@@ -170,29 +193,7 @@ test('different provider adapters use the same canonical runtime and tool contra
   assert.equal(anthropic.requests[0]?.tools[0]?.name, 'probe_context');
 });
 
-test('Account and API key auth kinds use the same InferenceProvider adapter architecture', async () => {
-  function fakeProvider(): InferenceProvider {
-    return {
-      id: 'openai',
-      kind: 'cloud',
-      capabilities: providerCapabilities,
-      async listModels() { return [{ providerId: 'openai', id: 'model-test', displayName: 'Test' }]; },
-      async health() { return { providerId: 'openai', ok: true, checkedAt: new Date(0).toISOString(), latencyMs: 0 }; },
-      async invoke(request) {
-        const hasToolResult = request.userPrompt.includes('"role":"tool"');
-        return {
-          providerId: 'openai',
-          model: request.model,
-          content: hasToolResult
-            ? JSON.stringify({ complete: true, text: 'done', toolCalls: [] })
-            : JSON.stringify({ complete: false, toolCalls: [{ name: 'probe_context', arguments: {} }] }),
-          latencyMs: 0,
-          usage: {}
-        };
-      }
-    };
-  }
-
+test('auth kind remains session provenance under the same safe inference bridge architecture', async () => {
   const runtime = new AgentRuntime({ tools: [probeTool] });
   for (const authKind of ['chatgpt-account', 'api-key'] as const) {
     const connectionId = `openai-${authKind}`;
@@ -200,12 +201,25 @@ test('Account and API key auth kinds use the same InferenceProvider adapter arch
     const adapter = new InferenceProviderAgentAdapter(fakeProvider(), {
       connectionId,
       providerFamily: 'openai',
-      modelId: 'model-test'
+      modelId: 'model-test',
+      providerManagedToolExecution: 'disabled'
     });
     const result = await runtime.run(runInput(session, adapter, { requireToolUse: true }));
     assert.equal(result.status, 'completed');
     assert.equal((result.toolResults[0]?.output as { authKind: string }).authKind, authKind);
   }
+});
+
+test('generic inference bridge refuses providers whose hidden tool execution is uncontrolled', () => {
+  assert.throws(
+    () => new InferenceProviderAgentAdapter(fakeProvider(), {
+      connectionId: 'account-with-hidden-tools',
+      providerFamily: 'openai',
+      modelId: 'model-test',
+      providerManagedToolExecution: 'uncontrolled'
+    }),
+    (error) => error instanceof AgentProviderProtocolError && /provider-managed tool execution is uncontrolled/.test(error.message)
+  );
 });
 
 test('session context rejects cross-Company Project, connection, roots and resources before execution', async () => {
