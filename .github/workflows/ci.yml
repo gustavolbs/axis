@@ -137,7 +137,7 @@ jobs:
       - name: Upload desktop visual smoke
         uses: actions/upload-artifact@v4
         with:
-          name: axis-desktop-visual-smoke
+          name: axis-companies-visual-smoke
           path: |
             visual-artifacts/companies/*.png
             visual-artifacts/connections/*.png
