@@ -12,6 +12,9 @@ import { capabilityUnavailableReason } from './capabilities.js';
 import {
   AgentRuntimeError,
   freezeAgentSessionContext,
+  type AgentAttachment,
+  type AgentDecisionRequest,
+  type AgentDecisionResolution,
   type AgentLifecycleEvent,
   type AgentLifecycleSink,
   type AgentMessage,
@@ -76,6 +79,16 @@ class LifecycleEmitter {
   }
 }
 
+class AgentDecisionPause extends Error {
+  constructor(
+    readonly request: AgentDecisionRequest,
+    readonly call?: ToolCall
+  ) {
+    super(request.prompt);
+    this.name = 'AgentDecisionPause';
+  }
+}
+
 export interface AgentRuntimeLimits {
   readonly maxModelCycles: number;
   readonly maxToolCalls: number;
@@ -87,6 +100,8 @@ export interface AgentRunInput {
   readonly context: AgentSessionContext;
   readonly provider: AgentProviderAdapter;
   readonly userInput: string;
+  readonly attachments?: readonly AgentAttachment[];
+  readonly decisionResolution?: AgentDecisionResolution;
   readonly systemPrompt?: string;
   readonly transcript?: readonly AgentMessage[];
   readonly turnIndex?: number;
@@ -97,12 +112,13 @@ export interface AgentRunInput {
 }
 
 export interface AgentRunResult {
-  readonly status: 'completed' | 'failed' | 'cancelled';
+  readonly status: 'completed' | 'paused' | 'failed' | 'cancelled';
   readonly context: AgentSessionContext;
   readonly turn: AgentTurn;
   readonly messages: readonly AgentMessage[];
   readonly toolResults: readonly ToolResult[];
   readonly finalText?: string;
+  readonly decisionRequest?: AgentDecisionRequest;
   readonly error?: AgentRuntimeFailure;
 }
 
@@ -237,6 +253,7 @@ export class AgentRuntime {
     const startedAt = new Date().toISOString();
     let toolCallCount = 0;
     let finalText: string | undefined;
+    let decisionRequest: AgentDecisionRequest | undefined;
     const messages: AgentMessage[] = [...(input.transcript ?? [])];
     const toolResults: ToolResult[] = [];
 
@@ -256,7 +273,8 @@ export class AgentRuntime {
         ...runningTurn(),
         completedAt: new Date().toISOString(),
         status,
-        finalText
+        finalText,
+        decisionRequest
       };
       emitter.emit({ type: 'turn.completed', turn }, turnId);
       emitter.emit({ type: 'session.completed', status, error });
@@ -267,6 +285,7 @@ export class AgentRuntime {
         messages: Object.freeze([...messages]),
         toolResults: Object.freeze([...toolResults]),
         finalText,
+        decisionRequest,
         error
       };
     };
@@ -277,9 +296,14 @@ export class AgentRuntime {
     const userMessage: AgentMessage = {
       id: randomUUID(),
       role: 'user',
-      content: input.userInput
+      content: input.userInput,
+      attachments: input.attachments,
+      decisionResolution: input.decisionResolution
     };
     messages.push(userMessage);
+    if (input.decisionResolution) {
+      emitter.emit({ type: 'decision.resolved', resolution: input.decisionResolution }, turnId);
+    }
     emitter.emit({ type: 'user.input', message: userMessage }, turnId);
 
     if (
@@ -433,6 +457,24 @@ export class AgentRuntime {
         tool: tool.definition,
         call
       });
+      if (!permission.allowed && permission.requiresApproval) {
+        const request: AgentDecisionRequest = {
+          id: `permission-${call.id}`,
+          kind: 'permission',
+          prompt: permission.reason ?? `Approve tool ${call.name}?`,
+          options: [
+            { id: 'approve', label: 'Approve' },
+            { id: 'deny', label: 'Deny' }
+          ],
+          metadata: {
+            callId: call.id,
+            toolName: call.name,
+            permissions: tool.definition.requiredPermissions
+          }
+        };
+        emitter.emit({ type: 'decision.requested', request, call }, turnId);
+        throw new AgentDecisionPause(request, call);
+      }
       emitter.emit({
         type: 'permission.resolved',
         callId: call.id,
@@ -446,7 +488,7 @@ export class AgentRuntime {
           status: 'error',
           error: {
             kind: 'permission',
-            code: permission.requiresApproval ? 'permission_requires_approval' : 'permission_denied',
+            code: 'permission_denied',
             message: permission.reason ?? `Tool ${call.name} is not permitted in this session.`,
             retry: 'never'
           },
@@ -620,9 +662,19 @@ export class AgentRuntime {
         id: randomUUID(),
         role: 'assistant',
         content: response.text ?? '',
-        toolCalls: response.toolCalls
+        reasoningSummary: response.reasoningSummary,
+        attachments: response.attachments,
+        toolCalls: response.toolCalls,
+        decisionRequest: response.decisionRequest
       };
       messages.push(assistantMessage);
+
+      if (response.decisionRequest) {
+        decisionRequest = response.decisionRequest;
+        finalText = response.text ?? '';
+        emitter.emit({ type: 'decision.requested', request: response.decisionRequest }, turnId);
+        return finish('paused');
+      }
 
       if (response.toolCalls.length === 0) {
         finalText = response.text ?? '';
@@ -640,14 +692,45 @@ export class AgentRuntime {
           emitter.emit({ type: 'error', error }, turnId);
           return finish('failed', error);
         }
-        const result = await executeTool(call);
+        let result: ToolResult;
+        try {
+          result = await executeTool(call);
+        } catch (caught) {
+          if (caught instanceof AgentDecisionPause) {
+            decisionRequest = caught.request;
+            finalText = caught.request.prompt;
+            return finish('paused');
+          }
+          const error = failure(
+            'execution',
+            'tool_dispatch_error',
+            caught instanceof Error ? caught.message : String(caught)
+          );
+          emitter.emit({ type: 'error', error, callId: call.id, toolName: call.name }, turnId);
+          return finish('failed', error);
+        }
         toolResults.push(result);
         messages.push({
           id: randomUUID(),
           role: 'tool',
           content: resultMessage(result),
           toolCallId: call.id,
-          toolName: call.name
+          toolName: call.name,
+          error: result.error
+            ? failure(
+                result.error.kind === 'timeout' ? 'timeout'
+                  : result.error.kind === 'cancelled' ? 'cancelled'
+                    : result.error.kind === 'permission' ? 'permission'
+                      : result.error.kind === 'capability' ? 'capability'
+                        : result.error.kind === 'execution' ? 'execution'
+                          : result.error.kind === 'protocol' ? 'protocol'
+                            : 'tool',
+                result.error.code,
+                result.error.message,
+                result.error.retry,
+                result.error.details
+              )
+            : undefined
         });
         if (result.status === 'cancelled') {
           const error = failure('cancelled', 'tool_cancelled', result.error?.message ?? 'Tool was cancelled.');
