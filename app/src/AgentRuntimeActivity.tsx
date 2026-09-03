@@ -29,7 +29,8 @@ import {
   formatRuntimeMetadata,
   presentAgentLifecycle,
   type RuntimeActivityItem,
-  type RuntimeActivityKind
+  type RuntimeActivityKind,
+  type RuntimeActivityState
 } from './agent-runtime-presentation.js';
 
 export interface RuntimePermissionResolution {
@@ -102,7 +103,7 @@ function RuntimeActivityRow(props: {
 
   return <div className="progress-row" role="listitem" data-runtime-kind={item.kind} data-runtime-state={item.state}>
     <span className={`progress-index${active ? ' active' : ''}`} aria-hidden="true">
-      <RuntimeIcon kind={item.kind} active={active} failed={item.state === 'error'} />
+      <RuntimeIcon kind={item.kind} state={item.state} />
     </span>
     <div>
       <strong>{item.title}</strong>
@@ -150,16 +151,19 @@ function RuntimeProgress({ item }: { item: RuntimeActivityItem }) {
   </div>;
 }
 
-function RuntimeIcon({ kind, active, failed }: { kind: RuntimeActivityKind; active: boolean; failed: boolean }) {
+function RuntimeIcon({ kind, state }: { kind: RuntimeActivityKind; state: RuntimeActivityState }) {
   const props = { size: 11, strokeWidth: 1.8 } as const;
+  const active = state === 'running' || state === 'progress' || state === 'waiting';
   if (active) return <LoaderCircle {...props} />;
-  if (failed) return <X {...props} />;
-  if (kind === 'cancelled') return <CircleStop {...props} />;
-  if (kind === 'paused') return <Square {...props} />;
+  if (state === 'error' || state === 'denied') return <X {...props} />;
+  if (kind === 'cancelled' || state === 'cancelled') return <CircleStop {...props} />;
+  if (kind === 'paused' || state === 'paused') return <Square {...props} />;
+  if (kind === 'decision' || kind === 'permission') return state === 'allowed' || state === 'completed' || state === 'success'
+    ? <Check {...props} />
+    : <ChevronDown {...props} />;
   if (kind === 'read' || kind === 'attachment') return <FileText {...props} />;
   if (kind === 'mutation') return <Pencil {...props} />;
   if (kind === 'command' || kind === 'validation' || kind === 'tool') return <Code {...props} />;
-  if (kind === 'decision' || kind === 'permission') return <ChevronDown {...props} />;
   return <Check {...props} />;
 }
 
