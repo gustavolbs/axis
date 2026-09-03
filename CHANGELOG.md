@@ -2,6 +2,18 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.21.0] - 2026-09-03
+
+### Added
+- Added provider-neutral Git runtime tools for exact-root status, working/staged/branch/commit diffs, branch/upstream metadata, bounded commit metadata, explicit branch creation, literal stage/unstage, and managed worktree create/list/remove through canonical `AxisTool` contracts.
+- Added `axis.git.read`, `axis.git.write`, and `axis.git.worktree` capability boundaries with `git.read`, `git.write`, and `git.worktree` permissions, canonical progress/activity, mutation status, cancellation, and provider-neutral runtime coverage.
+- Added isolated managed worktrees under a separate authorized session root with Axis-derived IDs and immutable-session ownership locks, plus bounded cleanup for partial creation and explicit cleanup of dirty managed worktrees.
+
+### Security
+- Git repository selection now requires an explicit session `rootId` that resolves exactly to the Git checkout top-level and matches immutable Company/Project scope; nested implicit repository discovery, cross-Company roots, path traversal/pathspec magic, and arbitrary worktree destinations are denied.
+- The source checkout is never switched, reset, cleaned, or reused as a managed worktree destination. Worktree listing filters unauthorized paths, removal verifies same-repository/session ownership, and uncertain mutating failures remain non-safe to retry.
+- Git commands run through the shared shell-free process runtime with cancellation, bounded output, a sanitized non-interactive environment, and optional-lock suppression for read-only commands.
+
 ## [0.20.0] - 2026-09-03
 
 ### Added
