@@ -44,6 +44,14 @@ interface ManagedRestrictionState {
   error?: string;
 }
 
+export interface ConnectionCenterSettingsProps {
+  /** When present, the Center becomes a Company-owned administration surface. */
+  companyId?: string;
+  companyName?: string;
+  initialSurface?: CenterSurface;
+  showConnectors?: boolean;
+}
+
 const connectionKindOptions: UiSelectOption[] = [
   { value: 'claude-account', label: 'Claude account', description: 'Provider-owned OAuth/session through Claude Code' },
   { value: 'chatgpt-account', label: 'ChatGPT / Codex account', description: 'Provider-owned account through the official Codex runtime' },
@@ -76,9 +84,14 @@ function isAccount(connection: ProviderConnectionView): boolean {
   return connection.auth === 'claude-account' || connection.auth === 'chatgpt-account';
 }
 
-export function ConnectionCenterSettings() {
+export function ConnectionCenterSettings({
+  companyId: fixedCompanyId,
+  companyName: fixedCompanyName,
+  initialSurface = 'connections',
+  showConnectors = true
+}: ConnectionCenterSettingsProps = {}) {
   const bridge = connectionCenterBridge();
-  const [surface, setSurface] = useState<CenterSurface>('connections');
+  const [surface, setSurface] = useState<CenterSurface>(initialSurface);
   const [connections, setConnections] = useState<ProviderConnectionView[]>([]);
   const [companies, setCompanies] = useState<CompanyView[]>([]);
   const [claudeRuntime, setClaudeRuntime] = useState<ClaudeRuntimeDiscoveryView>();
@@ -92,7 +105,7 @@ export function ConnectionCenterSettings() {
   const [adding, setAdding] = useState(false);
   const [managingApiId, setManagingApiId] = useState<string>();
   const [newKind, setNewKind] = useState<NewConnectionKind>('claude-account');
-  const [companyId, setCompanyId] = useState('personal');
+  const [companyId, setCompanyId] = useState(fixedCompanyId ?? 'personal');
   const [connectionId, setConnectionId] = useState('');
   const [connectionName, setConnectionName] = useState('');
   const [endpoint, setEndpoint] = useState('');
@@ -159,7 +172,10 @@ export function ConnectionCenterSettings() {
       setClaudeRuntime(nextClaudeRuntime);
       setCodexRuntime(nextCodexRuntime);
 
-      const accountConnections = nextConnections.filter((connection) => isAccount(connection) && connection.accountProfileId);
+      const ownedConnections = fixedCompanyId
+        ? nextConnections.filter((connection) => connection.companyId === fixedCompanyId)
+        : nextConnections;
+      const accountConnections = ownedConnections.filter((connection) => isAccount(connection) && connection.accountProfileId);
       const statusResults = await Promise.all(accountConnections.map(async (connection) => {
         const profileId = connection.accountProfileId!;
         if (connection.auth === 'claude-account') {
@@ -175,7 +191,7 @@ export function ConnectionCenterSettings() {
       }
       setClaudeStatuses(nextClaude);
       setCodexStatuses(nextCodex);
-      await discoverManagedRestrictions(nextConnections, nextClaude, nextCodex);
+      await discoverManagedRestrictions(ownedConnections, nextClaude, nextCodex);
     } catch (error) {
       setNotice(errorMessage(error));
     } finally {
@@ -183,24 +199,39 @@ export function ConnectionCenterSettings() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [fixedCompanyId]);
 
-  const companyOptions = useMemo<UiSelectOption[]>(() => companies
-    .filter((company) => !company.archivedAt)
-    .map((company) => ({
-      value: company.id,
-      label: company.name,
-      description: company.kind === 'personal' ? 'Personal context' : 'Company context'
-    })), [companies]);
+  const companyOptions = useMemo<UiSelectOption[]>(() => {
+    if (fixedCompanyId) {
+      const company = companies.find((candidate) => candidate.id === fixedCompanyId);
+      return [{
+        value: fixedCompanyId,
+        label: fixedCompanyName ?? company?.name ?? fixedCompanyId,
+        description: company?.kind === 'personal' ? 'Personal context' : 'Company context'
+      }];
+    }
+    return companies
+      .filter((company) => !company.archivedAt)
+      .map((company) => ({
+        value: company.id,
+        label: company.name,
+        description: company.kind === 'personal' ? 'Personal context' : 'Company context'
+      }));
+  }, [companies, fixedCompanyId, fixedCompanyName]);
 
   useEffect(() => {
+    if (fixedCompanyId) {
+      if (companyId !== fixedCompanyId) setCompanyId(fixedCompanyId);
+      return;
+    }
     if (companyOptions.length === 0) return;
     if (!companyOptions.some((option) => option.value === companyId)) setCompanyId(companyOptions[0].value);
-  }, [companyId, companyOptions]);
+  }, [companyId, companyOptions, fixedCompanyId]);
 
   const filteredConnections = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     return connections.filter((connection) => {
+      if (fixedCompanyId && connection.companyId !== fixedCompanyId) return false;
       if (!query) return true;
       return [
         connection.label,
@@ -212,7 +243,7 @@ export function ConnectionCenterSettings() {
         connectionEndpoint(connection)
       ].some((value) => value?.toLocaleLowerCase().includes(query));
     });
-  }, [connections, search]);
+  }, [connections, fixedCompanyId, search]);
 
   function state(connection: ProviderConnectionView): { ready: boolean; label: string } {
     if (connection.auth === 'local') {
@@ -281,13 +312,17 @@ export function ConnectionCenterSettings() {
     setEndpoint('');
     setSecret('');
     setNewKind('claude-account');
-    const personal = companyOptions.find((option) => option.value === 'personal');
-    setCompanyId(personal?.value ?? companyOptions[0]?.value ?? 'personal');
+    if (fixedCompanyId) setCompanyId(fixedCompanyId);
+    else {
+      const personal = companyOptions.find((option) => option.value === 'personal');
+      setCompanyId(personal?.value ?? companyOptions[0]?.value ?? 'personal');
+    }
   }
 
   async function createConnection(event: FormEvent) {
     event.preventDefault();
     if (!bridge || !connectionId.trim() || !connectionName.trim() || !companyId) return;
+    if (fixedCompanyId && companyId !== fixedCompanyId) throw new Error('Company-scoped Connection Center cannot create a connection for another Company.');
     const api = newKind === 'openai-api' || newKind === 'anthropic-api';
     if (api && !secret.trim()) return;
     setBusy('create');
@@ -324,22 +359,23 @@ export function ConnectionCenterSettings() {
   }
 
   const apiKind = newKind === 'openai-api' || newKind === 'anthropic-api';
-  const managingApi = connections.find((connection) => connection.id === managingApiId && connection.auth === 'api-key');
+  const managingApi = filteredConnections.find((connection) => connection.id === managingApiId && connection.auth === 'api-key');
+  const scopedLabel = fixedCompanyName ?? companies.find((company) => company.id === fixedCompanyId)?.name;
 
-  return <div className="focused-settings-page connections-settings-page connection-center-settings">
+  return <div className="focused-settings-page connections-settings-page connection-center-settings" data-company-scope={fixedCompanyId}>
     <header>
-      <div><h1>Connections</h1><p>Every provider identity is a separate Company-owned connection, regardless of how it authenticates.</p></div>
+      <div><h1>Connections</h1><p>{fixedCompanyId ? `Provider identities owned by ${scopedLabel ?? fixedCompanyId}. New connections are locked to this context.` : 'Every provider identity is a separate Company-owned connection, regardless of how it authenticates.'}</p></div>
       {surface === 'connections' ? <button type="button" className="settings-save-button" onClick={() => setAdding(true)}><Plus size={14} />Add connection</button> : null}
     </header>
 
-    <nav className="connections-surface-tabs" aria-label="Connection settings">
+    {showConnectors ? <nav className="connections-surface-tabs" aria-label="Connection settings">
       <button type="button" className={surface === 'connections' ? 'active' : ''} onClick={() => setSurface('connections')}><UserRound size={14} />Connections</button>
       <button type="button" className={surface === 'connectors' ? 'active' : ''} onClick={() => setSurface('connectors')}><Link2 size={14} />Connectors</button>
-    </nav>
+    </nav> : null}
 
     {notice ? <div className="settings-inline-message" role="status">{notice}</div> : null}
 
-    {surface === 'connectors' ? <div className="connection-center-legacy-connectors"><LegacyConnectionsSettings /></div> : <>
+    {surface === 'connectors' && showConnectors ? <div className="connection-center-legacy-connectors"><LegacyConnectionsSettings /></div> : <>
       <section className="connection-section connection-runtime-section">
         <div className="connection-section-heading"><div><h2>Provider runtimes</h2><p>Account authentication remains inside the official provider runtime.</p></div><button type="button" className={`connections-refresh-all ${busy === 'refresh' ? 'loading' : ''}`} onClick={() => void load()} disabled={busy !== undefined}><RefreshCw size={14} /></button></div>
         <div className="connections-runtime-grid">
@@ -349,15 +385,15 @@ export function ConnectionCenterSettings() {
       </section>
 
       <section className="connection-section connection-center-inventory">
-        <div className="connection-section-heading"><div><h2>Connection inventory</h2><p>Accounts and API Keys from the same provider remain distinct identities with independent Company ownership.</p></div><span className="connection-count">{connections.length}</span></div>
-        <label className="connector-search connection-center-search"><Search size={14} /><input aria-label="Search connections" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, Company, provider or auth kind" /></label>
+        <div className="connection-section-heading"><div><h2>Connection inventory</h2><p>{fixedCompanyId ? 'Only connections canonically owned by this Company are shown.' : 'Accounts and API Keys from the same provider remain distinct identities with independent Company ownership.'}</p></div><span className="connection-count">{filteredConnections.length}</span></div>
+        <label className="connector-search connection-center-search"><Search size={14} /><input aria-label="Search connections" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={fixedCompanyId ? 'Search this Company’s connections' : 'Search name, Company, provider or auth kind'} /></label>
         <div className="connection-list">
           {filteredConnections.map((connection) => {
             const currentState = state(connection);
             const account = isAccount(connection);
             const customEndpoint = connectionEndpoint(connection);
             const runtimeReady = connection.auth === 'claude-account' ? claudeRuntime?.usable : connection.auth === 'chatgpt-account' ? codexRuntime?.usable : true;
-            return <article className="connection-card connection-center-card" key={connection.id} data-connection-id={connection.id}>
+            return <article className="connection-card connection-center-card" key={connection.id} data-connection-id={connection.id} data-company-id={connection.companyId}>
               <div className="connection-card-main">
                 <span className="connection-icon">{connection.auth === 'api-key' ? <KeyRound size={16} /> : <UserRound size={16} />}</span>
                 <div className="connection-copy">
@@ -378,7 +414,7 @@ export function ConnectionCenterSettings() {
               </div>
             </article>;
           })}
-          {filteredConnections.length === 0 ? <div className="settings-empty-state connection-empty-state">{busy === 'refresh' ? 'Loading connections…' : search ? 'No connections match your search.' : 'No provider connections yet.'}</div> : null}
+          {filteredConnections.length === 0 ? <div className="settings-empty-state connection-empty-state">{busy === 'refresh' ? 'Loading connections…' : search ? 'No connections match your search.' : fixedCompanyId ? 'No provider connections belong to this Company yet.' : 'No provider connections yet.'}</div> : null}
         </div>
       </section>
 
@@ -389,7 +425,7 @@ export function ConnectionCenterSettings() {
       <form className="nested-settings-dialog connection-create-dialog" onSubmit={(event) => void createConnection(event)}>
         <header><div><h2>Add connection</h2><p>Create a distinct provider identity and bind it to exactly one Company.</p></div></header>
         <label><span>Authentication</span><UiSelect ariaLabel="Connection authentication" value={newKind} options={connectionKindOptions} onChange={(value) => { setNewKind(value as NewConnectionKind); setEndpoint(''); setSecret(''); }} /></label>
-        <label><span>Company</span><UiSelect ariaLabel="Connection Company" value={companyId} options={companyOptions} onChange={setCompanyId} /></label>
+        {fixedCompanyId ? <div className="company-connection-fixed-scope"><span>Company</span><strong>{scopedLabel ?? fixedCompanyId}</strong><small>Ownership is fixed by the current Company Hub.</small></div> : <label><span>Company</span><UiSelect ariaLabel="Connection Company" value={companyId} options={companyOptions} onChange={setCompanyId} /></label>}
         <label><span>{apiKind ? 'Credential ID' : 'Profile ID'}</span><input required autoFocus value={connectionId} onChange={(event) => setConnectionId(event.target.value)} placeholder={apiKind ? 'openai-work-1' : newKind === 'claude-account' ? 'claude-work' : 'chatgpt-work'} spellCheck={false} pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" /></label>
         <label><span>Name</span><input required value={connectionName} onChange={(event) => setConnectionName(event.target.value)} placeholder={apiKind ? 'OpenAI Product Team' : newKind === 'claude-account' ? 'Claude Work' : 'ChatGPT Work'} /></label>
         {apiKind ? <label><span>Endpoint <small>optional</small></span><input type="url" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder={newKind === 'openai-api' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com'} spellCheck={false} /></label> : null}
