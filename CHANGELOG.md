@@ -2,6 +2,23 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.23.1] - 2026-09-03
+
+### Added
+- Added the P1 multi-company end-to-end gate report with an acceptance-by-acceptance distinction between real product evidence, module/fixture evidence, and unresolved blockers.
+- Added a focused `npm run p1:gate` regression command spanning product runtime composition, Git, runtime security, Project Memory, provider adapters, the accepted Codex Account blocker, and Runtime UI contracts.
+
+### Changed
+- Product AgentRuntime composition now fails closed by withholding managed-worktree tools until a task-specific managed worktree checkout can be composed as an exact immutable session root. Direct provider-neutral Git worktree tools remain available to the lower-level Git runtime and keep their existing ownership/isolation coverage.
+- Updated the Codex/Claude Desktop parity document with the real P1 gate result instead of treating merged foundations or mock/fixture coverage as completion.
+
+### Fixed
+- Fixed a product integration mismatch where Cowork could advertise managed-worktree tools even though its immutable product session contained no authorized worktree storage/task-checkout root capable of satisfying those tool contracts.
+- Fixed the API Key lifecycle Electron smoke so it validates the current cloud-provider network boundary: unsafe loopback/insecure endpoints must fail closed before any request, while edit/rotation/sibling isolation remain verified through UI and Keychain state.
+
+### Security
+- P1 remains explicitly FAIL rather than silently falling back: product-level worktree orchestration, durable restart checkpoints, real Local Worker execution-target composition, the accepted ChatGPT/Codex Account G2 blocker, and live multi-Connection evidence remain blockers.
+
 ## [0.23.0] - 2026-09-03
 
 ### Added

@@ -97,9 +97,12 @@ try {
 
   const initialRequestCount = requests.length;
   await clickText(cdp, '.api-key-manage-dialog button', 'Test connection');
-  await waitFor(cdp, "document.querySelector('.api-key-manage-dialog')?.textContent?.includes('Connection verified') === true", 'initial verified result');
-  const initialRequest = await waitForRequest((request, index) => index >= initialRequestCount && request.method === 'GET' && request.url === '/v1/models' && request.authorization === `Bearer ${firstSecret}`, 'initial safe connection test');
-  if (initialRequest.project !== undefined) throw new Error(`Initial test unexpectedly sent project metadata: ${JSON.stringify(safeRequests())}`);
+  await waitFor(cdp, "document.querySelector('.api-key-manage-dialog')?.textContent?.includes('HTTPS is required by policy.') === true", 'initial unsafe endpoint rejection');
+  await sleep(250);
+  if (requests.length !== initialRequestCount) throw new Error(`Unsafe local provider endpoint escaped network policy: ${JSON.stringify(safeRequests())}`);
+  const initialDenied = await evaluate(cdp, `(() => ({ text: document.querySelector('.settings-endpoint-result')?.textContent?.replace(/\\s+/g, ' ').trim() ?? '', busy: [...document.querySelectorAll('.api-key-manage-dialog button')].some((button) => button.textContent?.includes('Testing…')) }))()`);
+  console.log(`api-lifecycle-initial-network-denial ${JSON.stringify(initialDenied)}`);
+  if (!initialDenied?.text.includes('HTTPS is required by policy.') || initialDenied.busy) throw new Error(`Unsafe endpoint denial UI contract failed: ${JSON.stringify(initialDenied)}`);
 
   await evaluate(cdp, `(() => { const dialog = document.querySelector('.api-key-manage-dialog'); const name = [...dialog.querySelectorAll('input')].find((input) => input.previousElementSibling?.textContent?.includes('Connection name')); const project = dialog.querySelector('input[aria-label="API header openai-project"]'); if (!name || !project) throw new Error('Editable API lifecycle fields not found'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(name, 'Lifecycle Primary Edited'); name.dispatchEvent(new Event('input', { bubbles: true })); set.call(project, 'project-smoke'); project.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
   await sleep(250); await clickText(cdp, '.api-key-manage-dialog button', 'Save changes');
@@ -113,10 +116,16 @@ try {
   await sleep(150); await clickText(cdp, '.api-key-manage-dialog button', 'Rotate key');
   await waitFor(cdp, "document.querySelector('.api-key-manage-dialog')?.textContent?.includes('API key rotated') === true", 'rotated API key');
 
+  const rotationDeadline = Date.now() + 10_000;
+  while (Date.now() < rotationDeadline && credentials.resolve(firstCredentialId) !== rotatedSecret) await sleep(100);
+  if (credentials.resolve(firstCredentialId) !== rotatedSecret) throw new Error('Rotated API key was not persisted to the shared macOS Keychain item.');
+  if (credentials.resolve(siblingCredentialId) !== siblingSecret) throw new Error('Rotating one API key changed its sibling credential.');
+
   const rotatedRequestStart = requests.length;
   await clickText(cdp, '.api-key-manage-dialog button', 'Test connection');
-  await waitFor(cdp, "document.querySelector('.api-key-manage-dialog')?.textContent?.includes('Connection verified') === true", 'post-rotation verified result');
-  await waitForRequest((request, index) => index >= rotatedRequestStart && request.method === 'GET' && request.url === '/v1/models' && request.authorization === `Bearer ${rotatedSecret}` && request.project === 'project-smoke', 'post-rotation test using rotated key and persisted project header');
+  await waitFor(cdp, "document.querySelector('.api-key-manage-dialog')?.textContent?.includes('HTTPS is required by policy.') === true", 'post-rotation unsafe endpoint rejection');
+  await sleep(250);
+  if (requests.length !== rotatedRequestStart) throw new Error(`Rotated credential escaped network policy: ${JSON.stringify(safeRequests())}`);
 
   await evaluate(cdp, `(() => { const button = document.querySelector('.api-key-manage-dialog button[aria-label="Disable API Key connection"]'); if (!button) throw new Error('Disable API Key connection control not found'); button.click(); return true; })()`);
   await waitFor(cdp, "document.querySelector('.api-key-manage-dialog')?.textContent?.includes('Connection disabled') === true", 'disabled state');
@@ -135,6 +144,7 @@ try {
   const remaining = await evaluate(cdp, `(() => ({ firstGone: document.querySelector('[data-connection-id="${firstConnectionId}"]') === null, siblingPresent: document.querySelector('[data-connection-id="${siblingConnectionId}"]') !== null, siblingCompany: document.querySelector('[data-connection-id="${siblingConnectionId}"]')?.dataset.companyId, text: document.querySelector('.connection-center-card')?.textContent?.replace(/\\s+/g, ' ').trim() ?? '' }))()`);
   if (!remaining?.firstGone || !remaining.siblingPresent || remaining.siblingCompany !== 'personal' || !remaining.text.includes('Lifecycle Sibling')) throw new Error(`Sibling isolation after removal failed: ${JSON.stringify(remaining)}`);
   await screenshot(cdp, 'api-lifecycle-sibling-after-remove');
+  if (requests.length !== 0) throw new Error(`Cloud provider smoke unexpectedly reached loopback: ${JSON.stringify(safeRequests())}`);
   console.log(`api-lifecycle-requests ${JSON.stringify(safeRequests())}`);
 } finally {
   cdp?.close(); child.kill('SIGTERM'); await Promise.race([new Promise((resolve) => child.once('exit', resolve)), sleep(3_000).then(() => child.kill('SIGKILL'))]);

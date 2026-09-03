@@ -24,7 +24,12 @@ import {
   type BrowserBackend
 } from './agent-tools/browser/index.js';
 import { createFilesystemP12Tools } from './agent-tools/filesystem/index.js';
-import { createGitTools } from './agent-tools/git/index.js';
+import {
+  GIT_WORKTREE_CREATE_TOOL_NAME,
+  GIT_WORKTREE_REMOVE_TOOL_NAME,
+  GIT_WORKTREE_LIST_TOOL_NAME,
+  createGitTools
+} from './agent-tools/git/index.js';
 import type { McpHost } from './agent-tools/mcp/index.js';
 import { createProcessTools } from './agent-tools/process/index.js';
 import { currentCancellationSignal } from './cancellation.js';
@@ -301,15 +306,24 @@ function toolNeedsWorkspace(tool: AxisTool): boolean {
   );
 }
 
+const PRODUCT_UNCOMPOSED_GIT_TOOLS = new Set<string>([
+  GIT_WORKTREE_LIST_TOOL_NAME,
+  GIT_WORKTREE_CREATE_TOOL_NAME,
+  GIT_WORKTREE_REMOVE_TOOL_NAME
+]);
+
 function baseTools(
   roots: readonly AgentRoot[],
   backend: BrowserBackend | false | undefined,
   extraTools: readonly AxisTool[] = []
 ): AxisTool[] {
+  const gitTools = createGitTools().tools.filter(
+    (tool) => !PRODUCT_UNCOMPOSED_GIT_TOOLS.has(tool.definition.name)
+  );
   const tools = [
     ...createFilesystemP12Tools(),
     ...createProcessTools().tools,
-    ...createGitTools().tools,
+    ...gitTools,
     ...browserTools(backend),
     ...extraTools
   ];

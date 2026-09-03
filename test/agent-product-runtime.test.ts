@@ -652,3 +652,48 @@ test('product composition uses the common connection adapter factory, preserving
   assert.match(adapterComposition, /input\.connection\.auth === 'chatgpt-account'/);
   assert.match(codexBlocker, /no proven all-tools-disabled mode/);
 });
+
+
+test('P1 gate: product catalog does not advertise managed worktrees before an exact task worktree root is composed', async () => {
+  const directory = temp('p1-worktree-catalog');
+  const repo = path.join(directory, 'repo');
+  fs.mkdirSync(repo);
+  fs.writeFileSync(path.join(repo, 'readme.txt'), 'hello\n');
+  initializeRepo(repo);
+
+  const selected = project({
+    id: 'p1-worktree-project', companyId: 'company-a', workspace: repo,
+    connectionId: 'openai-a', providerFamily: 'openai', modelId: 'gpt-test'
+  });
+  const selectedConnection = connection({
+    id: 'openai-a', providerFamily: 'openai', companyId: 'company-a'
+  });
+  const prompts: string[] = [];
+  const provider = new ScriptedProvider('openai-a', 'gpt-test', (request, invocation) => {
+    prompts.push(request.systemPrompt);
+    if (invocation === 1) {
+      return call('read', 'read_file', {
+        rootId: 'project:p1-worktree-project', path: 'readme.txt'
+      });
+    }
+    return complete('Catalog stayed fail-closed.');
+  });
+  const runtime = product({
+    projects: [selected], connections: [selectedConnection],
+    providers: new Map([['openai-a', provider]])
+  });
+
+  try {
+    const result = await runtime.executeEngineer(engineerInput({
+      project: selected, sessionId: 'p1-worktree-catalog'
+    }));
+    assert.equal(result.status, 'success');
+    const prompt = prompts[0] ?? '';
+    assert.ok(prompt.includes('\"name\":\"git_status\"'));
+    assert.equal(prompt.includes('\"name\":\"git_worktree_list\"'), false);
+    assert.equal(prompt.includes('\"name\":\"git_worktree_create\"'), false);
+    assert.equal(prompt.includes('\"name\":\"git_worktree_remove\"'), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
