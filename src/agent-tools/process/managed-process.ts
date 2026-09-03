@@ -44,6 +44,7 @@ export interface ManagedProcessSnapshot extends ManagedProcessOutputSlice {
   readonly completedAt?: string;
   readonly exitCode: number | null;
   readonly signal: NodeJS.Signals | null;
+  readonly stdinOpen: boolean;
   readonly error?: string;
 }
 
@@ -150,10 +151,12 @@ interface ManagedProcessRecord {
   signal: NodeJS.Signals | null;
   error?: string;
   terminationRequested: boolean;
+  stdinClosed: boolean;
 }
 
 const DEFAULT_OUTPUT_LIMIT_BYTES = 2_000_000;
 const DEFAULT_KILL_GRACE_MS = 250;
+const MAX_STDIN_CHUNK_BYTES = 64 * 1024;
 
 function sessionOwnerKey(session: AgentSessionContext): string {
   return [
@@ -170,17 +173,30 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function cancellationPromise(signal: AbortSignal): Promise<never> {
-  return new Promise((_, reject) => {
-    if (signal.aborted) {
+async function waitForCompletion(completion: Promise<void>, signal: AbortSignal): Promise<void> {
+  throwIfCancelled(signal);
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       reject(new OperationCancelledError());
-      return;
-    }
-    signal.addEventListener(
-      'abort',
-      () => reject(new OperationCancelledError()),
-      { once: true }
-    );
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    void completion.then(finish, (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    });
   });
 }
 
@@ -209,7 +225,7 @@ export class ManagedProcessRegistry {
       cwd: request.cwdPath,
       shell: false,
       env: request.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true
     });
@@ -234,7 +250,8 @@ export class ManagedProcessRegistry {
       status: 'starting',
       exitCode: null,
       signal: null,
-      terminationRequested: false
+      terminationRequested: false,
+      stdinClosed: false
     };
     this.records.set(record.processId, record);
 
@@ -244,13 +261,16 @@ export class ManagedProcessRegistry {
       record.status = record.terminationRequested ? 'terminated' : 'failed';
       record.error = error instanceof Error ? error.message : String(error);
       record.completedAt = new Date().toISOString();
+      record.stdinClosed = true;
       record.resolveCompletion();
     });
     child.once('close', (exitCode, signal) => {
+      if (record.status === 'failed') return;
       record.exitCode = exitCode;
       record.signal = signal;
       record.status = record.terminationRequested ? 'terminated' : 'exited';
       record.completedAt = new Date().toISOString();
+      record.stdinClosed = true;
       record.resolveCompletion();
     });
 
@@ -313,10 +333,83 @@ export class ManagedProcessRegistry {
     cursor: ManagedProcessCursor = {}
   ): Promise<ManagedProcessSnapshot> {
     const record = this.requireOwned(session, processId);
-    throwIfCancelled(signal);
     if (record.status === 'starting' || record.status === 'running' || record.status === 'terminating') {
-      await Promise.race([record.completion, cancellationPromise(signal)]);
+      await waitForCompletion(record.completion, signal);
+    } else {
+      throwIfCancelled(signal);
     }
+    return this.snapshot(record, cursor);
+  }
+
+  async writeStdin(
+    session: AgentSessionContext,
+    processId: string,
+    data: string,
+    end = false,
+    cursor: ManagedProcessCursor = {}
+  ): Promise<ManagedProcessSnapshot> {
+    const record = this.requireOwned(session, processId);
+    if (record.status !== 'running') {
+      throw new Error(`Process ${processId} is ${record.status}; stdin is available only while running.`);
+    }
+    if (record.stdinClosed || !record.child.stdin || record.child.stdin.destroyed) {
+      throw new Error(`Process ${processId} stdin is already closed.`);
+    }
+    if (Buffer.byteLength(data, 'utf8') > MAX_STDIN_CHUNK_BYTES) {
+      throw new Error(`Process stdin chunk exceeds ${MAX_STDIN_CHUNK_BYTES} bytes.`);
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const stdin = record.child.stdin;
+      if (!stdin) {
+        reject(new Error(`Process ${processId} has no writable stdin.`));
+        return;
+      }
+      const afterWrite = (error?: Error | null) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!end) {
+          resolve();
+          return;
+        }
+        record.stdinClosed = true;
+        stdin.end(resolve);
+      };
+      if (data) stdin.write(data, 'utf8', afterWrite);
+      else afterWrite();
+    });
+
+    return this.snapshot(record, cursor);
+  }
+
+  sendSignal(
+    session: AgentSessionContext,
+    processId: string,
+    signal: NodeJS.Signals,
+    cursor: ManagedProcessCursor = {}
+  ): ManagedProcessSnapshot {
+    const record = this.requireOwned(session, processId);
+    if (record.status !== 'running') {
+      throw new Error(`Process ${processId} is ${record.status}; signals require a running process.`);
+    }
+    const pid = record.child.pid;
+    if (!pid) throw new Error(`Process ${processId} has no operating-system pid.`);
+
+    let sent = false;
+    try {
+      if (process.platform === 'win32') sent = record.child.kill(signal);
+      else {
+        process.kill(-pid, signal);
+        sent = true;
+      }
+    } catch (error) {
+      throw new Error(
+        `Could not send ${signal} to process ${processId}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    if (!sent) throw new Error(`Could not send ${signal} to process ${processId}.`);
     return this.snapshot(record, cursor);
   }
 
@@ -329,6 +422,7 @@ export class ManagedProcessRegistry {
     if (record.status === 'starting' || record.status === 'running') {
       record.terminationRequested = true;
       record.status = 'terminating';
+      record.stdinClosed = true;
       await terminateProcessTree(record.child, this.killGraceMs);
       await Promise.race([record.completion, delay(this.killGraceMs + 1_000)]);
     }
@@ -342,6 +436,7 @@ export class ManagedProcessRegistry {
     await Promise.all(owned.map(async (record) => {
       record.terminationRequested = true;
       record.status = 'terminating';
+      record.stdinClosed = true;
       await terminateProcessTree(record.child, this.killGraceMs);
       await Promise.race([record.completion, delay(this.killGraceMs + 1_000)]);
     }));
@@ -380,6 +475,7 @@ export class ManagedProcessRegistry {
       completedAt: record.completedAt,
       exitCode: record.exitCode,
       signal: record.signal,
+      stdinOpen: !record.stdinClosed && Boolean(record.child.stdin) && !record.child.stdin?.destroyed,
       error: record.error,
       stdout: stdout.text,
       stderr: stderr.text,
