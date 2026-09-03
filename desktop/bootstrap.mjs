@@ -32,4 +32,11 @@ if (process.platform === 'darwin') {
   });
 }
 
+// Install the standalone active-Company decorator before main.mjs asks the
+// compiled runtime class to create its singleton. The decorator keeps Company
+// scope server-owned while the existing app runtime remains the implementation
+// of jobs, Projects, settings and provider execution.
+const { installCompanyScopedDesktopRuntime } = await import('../dist/company-scoped-desktop-runtime.js');
+installCompanyScopedDesktopRuntime();
+
 await import('./main.mjs');
