@@ -261,8 +261,17 @@ try {
     project.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   })()`);
+  await sleep(250);
   await clickText(cdp, '.api-key-manage-dialog button', 'Save changes');
   await waitFor(cdp, "document.querySelector('.api-key-manage-dialog')?.textContent?.includes('Connection settings saved') === true", 'saved API settings');
+  const persisted = await evaluate(cdp, `(async () => {
+    const details = await window.lc.apiKeyConnectionDetails(${JSON.stringify(firstConnectionId)});
+    return { name: details.name, endpoint: details.endpoint, headers: details.headers, enabled: details.enabled };
+  })()`);
+  console.log(`api-lifecycle-persisted ${JSON.stringify(persisted)}`);
+  if (persisted?.name !== 'Lifecycle Primary Edited' || persisted?.headers?.['openai-project'] !== 'project-smoke') {
+    throw new Error(`Save did not persist edited API lifecycle metadata: ${JSON.stringify(persisted)}`);
+  }
   await screenshot(cdp, 'api-lifecycle-edited');
 
   await evaluate(cdp, `(() => {
@@ -274,6 +283,7 @@ try {
     input.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   })()`);
+  await sleep(150);
   await clickText(cdp, '.api-key-manage-dialog button', 'Rotate key');
   await waitFor(cdp, "document.querySelector('.api-key-manage-dialog')?.textContent?.includes('API key rotated') === true", 'rotated API key');
 
@@ -322,7 +332,7 @@ try {
     throw new Error(`Sibling isolation after removal failed: ${JSON.stringify(remaining)}`);
   }
   await screenshot(cdp, 'api-lifecycle-sibling-after-remove');
-  console.log(`api-lifecycle-requests ${JSON.stringify(requests)}`);
+  console.log(`api-lifecycle-requests ${JSON.stringify(requests.map(({ authorization, ...request }) => request))}`);
 } finally {
   cdp?.close();
   child.kill('SIGTERM');
