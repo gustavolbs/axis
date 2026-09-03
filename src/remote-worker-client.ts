@@ -19,6 +19,12 @@ import {
   type RemoteWorkerHealth
 } from './remote-protocol.js';
 import { applyRemoteChanges, prepareRemoteWorkspace } from './remote-workspace.js';
+import {
+  classifyRuntimeNetworkHost,
+  type RuntimeNetworkPolicy
+} from './runtime-security/network-policy.js';
+import { redactRuntimeUrlForDisplay } from './runtime-security/redaction.js';
+import { runtimeSecureFetch } from './runtime-security/secure-fetch.js';
 
 export class RemoteWorkerError extends Error {
   constructor(
@@ -34,13 +40,22 @@ export class RemoteWorkerError extends Error {
 export class RemoteWorkerClient {
   private readonly baseUrl: string;
   private readonly token?: string;
+  private readonly networkPolicy: RuntimeNetworkPolicy;
 
   constructor(private readonly config: LocalCoderConfig) {
     if (!config.remoteWorkerUrl) {
       throw new Error('LOCAL_CODER_REMOTE_WORKER_URL is required for remote execution.');
     }
-    this.baseUrl = config.remoteWorkerUrl.replace(/\/$/, '');
+    const configuredUrl = new URL(config.remoteWorkerUrl);
+    this.baseUrl = configuredUrl.toString().replace(/\/$/, '');
     this.token = config.remoteWorkerToken;
+    const classification = classifyRuntimeNetworkHost(configuredUrl.hostname);
+    this.networkPolicy = Object.freeze({
+      allowedHosts: Object.freeze([configuredUrl.hostname]),
+      allowLoopback: classification === 'loopback',
+      allowPrivateNetwork: classification === 'private-network' || classification === 'link-local' || classification === 'reserved-network',
+      allowInsecureHttp: configuredUrl.protocol === 'http:'
+    });
   }
 
   async health(): Promise<RemoteWorkerHealth> {
@@ -166,7 +181,7 @@ export class RemoteWorkerClient {
     let response: Response;
 
     try {
-      response = await fetch(`${this.baseUrl}${pathname}`, {
+      response = await runtimeSecureFetch(fetch, `${this.baseUrl}${pathname}`, {
         method,
         headers: {
           ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
@@ -174,6 +189,8 @@ export class RemoteWorkerClient {
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
         signal: abort.signal
+      }, {
+        policy: this.networkPolicy
       });
     } catch (error) {
       if (callerCancelled(abort.callerSignals)) {
@@ -181,7 +198,7 @@ export class RemoteWorkerClient {
       }
       const message = error instanceof Error ? error.message : String(error);
       throw new RemoteWorkerError(
-        `Could not reach remote local-coder worker at ${this.baseUrl}. ${message}`,
+        `Could not reach remote local-coder worker at ${redactRuntimeUrlForDisplay(this.baseUrl)}. ${message}`,
         true
       );
     }
