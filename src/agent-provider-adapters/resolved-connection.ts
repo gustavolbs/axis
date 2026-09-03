@@ -59,56 +59,56 @@ export function createAgentProviderAdapterForConnection(
   }
   const exactBinding = binding(input);
 
-  switch (input.connection.auth) {
-    case 'local':
-      if (input.connection.providerFamily !== 'ollama') {
-        throw new AgentProviderProtocolError(
-          `Local connection ${input.connection.id} uses unsupported provider family ${input.connection.providerFamily}.`
-        );
-      }
-      return createOllamaAgentAdapter(provider(input), exactBinding);
-
-    case 'api-key':
-      if (input.connection.providerFamily === 'openai') {
-        return createOpenAiApiKeyAgentAdapter(provider(input), exactBinding);
-      }
-      if (input.connection.providerFamily === 'anthropic') {
-        return createAnthropicApiKeyAgentAdapter(provider(input), exactBinding);
-      }
+  if (input.connection.auth === 'local') {
+    if (input.connection.providerFamily !== 'ollama') {
       throw new AgentProviderProtocolError(
-        `API-key connection ${input.connection.id} uses unsupported provider family ${input.connection.providerFamily}.`
+        `Local connection ${input.connection.id} uses unsupported provider family ${input.connection.providerFamily}.`
       );
-
-    case 'claude-account': {
-      if (input.connection.providerFamily !== 'anthropic') {
-        throw new AgentProviderProtocolError(
-          `Claude Account connection ${input.connection.id} must use provider family anthropic.`
-        );
-      }
-      const profileId = input.connection.accountProfileId?.trim();
-      if (!profileId || !input.claudeProfiles) {
-        throw new AgentProviderProtocolError(
-          `Claude Account connection ${input.connection.id} requires its exact account profile store and profile id.`
-        );
-      }
-      return new ClaudeAccountAgentAdapter({
-        profiles: input.claudeProfiles,
-        profileId,
-        binding: exactBinding,
-        claudeBinary: input.claudeBinary,
-        commandPrefixArgs: input.claudeCommandPrefixArgs,
-        baseEnv: input.baseEnv
-      });
     }
-
-    case 'chatgpt-account':
-      // The dedicated adapter remains fail-closed while Codex has no proven
-      // all-tools-disabled mode; never substitute an API key or another Account.
-      return createChatGptAccountAgentAdapter();
-
-    default:
-      throw new AgentProviderProtocolError(
-        `Unsupported provider connection auth kind: ${String(input.connection.auth)}.`
-      );
+    return createOllamaAgentAdapter(provider(input), exactBinding);
   }
+
+  if (input.connection.auth === 'api-key') {
+    if (input.connection.providerFamily === 'openai') {
+      return createOpenAiApiKeyAgentAdapter(provider(input), exactBinding);
+    }
+    if (input.connection.providerFamily === 'anthropic') {
+      return createAnthropicApiKeyAgentAdapter(provider(input), exactBinding);
+    }
+    throw new AgentProviderProtocolError(
+      `API-key connection ${input.connection.id} uses unsupported provider family ${input.connection.providerFamily}.`
+    );
+  }
+
+  if (input.connection.auth === 'claude-account') {
+    if (input.connection.providerFamily !== 'anthropic') {
+      throw new AgentProviderProtocolError(
+        `Claude Account connection ${input.connection.id} must use provider family anthropic.`
+      );
+    }
+    const profileId = input.connection.accountProfileId?.trim();
+    if (!profileId || !input.claudeProfiles) {
+      throw new AgentProviderProtocolError(
+        `Claude Account connection ${input.connection.id} requires its exact account profile store and profile id.`
+      );
+    }
+    return new ClaudeAccountAgentAdapter({
+      profiles: input.claudeProfiles,
+      profileId,
+      binding: exactBinding,
+      claudeBinary: input.claudeBinary,
+      commandPrefixArgs: input.claudeCommandPrefixArgs,
+      baseEnv: input.baseEnv
+    });
+  }
+
+  if (input.connection.auth === 'chatgpt-account') {
+    // The dedicated adapter remains fail-closed while Codex has no proven
+    // all-tools-disabled mode; never substitute an API key or another Account.
+    return createChatGptAccountAgentAdapter();
+  }
+
+  throw new AgentProviderProtocolError(
+    `Unsupported provider connection auth kind: ${String(input.connection.auth)}.`
+  );
 }
