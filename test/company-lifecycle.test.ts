@@ -49,6 +49,22 @@ test('company names are unique independent of case and unicode normalization', (
   assert.throws(() => store.updateCompany(other.id, { name: 'LIVE NATION' }), /already exists/);
 });
 
+test('new company metadata is strict while legacy migration remains tolerant', () => {
+  const store = new CompanyContextStore(tempFile());
+  const company = store.createCompany({ name: 'Validated' });
+  assert.throws(() => store.createCompany({ name: '   ' }), /Company name/);
+  assert.throws(() => store.updateCompany(company.id, { name: '\n' }), /Company name/);
+  assert.throws(() => store.createCompany({ name: 'Bad Color', color: '#12345G' }), /Company color/);
+  assert.throws(
+    () => store.createCompany({ name: 'Bad Icon', icon: 'skull' as never }),
+    /Unsupported company icon/
+  );
+  assert.throws(
+    () => store.createCompany({ name: 'Bad Description', description: 'x'.repeat(2_001) }),
+    /description must be at most/
+  );
+});
+
 test('archive and restore preserve identity without deleting referenced company context', () => {
   const file = tempFile();
   const store = new CompanyContextStore(file);
