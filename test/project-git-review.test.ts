@@ -16,6 +16,11 @@ function write(file: string, content: string): void {
   fs.writeFileSync(file, content, 'utf8');
 }
 
+function canonicalPath(value: string): string {
+  const real = fs.realpathSync.native(value).replace(/\\/g, '/');
+  return process.platform === 'win32' ? real.toLowerCase() : real;
+}
+
 test('Project Git review reads working, staged, and branch diffs from the Project workspace', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'axis-project-git-review-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -33,7 +38,7 @@ test('Project Git review reads working, staged, and branch diffs from the Projec
   write(source, 'export const value = 2;\n');
   const working = await readProjectGitReview({ id: 'project-a', workspace: root }, 'working');
   assert.equal(working.scope, 'working');
-  assert.equal(working.repositoryRoot, root);
+  assert.equal(canonicalPath(working.repositoryRoot), canonicalPath(root));
   assert.match(working.diff, /-export const value = 1;/);
   assert.match(working.diff, /\+export const value = 2;/);
   assert.equal(working.status.length, 1);
