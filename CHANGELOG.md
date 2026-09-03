@@ -39,7 +39,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added real-Electron visual smoke coverage for Company settings plus active-Company controls in the composer, approval and result surfaces.
 - Added read-only repository context to Project Chat. Each Chat turn can rank and read bounded source excerpts plus a repository map from the Project-owned folder without granting Chat mutation or command execution capabilities.
 - Added provider-neutral Project Memory retrieval to Project Chat by reusing the existing Repo Intelligence store under the same Company + Project + repository identity used by Cowork. Validated durable facts learned through one authorized connection can therefore inform another model/connection in the same Project without crossing a Company or Project boundary.
-- Added a structured Last-turn diff review for Cowork results with changed-file navigation, collapsible per-file hunks, numbers de linha, destaque de adições/remoções e acesso ao unified diff bruto.
+- Added a structured Last-turn diff review for Cowork results with changed-file navigation, collapsible per-file hunks, old/new line numbers, addition/removal highlighting and access to the raw unified diff.
 - Added Company-scoped Project Git review for Unstaged, Staged and Branch changes. Git state is read only from the active Project-owned folder, with Branch comparison resolving upstream/main/master locally and the same structured file/hunk review used by Cowork results.
 
 ### Changed
@@ -62,7 +62,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ## [0.17.1] - 2026-09-02
 
 ### Added
-- Added a source-backed, P1–P4 parity checklist for a local-first, multi-company AI control plane: first-class parity between Account and API Key connections, multiple models, Ollama, the Windows Local Worker specialization, connection/model-specific MCPs, skills, plugins and agents, provider-managed constraints, strict company isolation, and company-scoped memory, automation, usage and policies—without a hosted Axis database or backend.
+- Added a source-backed, P1–P4 parity checklist for a local-first, multi-company AI control plane: first-class parity between Account and API Key connections, multiple models, Ollama, the Windows Local Worker specialization, connection/model-specific MCPs, skills, plugins and agents, provider-managed constraints, strict company isolation, and company-scoped memory, automation, usage and policies—without a hosted Axis database ou backend.
 - Added repository-wide visual-change instructions requiring agents to preserve the established Axis and Claude Desktop interface language, reuse the three-layer CSS architecture, and render and inspect affected states before completing UI work.
 
 ## [0.17.0] - 2026-09-02
