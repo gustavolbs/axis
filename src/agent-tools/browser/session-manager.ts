@@ -84,7 +84,8 @@ export class BrowserSessionManager {
       message: `Opening browser session with backend ${this.backend.id}.`,
       metadata: { backendId: this.backend.id }
     });
-    const pending = this.backend.openSession(scope, context).then((opened) => {
+    let pending!: Promise<BrowserBackendSession>;
+    pending = this.backend.openSession(scope, context).then((opened) => {
       assertBackendSessionScope(scope, opened);
       return opened;
     }).catch((error) => {
