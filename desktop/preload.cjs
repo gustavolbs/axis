@@ -19,7 +19,7 @@ const bridge = {
 
   claudeDiscover: () => ipcRenderer.invoke('local-coder:claude-discover'),
   claudeAccounts: () => ipcRenderer.invoke('local-coder:claude-accounts'),
-  createClaudeAccount: (input) => ipcRenderer.invoke('local-coder:claude-account-create', input),
+  createClaudeAccount: (input) => ipcRenderer.invoke('local-coder:connection-center-claude-create', input),
   claudeAccountStatus: (profileId) => ipcRenderer.invoke('local-coder:claude-account-status', String(profileId)),
   loginClaudeAccount: (profileId, sso = false) => ipcRenderer.invoke('local-coder:claude-account-login', String(profileId), Boolean(sso)),
   listClaudeAccountMcps: (profileId, refresh = false) => ipcRenderer.invoke('local-coder:claude-account-mcps', String(profileId), Boolean(refresh)),
@@ -29,7 +29,7 @@ const bridge = {
 
   codexDiscover: () => ipcRenderer.invoke('local-coder:codex-discover'),
   codexAccounts: () => ipcRenderer.invoke('local-coder:codex-accounts'),
-  createCodexAccount: (input) => ipcRenderer.invoke('local-coder:codex-account-create', input),
+  createCodexAccount: (input) => ipcRenderer.invoke('local-coder:connection-center-codex-create', input),
   codexAccountStatus: (profileId) => ipcRenderer.invoke('local-coder:codex-account-status', String(profileId)),
   loginCodexAccount: (profileId, deviceAuth = false) => ipcRenderer.invoke('local-coder:codex-account-login', String(profileId), Boolean(deviceAuth)),
   listCodexAccountMcps: (profileId, refresh = false) => ipcRenderer.invoke('local-coder:codex-account-mcps', String(profileId), Boolean(refresh)),
@@ -37,8 +37,8 @@ const bridge = {
   removeCodexAccountMcp: (profileId, name) => ipcRenderer.invoke('local-coder:codex-account-mcp-remove', String(profileId), String(name)),
   loginCodexAccountMcp: (profileId, name) => ipcRenderer.invoke('local-coder:codex-account-mcp-login', String(profileId), String(name)),
 
-  providerConnections: () => ipcRenderer.invoke('local-coder:connections'),
-  createApiKeyConnection: (input) => ipcRenderer.invoke('local-coder:api-connection-create', input),
+  providerConnections: () => ipcRenderer.invoke('local-coder:connection-center-connections'),
+  createApiKeyConnection: (input) => ipcRenderer.invoke('local-coder:connection-center-api-create', input),
   workHubSnapshot: () => ipcRenderer.invoke('local-coder:work-hub-snapshot'),
   upsertWorkHubSource: (input) => ipcRenderer.invoke('local-coder:work-hub-source-upsert', input),
   removeWorkHubSource: (sourceId) => ipcRenderer.invoke('local-coder:work-hub-source-remove', String(sourceId)),
