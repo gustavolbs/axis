@@ -18,6 +18,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Personal Chat no longer exposes organization-scoped API keys or Claude/ChatGPT subscription Accounts. Corporate identities require an explicitly compatible Project boundary.
 - Jobs and Projects exposed by the standalone desktop are filtered by the server-owned active Company. Cross-company job and Project actions fail closed, and corporate Company scope currently requires selecting one of that Company's Projects before starting a conversation.
 - Company Connections now use a quieter, narrower information hierarchy: redundant helper copy and security callouts are removed from the primary scan path, runtimes and connections render as lightweight rows instead of stacked cards, and semantic accent/status colors distinguish actions, providers, healthy states and attention states.
+- Company Overview, Projects, MCPs, Skills and Settings now follow the same quieter hierarchy: implementation terminology and dashboard-like metric cards are removed from the primary scan path, project and MCP content uses lightweight rows, empty states are action-oriented, and Settings keeps only the fields a user can actually change.
 
 ### Security
 - Company-context persistence stores only company metadata and stable resource bindings; it does not persist workspace paths, provider secrets, MCP payloads, or mutable account labels.
