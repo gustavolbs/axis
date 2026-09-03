@@ -1,6 +1,6 @@
 import { ActiveCompanyScope } from './active-company-scope.js';
 import { PERSONAL_COMPANY_ID } from './company-context.js';
-import { DesktopAppRuntime, type AppRuntimeEvent, type AppRuntimeListener, type AppRuntimeRequest } from './app-runtime.js';
+import { DesktopAppRuntime, type AppRuntimeListener, type AppRuntimeRequest } from './app-runtime.js';
 
 interface ScopedProject {
   id: string;
@@ -30,8 +30,8 @@ function projectCompanyId(project: ScopedProject): string {
   return project.companyId?.trim() || project.organizationId.trim();
 }
 
-function jobCompanyId(job: ScopedJob): string {
-  return job.input.companyId?.trim() || PERSONAL_COMPANY_ID;
+function explicitJobCompanyId(job: ScopedJob): string | undefined {
+  return job.input.companyId?.trim() || undefined;
 }
 
 function projectPath(pathname: string): string | undefined {
@@ -60,7 +60,11 @@ export class CompanyScopedDesktopRuntime {
         return;
       }
       const job = event.payload.job as ScopedJob | undefined;
-      if (job && jobCompanyId(job) === this.active.currentId()) listener(event);
+      const companyId = job ? explicitJobCompanyId(job) : undefined;
+      // Legacy project jobs without an explicit Company are intentionally not
+      // pushed live across the boundary. The next scoped /jobs refresh resolves
+      // their Project ownership before exposing them.
+      if (companyId && companyId === this.active.currentId()) listener(event);
     });
   }
 
@@ -113,7 +117,8 @@ export class CompanyScopedDesktopRuntime {
     if (pathname === '/jobs' && method === 'GET') {
       const result = await this.base.request(request) as { jobs: ScopedJob[] };
       const companyId = this.active.currentId();
-      return { jobs: result.jobs.filter((job) => jobCompanyId(job) === companyId) };
+      const resolved = await Promise.all(result.jobs.map(async (job) => ({ job, companyId: await this.resolveJobCompanyId(job) })));
+      return { jobs: resolved.filter((item) => item.companyId === companyId).map((item) => item.job) };
     }
 
     if (pathname === '/jobs' && method === 'POST') {
@@ -136,6 +141,19 @@ export class CompanyScopedDesktopRuntime {
     return await this.base.request(request);
   }
 
+  private async resolveJobCompanyId(job: ScopedJob): Promise<string | undefined> {
+    const explicit = explicitJobCompanyId(job);
+    if (explicit) return explicit;
+    const projectId = job.input.projectId?.trim();
+    if (!projectId) return PERSONAL_COMPANY_ID;
+    try {
+      const result = await this.base.request({ method: 'GET', path: `/api/projects/${encodeURIComponent(projectId)}` }) as { project: ScopedProject };
+      return projectCompanyId(result.project);
+    } catch {
+      return undefined;
+    }
+  }
+
   private async requireActiveProject(id: string): Promise<ScopedProject> {
     const result = await this.base.request({ method: 'GET', path: `/api/projects/${encodeURIComponent(id)}` }) as { project: ScopedProject };
     const activeCompanyId = this.active.currentId();
@@ -148,10 +166,10 @@ export class CompanyScopedDesktopRuntime {
 
   private async requireActiveJob(id: string): Promise<ScopedJob> {
     const result = await this.base.request({ method: 'GET', path: `/api/jobs/${id}` }) as { job: ScopedJob };
-    const companyId = jobCompanyId(result.job);
+    const companyId = await this.resolveJobCompanyId(result.job);
     const activeCompanyId = this.active.currentId();
-    if (companyId !== activeCompanyId) {
-      throw new Error(`Conversation ${id} belongs to Company ${companyId}, not active Company ${activeCompanyId}.`);
+    if (!companyId || companyId !== activeCompanyId) {
+      throw new Error(`Conversation ${id} does not belong to active Company ${activeCompanyId}.`);
     }
     return result.job;
   }
