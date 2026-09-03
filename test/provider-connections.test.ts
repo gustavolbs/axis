@@ -85,7 +85,7 @@ test('Claude and ChatGPT subscription profiles are different connection identiti
   assert.equal(new Set(views.map((item) => item.id)).size, views.length);
 });
 
-test('authenticated Claude accounts expose explicit stable model choices', async () => {
+test('authenticated Claude accounts expose explicit stable model choices without leaking corporate Accounts into Personal', async () => {
   const claude = new ClaudeAccountProfileStore(temp('local-coder-models-claude-'));
   claude.create({ id: 'personal', name: 'Claude Personal' });
   claude.create({ id: 'company', name: 'Claude Company', organizationLabel: 'Company' });
@@ -112,12 +112,30 @@ test('authenticated Claude accounts expose explicit stable model choices', async
   assert.deepEqual(account.models.map((model) => model.displayName), ['Account default', 'Fable', 'Opus', 'Sonnet', 'Haiku']);
 
   const companyId = claudeAccountConnectionId('company');
-  const company = catalog.find((provider) => provider.id === companyId);
-  assert.ok(company);
-  assert.equal(company.label, 'Claude Company');
-  assert.equal(company.auth, 'claude-account');
-  assert.equal(company.organizationLabel, 'Company');
-  assert.equal((await connections.resolve(companyId, 'sonnet')).provider.id, companyId);
+  const companyView = connections.view(companyId);
+  assert.ok(companyView);
+  assert.equal(companyView.label, 'Claude Company');
+  assert.equal(companyView.auth, 'claude-account');
+  assert.equal(companyView.organizationLabel, 'Company');
+  assert.equal(companyView.organizationId, 'company');
+  assert.equal(catalog.some((provider) => provider.id === companyId), false);
+  await assert.rejects(() => connections.resolve(companyId, 'sonnet'), /requires an explicitly bound Project/);
+  assert.equal((await connections.resolveForProject(companyId, 'sonnet', 'company')).provider.id, companyId);
+});
+
+test('corporate subscription Accounts of every supported family stay out of Personal before runtime discovery', async () => {
+  const claude = new ClaudeAccountProfileStore(temp('local-coder-corporate-claude-'));
+  const codex = new CodexAccountProfileStore(temp('local-coder-corporate-codex-'));
+  claude.create({ id: 'corp', name: 'Claude Corp', organizationLabel: 'Acme' });
+  codex.create({ id: 'corp', name: 'ChatGPT Corp', organizationLabel: 'Acme' });
+  const runtime = new ProviderConnectionRuntime({ credentials: credentials(), claudeProfiles: claude, codexProfiles: codex });
+
+  const corporateIds = new Set([
+    claudeAccountConnectionId('corp'),
+    chatGptAccountConnectionId('corp')
+  ]);
+  assert.equal(runtime.list().filter((item) => corporateIds.has(item.id)).every((item) => item.organizationId === 'acme'), true);
+  assert.equal((await runtime.catalogProviders()).some((item) => corporateIds.has(item.id)), false);
 });
 
 test('Claude account aliases show the current version discovered from the live API catalog', async () => {

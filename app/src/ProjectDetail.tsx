@@ -3,13 +3,14 @@ import { ArrowUp, ChevronDown, Folder, MoreHorizontal, Pencil, Pin, Plus, Search
 
 import type { AdminProject, ModelSelection } from './app-types.js';
 import { ProjectConnectionsPanel } from './ProjectConnectionsPanel.js';
+import { ProjectGitReview } from './ProjectGitReview.js';
 
 export interface ProjectConversation {
   id: string;
   status: string;
   updatedAt: string;
   title?: string;
-  input: { goal: string; projectId?: string };
+  input: { goal: string; projectId?: string; interactionMode?: 'chat' | 'cowork' };
 }
 
 async function api<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
@@ -66,6 +67,7 @@ export function ProjectDetail(props: {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [props.conversations, props.project.id]);
 
   const chatSelection = inheritedChatSelection(props.project);
+  const companyLabel = props.project.companyName ?? props.project.companyId;
   const modelLabel = mode === 'chat'
     ? props.project.connectionPolicy?.chat.defaultConnectionId ?? (chatSelection?.mode === 'explicit' ? chatSelection.providerId : 'Auto')
     : props.project.defaultModel.mode === 'explicit'
@@ -122,8 +124,8 @@ export function ProjectDetail(props: {
     }
   }
 
-  return <section className="project-detail-page">
-    <button className="project-detail-breadcrumb" onClick={props.onBack}>Projects <span>/</span> <strong>{props.project.name}</strong></button>
+  return <section className="project-detail-page" data-company-id={props.project.companyId}>
+    <button className="project-detail-breadcrumb" onClick={props.onBack}>Projects <span>/</span> <strong>{companyLabel}</strong> <span>/</span> <strong>{props.project.name}</strong></button>
     <header className="project-detail-header">
       <h1><Folder size={29} />{props.project.name}</h1>
       <div><button aria-label="Pin project"><Pin size={17} /></button><button aria-label="More project options"><MoreHorizontal size={19} /></button></div>
@@ -132,11 +134,11 @@ export function ProjectDetail(props: {
     <div className="project-detail-layout">
       <main>
         <form className="project-detail-composer" onSubmit={(event) => void submit(event)}>
-          <textarea value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="How can I help you today?" aria-label="Project prompt" />
+          <textarea value={goal} onChange={(event) => setGoal(event.target.value)} placeholder={mode === 'chat' ? `Ask about ${props.project.name}…` : `Ask Cowork to change ${props.project.name}…`} aria-label="Project prompt" />
           <div className="project-detail-composer-bar">
             <button className="project-detail-plus" type="button" aria-label="Add context"><Plus size={18} /></button>
             <div className="project-detail-mode"><button type="button" className={mode === 'chat' ? 'active' : ''} onClick={() => setMode('chat')}>Chat</button><button type="button" className={mode === 'cowork' ? 'active' : ''} onClick={() => setMode('cowork')}>Cowork</button></div>
-            <span className="project-detail-model" title={modelLabel}>{modelLabel} <ChevronDown size={13} /></span>
+            <span className="project-detail-model" title={`${companyLabel} · ${modelLabel}`}>{modelLabel} <ChevronDown size={13} /></span>
             <button className="project-detail-send" disabled={!goal.trim() || busy} aria-label="Send"><ArrowUp size={17} /></button>
           </div>
         </form>
@@ -144,10 +146,11 @@ export function ProjectDetail(props: {
         <section className="project-detail-recent">
           <h2>Recent</h2>
           {conversations.slice(0, 8).map((job) => <button key={job.id} onClick={() => props.onOpenConversation(job)}>
-            <span><strong>{job.title?.trim() || job.input.goal}</strong><small>{job.input.goal}</small></span><time>{relative(job.updatedAt)}</time>
+            <span><strong>{job.title?.trim() || job.input.goal}</strong><small>{job.input.interactionMode === 'cowork' ? 'Cowork' : 'Chat'} · {job.input.goal}</small></span><time>{relative(job.updatedAt)}</time>
           </button>)}
           {conversations.length === 0 ? <p>No conversations in this project yet.</p> : null}
         </section>
+        <ProjectGitReview project={props.project} />
       </main>
 
       <aside className="project-detail-panel">
@@ -158,8 +161,8 @@ export function ProjectDetail(props: {
         <ProjectConnectionsPanel project={props.project} onProjectChanged={props.onProjectChanged} />
         <section className="project-detail-context">
           <header><h2>Context</h2><span><button aria-label="Search context"><Search size={16} /></button><button aria-label="Add context"><Plus size={17} /></button></span></header>
-          <div className="project-detail-context-meter"><i /><span>{props.project.workspace ? 'Folder connected' : 'No project context added'}</span></div>
-          {props.project.workspace ? <div className="project-detail-folder-card"><strong>{folderName(props.project.workspace)}</strong><small>1 folder</small><Folder size={17} /></div> : null}
+          <div className="project-detail-context-meter"><i /><span>{props.project.workspace ? 'Project folder connected' : 'No project folder connected'}</span></div>
+          {props.project.workspace ? <><div className="project-detail-folder-card"><strong>{folderName(props.project.workspace)}</strong><small>1 folder · {companyLabel}</small><Folder size={17} /></div><p>Chat can read bounded repository context from this folder. Cowork can inspect, edit and validate it.</p></> : null}
         </section>
         <section className="project-detail-scheduled">
           <header><h2>Scheduled</h2><button aria-label="Add scheduled task"><Plus size={17} /></button></header>

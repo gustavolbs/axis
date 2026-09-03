@@ -4,6 +4,28 @@ export type ModelSelection =
   | { mode: 'explicit'; providerId: string; modelId: string }
   | { mode: 'local-first'; modelId: string };
 
+export type CompanyIconId =
+  | 'building-2'
+  | 'briefcase-business'
+  | 'code-2'
+  | 'rocket'
+  | 'landmark'
+  | 'heart-pulse'
+  | 'graduation-cap'
+  | 'palette';
+
+export interface CompanyDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  color: string;
+  icon: CompanyIconId;
+  archivedAt?: string;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProjectConnectionPolicy {
   chat: {
     defaultConnectionId?: string;
@@ -28,7 +50,12 @@ export interface AdminProject {
   workspace: string;
   /** Shared instructions injected into every conversation scoped to this Project. */
   instructions?: string;
+  /** Canonical product isolation identity. */
+  companyId: string;
+  companyName?: string;
+  /** @deprecated Legacy storage/migration alias; UI must use companyId/companyName. */
   organizationId: string;
+  /** @deprecated Legacy storage/migration alias; UI must use companyId/companyName. */
   organizationName?: string;
   defaultRoutingPolicy: RoutingPolicy;
   defaultModel: ModelSelection;
@@ -53,7 +80,12 @@ export interface ProviderConnectionView {
   label: string;
   auth: 'local' | 'api-key' | 'claude-account' | 'chatgpt-account';
   billing: 'local' | 'api' | 'subscription';
+  /** Canonical Axis ownership. Shared local execution intentionally has no companyId. */
+  companyId?: string;
+  companyName?: string;
+  /** @deprecated Provider/runtime migration metadata; product isolation uses companyId. */
   organizationId: string;
+  /** @deprecated Provider/runtime display metadata; not Axis company identity. */
   organizationLabel?: string;
   credentialId?: string;
   accountProfileId?: string;

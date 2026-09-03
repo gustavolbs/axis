@@ -1,15 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Activity, KeyRound, Palette, Route, Settings2, ShieldCheck, UsersRound, X } from 'lucide-react';
+import { Activity, Palette, Settings2, X } from 'lucide-react';
 
 import type { AdminProject } from './app-types.js';
-import { ConnectionsSettings } from './ConnectionsSettings.js';
 import { FolderField } from './FolderField.js';
-import { ProviderCapabilitiesSettings } from './ProviderCapabilitiesSettings.js';
-import { ApiKeySettings, ModelRoutingSettings, WorkerConnectionSetting } from './SettingsPanels.js';
+import { WorkerConnectionSetting } from './SettingsPanels.js';
 import { UsageSettings } from './UsageSettings.js';
 import type { ThemeMode } from './native.js';
 
-type SettingsTab = 'general' | 'appearance' | 'routing' | 'capabilities' | 'usage' | 'connections' | 'keys';
+type SettingsTab = 'general' | 'appearance' | 'usage';
 
 function applyTheme(mode: ThemeMode) {
   const root = document.documentElement;
@@ -74,14 +72,10 @@ export function SettingsModal({
   }}>
     <section className="settings-modal" role="dialog" aria-modal="true" aria-label="Settings">
       <aside className="settings-rail">
-        <div className="settings-rail-title">Settings</div>
+        <div className="settings-rail-title">Axis Settings</div>
         <button className={tab === 'general' ? 'active' : ''} onClick={() => setTab('general')}><Settings2 size={15} /><span>General</span></button>
         <button className={tab === 'appearance' ? 'active' : ''} onClick={() => setTab('appearance')}><Palette size={15} /><span>Appearance</span></button>
-        <button className={tab === 'routing' ? 'active' : ''} onClick={() => setTab('routing')}><Route size={15} /><span>Model routing</span></button>
-        <button className={tab === 'capabilities' ? 'active' : ''} onClick={() => setTab('capabilities')}><ShieldCheck size={15} /><span>Capabilities</span></button>
         <button className={tab === 'usage' ? 'active' : ''} onClick={() => setTab('usage')}><Activity size={15} /><span>Usage</span></button>
-        <button className={tab === 'connections' ? 'active' : ''} onClick={() => setTab('connections')}><UsersRound size={15} /><span>Connections</span></button>
-        <button className={tab === 'keys' ? 'active' : ''} onClick={() => setTab('keys')}><KeyRound size={15} /><span>API keys</span></button>
       </aside>
 
       <div className="settings-content">
@@ -89,13 +83,14 @@ export function SettingsModal({
 
         {tab === 'general' ? <div className="settings-simple-page">
           <h1 className="page-title">General</h1>
+          <p className="settings-page-intro">Only app-wide settings live here. Company-owned projects, provider identities, MCPs and policies are administered from the selected Company Hub.</p>
           <WorkerConnectionSetting />
           <div className="settings-card settings-card-column">
             <div><strong>Default workspace</strong><p>Used by Cowork when you do not choose another folder. Chat does not require a folder.</p></div>
             <FolderField value={defaultWorkspace} onChange={updateDefaultWorkspace} placeholder="/Users/you/code/project" />
           </div>
           {window.lc ? <div className="settings-card">
-            <div><strong>Start on login</strong><p>Open Local Coder automatically when you sign in to macOS.</p></div>
+            <div><strong>Start on login</strong><p>Open Axis automatically when you sign in.</p></div>
             <button className={`lc-agent-switch ${openAtLogin ? 'on' : ''}`} aria-pressed={openAtLogin} onClick={() => void toggleOpenAtLogin()}><i /></button>
           </div> : null}
           <div className="settings-card">
@@ -109,16 +104,12 @@ export function SettingsModal({
           <div className="settings-option-group" role="radiogroup" aria-label="Theme">
             {(['system', 'light', 'dark'] as ThemeMode[]).map((mode) => <button key={mode} className={theme === mode ? 'selected' : ''} role="radio" aria-checked={theme === mode} onClick={() => chooseTheme(mode)}>
               <span className={`theme-preview theme-${mode}`}><i /><i /></span>
-              <span><strong>{mode === 'system' ? 'System' : mode === 'light' ? 'Light' : 'Dark'}</strong><small>{mode === 'system' ? 'Follow macOS appearance' : `Always use ${mode} mode`}</small></span>
+              <span><strong>{mode === 'system' ? 'System' : mode === 'light' ? 'Light' : 'Dark'}</strong><small>{mode === 'system' ? 'Follow operating-system appearance' : `Always use ${mode} mode`}</small></span>
             </button>)}
           </div>
         </div> : null}
 
-        {tab === 'routing' ? <ModelRoutingSettings /> : null}
-        {tab === 'capabilities' ? <ProviderCapabilitiesSettings /> : null}
         {tab === 'usage' ? <UsageSettings /> : null}
-        {tab === 'connections' ? <ConnectionsSettings /> : null}
-        {tab === 'keys' ? <ApiKeySettings /> : null}
       </div>
     </section>
   </div>;

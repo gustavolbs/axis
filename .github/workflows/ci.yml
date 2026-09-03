@@ -113,8 +113,34 @@ jobs:
           npm run build
           node --check desktop/bootstrap.mjs
           node --check desktop/main.mjs
+          node --check desktop/connection-center.mjs
           node --check scripts/run-desktop.mjs
-          npx tsx --test test/desktop-shell.test.ts test/desktop-ui-contract.test.ts
+          node --check scripts/capture-companies-visual.mjs
+          node --check scripts/capture-company-scope-visual.mjs
+          node --check scripts/capture-connections-visual.mjs
+          node --check scripts/capture-api-connection-visual.mjs
+          node --check scripts/capture-shared-connection-form-visual.mjs
+          node --check scripts/capture-api-key-lifecycle-visual.mjs
+          npx tsx --test test/desktop-shell.test.ts test/desktop-ui-contract.test.ts test/connection-center-desktop-contract.test.ts
+
+      - name: Render Company and Connection settings states
+        run: |
+          node scripts/capture-companies-visual.mjs
+          node scripts/capture-company-scope-visual.mjs
+          node scripts/capture-connections-visual.mjs
+          node scripts/capture-api-connection-visual.mjs
+          node scripts/capture-shared-connection-form-visual.mjs
+          node scripts/capture-api-key-lifecycle-visual.mjs
+
+      - name: Upload Company and Connection visual smoke
+        uses: actions/upload-artifact@v4
+        with:
+          name: axis-companies-visual-smoke
+          path: |
+            visual-artifacts/companies/*.png
+            visual-artifacts/connections/*.png
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Reproduce inherited Electron Node-mode contamination
         env:

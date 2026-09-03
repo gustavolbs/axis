@@ -45,7 +45,13 @@ export interface ProviderConnectionView {
   billing: 'local' | 'api' | 'subscription';
   organizationId?: string;
   organizationLabel?: string;
+  /** Canonical Axis ownership resolved from the stable Company binding graph. */
+  companyId?: string;
+  companyName?: string;
+  companyArchived?: boolean;
   credentialId?: string;
+  /** Optional API base endpoint. Undefined means use the provider's official endpoint. */
+  endpoint?: string;
   accountProfileId?: string;
   available: boolean;
   reason?: string;
@@ -74,6 +80,9 @@ export type WorkHubRetention = 'memory' | 'local';
 export interface WorkHubSourceView {
   id: string;
   label: string;
+  /** Canonical owner derived from the stable connection → Company binding. */
+  companyId: string;
+  companyName: string;
   connectionId: string;
   kind: WorkHubSourceKind;
   system: string;
@@ -87,6 +96,9 @@ export interface WorkHubSourceView {
 interface WorkHubItemBaseView {
   sourceId: string;
   connectionId: string;
+  /** Provenance is carried on every aggregated item; filtering never changes ownership. */
+  companyId: string;
+  companyName: string;
   providerFamily: 'anthropic' | 'openai';
   system: string;
   externalId: string;
@@ -166,7 +178,7 @@ export interface LocalCoderBridge {
 
   claudeDiscover(): Promise<ClaudeRuntimeDiscoveryView>;
   claudeAccounts(): Promise<ClaudeAccountProfileView[]>;
-  createClaudeAccount(input: { id: string; name: string; organizationLabel?: string }): Promise<ClaudeAccountProfileView>;
+  createClaudeAccount(input: { id: string; name: string; companyId?: string; organizationLabel?: string }): Promise<ClaudeAccountProfileView>;
   claudeAccountStatus(profileId: string): Promise<ClaudeAccountStatusView>;
   loginClaudeAccount(profileId: string, sso?: boolean): Promise<ClaudeAccountStatusView>;
   listClaudeAccountMcps(profileId: string, refresh?: boolean): Promise<McpDiscoveryView>;
@@ -176,7 +188,7 @@ export interface LocalCoderBridge {
 
   codexDiscover(): Promise<CodexRuntimeDiscoveryView>;
   codexAccounts(): Promise<CodexAccountProfileView[]>;
-  createCodexAccount(input: { id: string; name: string; organizationLabel?: string }): Promise<CodexAccountProfileView>;
+  createCodexAccount(input: { id: string; name: string; companyId?: string; organizationLabel?: string }): Promise<CodexAccountProfileView>;
   codexAccountStatus(profileId: string): Promise<CodexAccountStatusView>;
   loginCodexAccount(profileId: string, deviceAuth?: boolean): Promise<CodexAccountStatusView>;
   listCodexAccountMcps(profileId: string, refresh?: boolean): Promise<McpDiscoveryView>;
@@ -185,6 +197,15 @@ export interface LocalCoderBridge {
   loginCodexAccountMcp(profileId: string, name: string): Promise<unknown>;
 
   providerConnections(): Promise<ProviderConnectionView[]>;
+  createApiKeyConnection(input: {
+    id: string;
+    name: string;
+    providerFamily: 'openai' | 'anthropic';
+    companyId: string;
+    secret: string;
+    /** Optional API base endpoint. Empty/undefined uses the official provider endpoint. */
+    endpoint?: string;
+  }): Promise<ProviderConnectionView>;
   workHubSnapshot(): Promise<WorkHubSnapshotView>;
   upsertWorkHubSource(input: {
     id: string;

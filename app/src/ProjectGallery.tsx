@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Check, ChevronDown, Folder, FolderPlus, MoreHorizontal, Pin, Search, X } from 'lucide-react';
 
-import type { AdminProject } from './app-types.js';
+import type { AdminProject, CompanyDefinition } from './app-types.js';
 import { FolderField } from './FolderField.js';
+import { UiSelect, type UiSelectOption } from './UiSelect.js';
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } });
@@ -11,8 +12,13 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return body;
 }
 
-function slug(value: string): string {
-  return value.toLowerCase().trim().replace(/[^a-z0-9._:-]+/g, '-').replace(/^-|-$/g, '') || 'personal';
+function canonicalProject(project: AdminProject): AdminProject {
+  const companyId = project.companyId || project.organizationId || 'personal';
+  return {
+    ...project,
+    companyId,
+    companyName: project.companyName ?? project.organizationName ?? (companyId === 'personal' ? 'Personal' : companyId)
+  };
 }
 
 function relative(value: string): string {
@@ -27,18 +33,27 @@ type SortMode = 'updated' | 'name';
 
 export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: AdminProject) => void }) {
   const [projects, setProjects] = useState<AdminProject[]>([]);
+  const [companies, setCompanies] = useState<CompanyDefinition[]>([]);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortMode>('updated');
   const [sortOpen, setSortOpen] = useState(false);
   const [editing, setEditing] = useState<AdminProject | null>();
+  const [companyId, setCompanyId] = useState('personal');
   const [workspace, setWorkspace] = useState('');
   const [folderOpen, setFolderOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
   async function load() {
-    const { projects: next } = await api<{ projects: AdminProject[] }>('/api/projects');
-    setProjects(next);
+    // Reconcile the legacy project/account metadata first so the company picker
+    // always refers to canonical company identities instead of inventing slugs.
+    await api('/api/companies/context');
+    const [{ projects: nextProjects }, { companies: nextCompanies }] = await Promise.all([
+      api<{ projects: AdminProject[] }>('/api/projects'),
+      api<{ companies: CompanyDefinition[] }>('/api/companies?archived=all')
+    ]);
+    setProjects(nextProjects.map(canonicalProject));
+    setCompanies(nextCompanies);
   }
 
   useEffect(() => { void load().catch((next) => setError(next instanceof Error ? next.message : String(next))); }, []);
@@ -49,8 +64,24 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
     return [...filtered].sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : b.updatedAt.localeCompare(a.updatedAt));
   }, [projects, query, sort]);
 
+  const companyOptions = useMemo<UiSelectOption[]>(() => {
+    const currentCompanyId = editing?.companyId;
+    return [
+      { value: 'personal', label: 'Personal', description: 'Personal context on this device' },
+      ...companies
+        .filter((company) => !company.archivedAt || company.id === currentCompanyId)
+        .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
+        .map((company) => ({
+          value: company.id,
+          label: company.name,
+          description: company.archivedAt ? 'Archived company' : company.description
+        }))
+    ];
+  }, [companies, editing?.companyId]);
+
   function openModal(project: AdminProject | null) {
     setEditing(project);
+    setCompanyId(project?.companyId ?? 'personal');
     setWorkspace(project?.workspace ?? '');
     setFolderOpen(Boolean(project?.workspace));
     setError(undefined);
@@ -58,6 +89,7 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
 
   function closeModal() {
     setEditing(undefined);
+    setCompanyId('personal');
     setWorkspace('');
     setFolderOpen(false);
   }
@@ -67,25 +99,40 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
     const form = new FormData(event.currentTarget);
     const name = String(form.get('name') ?? '').trim();
     const description = String(form.get('description') ?? '').trim();
-    const organizationId = slug(String(form.get('organizationId') ?? '').trim() || 'personal');
-    const organizationName = String(form.get('organizationName') ?? '').trim() || (organizationId === 'personal' ? 'Personal' : organizationId);
+    const selectedCompany = companies.find((company) => company.id === companyId);
+    const companyName = companyId === 'personal' ? 'Personal' : selectedCompany?.name;
     if (!name) return;
+    if (!companyName) {
+      setError('Choose an existing active company for this Project.');
+      return;
+    }
+    if (selectedCompany?.archivedAt && companyId !== editing?.companyId) {
+      setError('Archived companies cannot receive new Projects. Restore the company first.');
+      return;
+    }
     setBusy(true);
     setError(undefined);
     try {
       const isEdit = Boolean(editing);
+      // companyId/companyName are the product contract. organization* remains a
+      // write-through compatibility alias until ProjectStore's legacy file
+      // schema is migrated by a later storage-focused change.
+      const companyFields = {
+        companyId,
+        companyName,
+        organizationId: companyId,
+        organizationName: companyName
+      };
       const payload = isEdit ? {
         name,
         description,
         workspace: folderOpen ? workspace.trim() : '',
-        organizationId,
-        organizationName
+        ...companyFields
       } : {
         name,
         description: description || undefined,
         workspace: folderOpen ? workspace.trim() || undefined : undefined,
-        organizationId,
-        organizationName,
+        ...companyFields,
         defaultRoutingPolicy: 'local-first',
         defaultModel: { mode: 'auto' },
         privacy: { cloudAllowed: false, allowedProviderIds: ['ollama'] },
@@ -102,7 +149,7 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
       await load();
       window.dispatchEvent(new CustomEvent('local-coder:projects-changed'));
       closeModal();
-      if (!isEdit) onOpenProject(project);
+      if (!isEdit) onOpenProject(canonicalProject(project));
     } catch (next) {
       setError(next instanceof Error ? next.message : String(next));
     } finally {
@@ -132,7 +179,7 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
         <button className="lc-shell-project-card-main" onClick={() => onOpenProject(project)}>
           <span className="lc-shell-project-card-title"><Folder size={16} /><strong>{project.name}</strong><Pin size={12} className="lc-shell-project-pin" /></span>
           {project.description ? <span className="lc-shell-project-card-description">{project.description}</span> : null}
-          <span className="lc-shell-project-card-time">{project.organizationName ?? project.organizationId} · {relative(project.updatedAt)}</span>
+          <span className="lc-shell-project-card-time">{project.companyName ?? project.companyId} · {relative(project.updatedAt)}</span>
         </button>
         <button className="lc-shell-project-more" aria-label={`Edit ${project.name}`} onClick={() => openModal(project)}><MoreHorizontal size={17} /></button>
       </article>)}
@@ -144,8 +191,7 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
         <div className="lc-shell-modal-title"><h2 className="dialog-title">{editing ? 'Edit project' : 'Create a project'}</h2><button type="button" onClick={closeModal} aria-label="Close"><X size={18} /></button></div>
         <label><span>What are you working on?</span><input name="name" required autoFocus defaultValue={editing?.name} placeholder="Give your project a name" /></label>
         <label><span>What do you want to accomplish?</span><textarea name="description" rows={4} defaultValue={editing?.description} placeholder="Describe your project, goals, topic, etc…" /></label>
-        <label><span>Organization boundary</span><input name="organizationId" required defaultValue={editing?.organizationId ?? 'personal'} placeholder="personal or company-id" /><small>Connections from another organization cannot be newly bound to this Project. Use <code>personal</code> for your own projects.</small></label>
-        <label><span>Organization name</span><input name="organizationName" defaultValue={editing?.organizationName ?? 'Personal'} placeholder="Personal, LiveNation, Company B…" /></label>
+        <label><span>Company</span><UiSelect ariaLabel="Project company" value={companyId} options={companyOptions} onChange={setCompanyId} /><small>A Project belongs to one stable Company identity. Its folder never changes that ownership.</small></label>
         <button className="lc-shell-use-folder" type="button" onClick={() => setFolderOpen((value) => !value)}><FolderPlus size={15} />{folderOpen ? 'Remove folder' : 'Use a folder'}</button>
         {folderOpen ? <div className="lc-shell-project-folder-field"><FolderField value={workspace} onChange={setWorkspace} name="workspace" /></div> : null}
         {error ? <div className="lc-shell-inline-error lc-shell-modal-error">{error}</div> : null}

@@ -424,11 +424,10 @@ export class ProviderConnectionRuntime {
     const view = this.view(connectionId);
     if (!view) throw new Error(`Unknown provider connection: ${connectionId}`);
     if (
-      view.auth === 'api-key' &&
       view.organizationId !== PERSONAL_ORGANIZATION_ID &&
       view.organizationId !== LOCAL_ORGANIZATION_ID
     ) {
-      throw new Error(`${view.label} belongs to organization ${view.organizationId} and requires an explicitly bound Project.`);
+      throw new Error(`${view.label} belongs to company scope ${view.organizationId} and requires an explicitly bound Project.`);
     }
     return await this.resolveView(view, modelId);
   }
@@ -488,10 +487,11 @@ export class ProviderConnectionRuntime {
     }> = [];
     for (const view of this.list()) {
       if (view.auth === 'local') continue;
-      // Organization-scoped API keys remain Project-only. Subscription
-      // accounts are explicit user-selectable identities and may be used in a
-      // project-less Chat without weakening Project organization boundaries.
-      if (view.auth === 'api-key' && view.organizationId !== PERSONAL_ORGANIZATION_ID) continue;
+      // Project-less Chat is the Personal context. Every non-local connection,
+      // regardless of whether it authenticates through an API key or an Account,
+      // must therefore be explicitly Personal before it can expose models or
+      // account-scoped MCP resources here.
+      if (view.organizationId !== PERSONAL_ORGANIZATION_ID) continue;
       let models: ModelDefinition[] = [];
       let reason = view.reason;
       if (view.available) {

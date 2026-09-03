@@ -3,6 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { readAppSettings, writeAppSettings, type AppSettingsFile } from './app-config.js';
+import {
+  CompanyContextStore,
+  PERSONAL_COMPANY_ID,
+  type CreateCompanyInput,
+  type UpdateCompanyInput
+} from './company-context.js';
 import { loadConfig } from './config.js';
 import { CredentialManager } from './credential-store.js';
 import { createExecutionRuntime } from './execution-runtime.js';
@@ -38,6 +44,9 @@ export type AppRuntimeEvent =
 export type AppRuntimeListener = (event: AppRuntimeEvent) => void;
 
 type JsonObject = Record<string, unknown>;
+type CompanyScopedJob = NonNullable<ReturnType<StandaloneJobManager['get']>> & {
+  input: StandaloneJobInput & { companyId?: string };
+};
 
 function objectBody(value: unknown): JsonObject {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -168,6 +177,7 @@ export function normalizeBaseUrl(value: string): string {
 export class DesktopAppRuntime {
   private readonly listeners = new Set<AppRuntimeListener>();
   private readonly config = { ...loadConfig(), executionMode: 'remote' as const };
+  private readonly companyContext = new CompanyContextStore();
   private readonly ollama = new OllamaClient(this.config);
   private readonly localProvider = createLocalInferenceProvider(this.config, this.ollama);
   private readonly credentials = new CredentialManager();
@@ -213,6 +223,50 @@ export class DesktopAppRuntime {
     writeAppSettings({ ...readAppSettings(), archivedProjectIds: [...current] });
   }
 
+  private scopedJob(job: NonNullable<ReturnType<StandaloneJobManager['get']>>): CompanyScopedJob {
+    const existing = (job.input as StandaloneJobInput & { companyId?: string }).companyId?.trim();
+    let companyId = existing;
+    if (!companyId && job.input.projectId) {
+      companyId = this.projects.getProject(job.input.projectId).organizationId;
+    }
+    const selection = job.input.modelSelection;
+    if (!companyId && selection?.mode === 'explicit') {
+      const connection = this.projects.listConnections().find((item) => item.id === selection.providerId);
+      if (connection && connection.auth !== 'local') companyId = connection.organizationId;
+    }
+    return {
+      ...job,
+      input: {
+        ...job.input,
+        companyId: companyId || PERSONAL_COMPANY_ID
+      }
+    } as CompanyScopedJob;
+  }
+
+  private personalVisibleJob(job: NonNullable<ReturnType<StandaloneJobManager['get']>>): CompanyScopedJob | undefined {
+    const scoped = this.scopedJob(job);
+    if (scoped.input.projectId || scoped.input.companyId === PERSONAL_COMPANY_ID) return scoped;
+    return undefined;
+  }
+
+  private requirePersonalJobAccess(id: string): CompanyScopedJob {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error('Job not found.');
+    const scoped = this.scopedJob(job);
+    if (!scoped.input.projectId && scoped.input.companyId !== PERSONAL_COMPANY_ID) {
+      throw new Error(`Conversation ${id} belongs to company scope ${scoped.input.companyId} and is not available in Personal.`);
+    }
+    return scoped;
+  }
+
+  private assertPersonalModelSelection(selection: ModelSelection | undefined): void {
+    if (selection?.mode !== 'explicit') return;
+    const connection = this.projects.listConnections().find((item) => item.id === selection.providerId);
+    if (connection && connection.auth !== 'local' && connection.organizationId !== PERSONAL_COMPANY_ID) {
+      throw new Error(`${connection.label} belongs to company scope ${connection.organizationId} and requires an explicitly bound Project.`);
+    }
+  }
+
   private get workerHealthPath(): string {
     return readAppSettings()?.workerHealthPath ?? DEFAULT_WORKER_HEALTH_PATH;
   }
@@ -227,7 +281,10 @@ export class DesktopAppRuntime {
   static async create(): Promise<DesktopAppRuntime> {
     const runtime = new DesktopAppRuntime();
     await runtime.jobs.restore();
-    runtime.jobs.subscribe((_event, job) => runtime.emit({ type: 'job', payload: { job } }));
+    runtime.jobs.subscribe((_event, job) => {
+      const visible = runtime.personalVisibleJob(job);
+      if (visible) runtime.emit({ type: 'job', payload: { job: visible } });
+    });
     runtime.startWorkerMonitor();
     return runtime;
   }
@@ -248,7 +305,64 @@ export class DesktopAppRuntime {
     const url = new URL(request.path, 'app://local-coder');
     const pathname = url.pathname.replace(/^\/api(?=\/|$)/, '') || '/';
 
-    if (method === 'GET' && pathname === '/jobs') return { jobs: this.jobs.list() };
+    if (method === 'GET' && pathname === '/companies') {
+      return {
+        companies: this.companyContext.listCompanies({
+          includeArchived: url.searchParams.get('archived') === 'all',
+          query: url.searchParams.get('q') ?? undefined
+        })
+      };
+    }
+    if (method === 'POST' && pathname === '/companies') {
+      return {
+        company: this.companyContext.createCompany(
+          objectBody(request.body) as unknown as CreateCompanyInput
+        )
+      };
+    }
+    if (method === 'POST' && pathname === '/companies/order') {
+      const body = objectBody(request.body);
+      if (!Array.isArray(body.ids) || body.ids.some((id) => typeof id !== 'string')) {
+        throw new Error('ids must be an array of company ids.');
+      }
+      return { companies: this.companyContext.reorderCompanies(body.ids as string[]) };
+    }
+    const companyMatch = /^\/companies\/(?!(?:context|order)$)([^/]+)$/.exec(pathname);
+    if (companyMatch && method === 'GET') {
+      return { company: this.companyContext.getCompany(decodeURIComponent(companyMatch[1])) };
+    }
+    if (companyMatch && method === 'PATCH') {
+      return {
+        company: this.companyContext.updateCompany(
+          decodeURIComponent(companyMatch[1]),
+          objectBody(request.body) as unknown as UpdateCompanyInput
+        )
+      };
+    }
+    const companyArchiveMatch = /^\/companies\/([^/]+)\/archive$/.exec(pathname);
+    if (companyArchiveMatch && method === 'POST') {
+      const body = objectBody(request.body);
+      if (typeof body.archived !== 'boolean') throw new Error('archived must be a boolean.');
+      return {
+        company: this.companyContext.setCompanyArchived(
+          decodeURIComponent(companyArchiveMatch[1]),
+          body.archived
+        )
+      };
+    }
+    if (method === 'GET' && pathname === '/companies/context') {
+      return {
+        context: this.companyContext.reconcile({
+          projects: this.projects.listProjects(),
+          connections: this.projects.listConnections(),
+          sessions: this.jobs.list()
+        })
+      };
+    }
+
+    if (method === 'GET' && pathname === '/jobs') {
+      return { jobs: this.jobs.list().map((job) => this.personalVisibleJob(job)).filter(Boolean) };
+    }
     if (method === 'POST' && pathname === '/jobs') {
       const body = objectBody(request.body);
       const projectId = optionalString(body, 'projectId');
@@ -260,7 +374,8 @@ export class DesktopAppRuntime {
           ? optionalString(body, 'workspace') ?? ''
           : requiredString(body, 'workspace');
       const requestedModelSelection = parseModelSelection(body.modelSelection);
-      const input: StandaloneJobInput = {
+      const input: StandaloneJobInput & { companyId: string } = {
+        companyId: project?.organizationId ?? PERSONAL_COMPANY_ID,
         projectId,
         workspace,
         goal: requiredString(body, 'goal'),
@@ -288,43 +403,52 @@ export class DesktopAppRuntime {
       ) {
         throw new Error('Model and effort overrides require a configured Project for Cowork.');
       }
-      if (!projectId && interactionMode === 'chat' && input.modelSelection?.mode === 'local-first') {
-        throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+      if (!projectId && interactionMode === 'chat') {
+        if (input.modelSelection?.mode === 'local-first') {
+          throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+        }
+        this.assertPersonalModelSelection(input.modelSelection);
       }
-      return { job: this.jobs.create(input) };
+      return { job: this.scopedJob(this.jobs.create(input)) };
     }
 
     const jobMatch = /^\/jobs\/([A-Za-z0-9-]+)$/.exec(pathname);
     if (method === 'GET' && jobMatch) {
-      const job = this.jobs.get(jobMatch[1]);
-      if (!job) throw new Error('Job not found.');
-      return { job };
+      return { job: this.requirePersonalJobAccess(jobMatch[1]) };
     }
     const followUpMatch = /^\/jobs\/([A-Za-z0-9-]+)\/follow-up$/.exec(pathname);
     if (method === 'POST' && followUpMatch) {
       const body = objectBody(request.body);
+      const current = this.requirePersonalJobAccess(followUpMatch[1]);
       const modelSelection = parseModelSelection(body.modelSelection);
       const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
-      if (!this.jobs.get(followUpMatch[1])?.input.projectId && modelSelection?.mode === 'local-first') {
-        throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+      if (!current.input.projectId) {
+        if (modelSelection?.mode === 'local-first') {
+          throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+        }
+        this.assertPersonalModelSelection(modelSelection);
       }
       return {
-        job: await this.jobs.followUp(followUpMatch[1], requiredString(body, 'message'), {
+        job: this.scopedJob(await this.jobs.followUp(followUpMatch[1], requiredString(body, 'message'), {
           modelSelection,
           reasoningEffort
-        })
+        }))
       };
     }
     const turnRetryMatch = /^\/jobs\/([A-Za-z0-9-]+)\/turns\/([A-Za-z0-9-]+)\/retry$/.exec(pathname);
     if (method === 'POST' && turnRetryMatch) {
       const body = objectBody(request.body ?? {});
+      const current = this.requirePersonalJobAccess(turnRetryMatch[1]);
       const modelSelection = parseModelSelection(body.modelSelection);
       const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
-      if (!this.jobs.get(turnRetryMatch[1])?.input.projectId && modelSelection?.mode === 'local-first') {
-        throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+      if (!current.input.projectId) {
+        if (modelSelection?.mode === 'local-first') {
+          throw new Error('Local-first requires a Project because bounded cloud escalation uses Project privacy and credential bindings.');
+        }
+        this.assertPersonalModelSelection(modelSelection);
       }
       return {
-        job: await this.jobs.retryTurn(
+        job: this.scopedJob(await this.jobs.retryTurn(
           turnRetryMatch[1],
           turnRetryMatch[2],
           optionalString(body, 'message'),
@@ -332,12 +456,13 @@ export class DesktopAppRuntime {
             modelSelection,
             reasoningEffort
           }
-        )
+        ))
       };
     }
     if (method === 'PATCH' && jobMatch) {
       const body = objectBody(request.body);
       const id = jobMatch[1];
+      this.requirePersonalJobAccess(id);
       if (body.title !== undefined) {
         return { job: await this.jobs.rename(id, requiredString(body, 'title')) };
       }
@@ -348,12 +473,17 @@ export class DesktopAppRuntime {
       throw new Error('Supply title or archived.');
     }
     if (method === 'DELETE' && jobMatch) {
+      this.requirePersonalJobAccess(jobMatch[1]);
       return { removed: await this.jobs.remove(jobMatch[1]) };
     }
     const cancelMatch = /^\/jobs\/([A-Za-z0-9-]+)\/cancel$/.exec(pathname);
-    if (method === 'POST' && cancelMatch) return { job: await this.jobs.cancel(cancelMatch[1]) };
+    if (method === 'POST' && cancelMatch) {
+      this.requirePersonalJobAccess(cancelMatch[1]);
+      return { job: await this.jobs.cancel(cancelMatch[1]) };
+    }
     const decisionMatch = /^\/jobs\/([A-Za-z0-9-]+)\/decision$/.exec(pathname);
     if (method === 'POST' && decisionMatch) {
+      this.requirePersonalJobAccess(decisionMatch[1]);
       const body = objectBody(request.body);
       const selections: Record<string, string> = {};
       if (body.selections && typeof body.selections === 'object' && !Array.isArray(body.selections)) {
@@ -365,11 +495,13 @@ export class DesktopAppRuntime {
     }
     const guidanceMatch = /^\/jobs\/([A-Za-z0-9-]+)\/guidance$/.exec(pathname);
     if (method === 'POST' && guidanceMatch) {
+      this.requirePersonalJobAccess(guidanceMatch[1]);
       const body = objectBody(request.body);
       return { job: this.jobs.submitGuidance(guidanceMatch[1], requiredString(body, 'guidance')) };
     }
     const escalationMatch = /^\/jobs\/([A-Za-z0-9-]+)\/escalate$/.exec(pathname);
     if (method === 'POST' && escalationMatch) {
+      this.requirePersonalJobAccess(escalationMatch[1]);
       const body = objectBody(request.body);
       const effort = parseReasoningEffort(body.reasoningEffort);
       return {

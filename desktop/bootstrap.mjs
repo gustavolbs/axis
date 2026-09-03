@@ -32,4 +32,38 @@ if (process.platform === 'darwin') {
   });
 }
 
+// Canonicalize every provider connection through the stable Company graph
+// before AppRuntime, ProjectProviderRuntime or account IPC instantiate their
+// connection runtimes. Account labels remain display metadata only.
+const { installCompanyConnectionOwnership } = await import('../dist/company-connection-ownership.js');
+installCompanyConnectionOwnership();
+
+// Work Hub remains a global aggregate, but every source and normalized item
+// crossing the desktop boundary must carry its canonical Company provenance.
+// Install after connection ownership so companyId never comes from mutable
+// provider/account labels.
+const { installWorkHubCompanyProvenance } = await import('../dist/work-hub-company-provenance.js');
+installWorkHubCompanyProvenance();
+
+// API endpoint selection is connection-scoped, not provider-scoped. Install it
+// after Company canonicalization so every API-key view can carry independent
+// transport metadata without changing Account/Ollama behavior.
+const { installApiConnectionEndpointRouting } = await import('../dist/api-connection-endpoints.js');
+installApiConnectionEndpointRouting();
+
+// Install the standalone active-Company decorator before main.mjs asks the
+// compiled runtime class to create its singleton. The decorator keeps Company
+// scope server-owned while the existing app runtime remains the implementation
+// of jobs, Projects, settings and provider execution.
+const { installCompanyScopedDesktopRuntime } = await import('../dist/company-scoped-desktop-runtime.js');
+installCompanyScopedDesktopRuntime();
+
+// main.mjs owns the legacy Account/MCP bridge. Schedule the Connection Center
+// override one macrotask after Electron becomes ready: initializeDesktop first
+// installs the legacy handlers, then this replaces only connection inventory
+// and creation while leaving login/status/MCP handlers provider-owned.
+const { app } = await import('electron');
+const { installConnectionCenterBridge } = await import('./connection-center.mjs');
+void app.whenReady().then(() => setImmediate(installConnectionCenterBridge));
+
 await import('./main.mjs');

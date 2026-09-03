@@ -7,6 +7,8 @@ export interface AppSettingsFile {
   executionMode?: 'remote' | 'auto' | 'local';
   remoteWorkerUrl?: string;
   remoteWorkerCredentialRef?: string;
+  /** Canonical Company selected in the standalone Axis shell. */
+  activeCompanyId?: string;
   /** Base URL of the Ollama the runtime talks to when running locally. */
   ollamaBaseUrl?: string;
   /**
@@ -53,6 +55,7 @@ function parseSettings(raw: string, source: string): AppSettingsFile | undefined
     executionMode,
     remoteWorkerUrl: typeof value.remoteWorkerUrl === 'string' ? value.remoteWorkerUrl.trim() : undefined,
     remoteWorkerCredentialRef: typeof value.remoteWorkerCredentialRef === 'string' ? value.remoteWorkerCredentialRef.trim() : undefined,
+    activeCompanyId: typeof value.activeCompanyId === 'string' ? value.activeCompanyId.trim() : undefined,
     ollamaBaseUrl: typeof value.ollamaBaseUrl === 'string' ? value.ollamaBaseUrl.trim() : undefined,
     workerHealthPath: typeof value.workerHealthPath === 'string' ? value.workerHealthPath.trim() : undefined,
     archivedProjectIds: Array.isArray(value.archivedProjectIds)
@@ -76,6 +79,7 @@ export function writeAppSettings(settings: AppSettingsFile): void {
     executionMode: settings.executionMode,
     remoteWorkerUrl: settings.remoteWorkerUrl?.trim() || undefined,
     remoteWorkerCredentialRef: settings.remoteWorkerCredentialRef?.trim() || undefined,
+    activeCompanyId: settings.activeCompanyId?.trim() || undefined,
     ollamaBaseUrl: settings.ollamaBaseUrl?.trim() || undefined,
     workerHealthPath: settings.workerHealthPath?.trim() || undefined,
     archivedProjectIds: settings.archivedProjectIds?.length ? [...new Set(settings.archivedProjectIds)] : undefined,

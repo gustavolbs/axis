@@ -53,6 +53,7 @@ interface OpenAIResponsePayload {
 export interface OpenAIProviderOptions {
   apiKey: string;
   baseUrl?: string;
+  headers?: Record<string, string>;
   fetch?: FetchLike;
   timeoutMs?: number;
 }
@@ -65,6 +66,24 @@ const providerCapabilities: ProviderCapabilities = {
   promptCaching: true,
   toolUse: true
 };
+
+const RESERVED_HEADERS = new Set(['authorization', 'content-type']);
+
+function additionalHeaders(input: Record<string, string> | undefined): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [rawName, rawValue] of Object.entries(input ?? {})) {
+    const name = rawName.trim().toLowerCase();
+    const value = rawValue.trim();
+    if (!/^[a-z0-9][a-z0-9-]{0,127}$/.test(name) || RESERVED_HEADERS.has(name)) {
+      throw new Error(`OpenAI additional header is not allowed: ${rawName}`);
+    }
+    if (!value || value.length > 1_024 || /[\0\r\n]/.test(value)) {
+      throw new Error(`OpenAI additional header ${name} has an invalid value.`);
+    }
+    result[name] = value;
+  }
+  return result;
+}
 
 /**
  * OpenAI's /models response does not expose context/output limits. Keep only
@@ -135,6 +154,7 @@ export class OpenAIInferenceProvider implements InferenceProvider {
 
   private readonly apiKey: string;
   private readonly baseUrl: string;
+  private readonly additionalHeaders: Record<string, string>;
   private readonly fetchImpl: FetchLike;
   private readonly timeoutMs: number;
 
@@ -142,6 +162,7 @@ export class OpenAIInferenceProvider implements InferenceProvider {
     if (!options.apiKey.trim()) throw new Error('OpenAI API key is required.');
     this.apiKey = options.apiKey.trim();
     this.baseUrl = (options.baseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '');
+    this.additionalHeaders = additionalHeaders(options.headers);
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.timeoutMs = options.timeoutMs ?? 120_000;
   }
@@ -245,7 +266,7 @@ export class OpenAIInferenceProvider implements InferenceProvider {
   }
 
   private headers(): Record<string, string> {
-    return { authorization: `Bearer ${this.apiKey}` };
+    return { ...this.additionalHeaders, authorization: `Bearer ${this.apiKey}` };
   }
 
   private assertSuccessful(payload: OpenAIResponsePayload): void {

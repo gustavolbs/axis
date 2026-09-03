@@ -1,6 +1,6 @@
 # Paridade funcional com Codex e Claude Desktop
 
-Baseline pesquisado: **2026-09-02**. Este documento é um inventário funcional e um checklist de implementação para que o Axis centralize, em um aplicativo local-first, o trabalho agêntico realizado com Ollama, Local Worker no Windows, Accounts e conexões autenticadas por API Key. A experiência operacional deve alcançar Codex e Claude Desktop/Claude Code Desktop sem perder a separação entre empresas.
+Baseline pesquisado: **2026-09-02**. Estado de implementação revisado em **2026-09-03**. Este documento é um inventário funcional e um checklist de implementação para que o Axis centralize, em um aplicativo local-first, o trabalho agêntico realizado com Ollama, Local Worker no Windows, Accounts e conexões autenticadas por API Key. A experiência operacional deve alcançar Codex e Claude Desktop/Claude Code Desktop sem perder a separação entre empresas.
 
 ## Objetivo de produto
 
@@ -52,7 +52,7 @@ As tools nativas — filesystem, patch, shell, Git, diff, browser e Computer Use
 Exemplo do comportamento esperado:
 
 | Empresa | Conta/modelo | Destino | MCPs efetivos |
-| --- | --- | --- | --- |
+| --- | --- | --- |
 | Empresa A | Claude Enterprise / modelo autorizado | Desktop | Somente MCPs predefinidos pelo administrador, exibidos como gerenciados |
 | Empresa A | Ollama / modelo de código | Local Worker Windows | MCPs que a Empresa A vinculou explicitamente a esse modelo e destino |
 | Empresa B | Provider X via API Key / modelo de código | Desktop | Skills, plugins, agents e MCPs vinculados àquela conexão/modelo pela Empresa B |
@@ -71,25 +71,27 @@ O Axis já possui uma base importante:
 
 - [x] BASE — aplicativo Electron local com renderer isolado, seletor nativo de pastas e persistência de janela.
 - [x] BASE — conversas persistentes, follow-up, edição e reenvio de mensagem, cancelamento, renomear, arquivar, restaurar, excluir e pesquisar por título.
-- [x] BASE — projetos com instruções, pasta opcional, `organizationId`, políticas de conexão, privacidade e concorrência.
+- [x] BASE — projetos com instruções, pasta opcional, Company canônica, políticas de conexão, privacidade e concorrência.
 - [x] BASE — seleção explícita de modelo, provedor e conexão, incluindo Ollama, API Keys, perfis Claude e perfis ChatGPT/Codex.
 - [x] BASE — Local Worker no Windows como destino especializado configurável, com URL/health route e descoberta de modelos.
 - [x] BASE — pipeline Cowork de investigação, plano, edição, validação, revisão adversarial, reparo e memória de repositório.
-- [x] BASE — Markdown básico, cópia, leitura em voz alta, progresso, lista de arquivos alterados, validações e diff unificado em texto.
+- [x] BASE — Project Chat consegue montar, a cada turno, um contexto de repositório somente leitura com mapa do repo e excerpts ranqueados do folder pertencente ao Project; o índice reutilizável é particionado por Company.
+- [x] BASE — resultados Cowork oferecem review estruturado do diff do último turno, com navegação por arquivo, hunks colapsáveis, números de linha, destaque de adições/remoções e acesso ao unified diff bruto.
+- [x] BASE — Markdown básico, cópia, leitura em voz alta, progresso, lista de arquivos alterados e validações.
 - [x] BASE — perfis separados de contas Claude e ChatGPT/Codex, com diretórios de runtime e autenticação isolados.
 - [x] BASE — conexões nomeadas por API Key, armazenamento da chave no cofre do sistema e persistência somente de referências não secretas.
+- [x] BASE — Company/Personal como contextos de primeira classe na sidebar, Company Hub scoped e Work Hub global agregado com filtros por Company.
 - [x] BASE — armazenamento local de configuração sensível e histórico de roteamento.
 
 A lacuna arquitetural é objetiva:
 
-- O modo **Chat** é uma inferência conversacional e, por contrato, não explora nem altera o repositório (`src/premium-agent.ts`).
+- O modo **Project Chat** continua deliberadamente não mutativo, mas agora lê contexto limitado do repositório pertencente ao Project antes de responder. Chat pessoal sem Project continua puramente conversacional. Ainda não existe um loop de tools em que o próprio modelo decida novas leituras durante o turno (`src/project-chat-context.ts`, `src/premium-agent.ts`).
 - O modo **Cowork** não oferece ao modelo um catálogo geral de ferramentas. O host escolhe evidências, pede um plano estruturado, exige antecipadamente `editableFiles`/`contextFiles`, recebe arquivos completos em JSON e só executa validações de uma allowlist (`src/local-engineer.ts`, `src/executor.ts`, `src/validation.ts`).
-- O diff atual é um `<pre>` dentro da resposta. Não há review pane, seleção de escopo Git, comentários inline, stage/unstage/revert, editor de arquivo ou terminal integrado (`app/src/AgentSurfaceV2.tsx`).
+- O review do último turno já saiu do `<pre>` único: a UI estrutura arquivos/hunks, linha antiga/nova e adições/remoções. Ainda faltam escopos Git reais (unstaged/staged/commit/branch), diff side-by-side, comentários inline, stage/unstage/revert, editor de arquivo e terminal integrado (`app/src/diff-review.ts`, `app/src/AgentSurfaceV2.tsx`).
 - A seção Scheduled exibida no projeto é apenas apresentação; não existe scheduler de produto (`app/src/ProjectDetail.tsx`).
 - O Axis gerencia alguns MCPs por perfis de conta, mas ainda não possui um host MCP universal com tools, resources, prompts, UI, elicitação, aprovações e escopo por empresa.
-- A **Repo Intelligence** atual já persiste fatos de arquitetura, convenções, invariantes, procedimentos, regressões, episódios e falhas com evidência, Git SHA, fingerprints, freshness e recuperação limitada; porém sua autoridade ainda está acoplada ao `local_engineer`/worker (`src/repo-intelligence.ts`, `docs/REPO_INTELLIGENCE.md`). Ela ainda não é uma memória canônica do projeto, compartilhada de forma provider-agnostic entre Claude, Codex, API Keys, Ollama, desktop e Local Worker.
 
-Portanto, a proposta exige quatro fundações inseparáveis: um **runtime agêntico único para múltiplas IAs**, um **modelo de contexto multiempresa**, uma **matriz de capabilities/MCPs por conta, modelo e destino de execução** e uma **Project Memory nativa do Axis**, pertencente ao projeto e reutilizável por qualquer conexão autorizada da mesma empresa.
+Portanto, a proposta exige três fundações inseparáveis: um **runtime agêntico único para múltiplas IAs**, um **modelo de contexto multiempresa** e uma **matriz de capabilities/MCPs por conta, modelo e destino de execução**.
 
 ---
 
@@ -127,7 +129,7 @@ Dentro de P1, **P1.5 — Empresas, contas, perfis e isolamento** é o primeiro b
 - [ ] AUSENTE — Fila de mensagens: escolher se uma nova mensagem deve orientar imediatamente o turno ativo ou esperar o próximo turno. **Ambos**.
 - [ ] AUSENTE — Steering durante execução sem cancelar: entregar correção no próximo boundary seguro de ferramenta. **Claude** e **Codex**.
 - [ ] PARCIAL — Perguntas estruturadas com opções, recomendação e resposta livre devem ser parte do protocolo geral, não apenas do preflight Cowork. **Ambos**.
-- [ ] AUSENTE — Diferenciar claramente plan, ask/explain, edit e full-agent sem criar dois produtos incompatíveis “Chat” e “Cowork”. **Ambos**.
+- [ ] PARCIAL — Diferenciar claramente plan, ask/explain, edit e full-agent sem criar dois produtos incompatíveis “Chat” e “Cowork”. A UI já explicita Chat/Cowork dentro do mesmo Project e Project Chat compartilha Company/Project/contexto de código, mas os runtimes ainda não convergiram para um único loop de tools. **Ambos**.
 
 ## P1.2 — Exploração e manipulação de arquivos
 
@@ -150,7 +152,7 @@ Dentro de P1, **P1.5 — Empresas, contas, perfis e isolamento** é o primeiro b
 - [ ] AUSENTE — Links clicáveis com arquivo e linha nas respostas, diffs, erros e resultados de busca. **Ambos**.
 - [ ] AUSENTE — File tree pesquisável da sessão/projeto, com changed/open/recent files. **Claude**; arquivos no projeto/review do **Codex**.
 - [ ] PARCIAL — Políticas de segredos devem classificar `.env`, chaves, certificados, tokens e credenciais; permitir exceção explícita e auditada quando necessária. **Ambos**.
-- [ ] AUSENTE — Limites e UX para arquivos grandes: amostragem, busca antes de leitura, chunking e explicação do conteúdo omitido. **Ambos**.
+- [ ] PARCIAL — Limites e UX para arquivos grandes: Project Chat já limita quantidade de arquivos e caracteres por evidence capsule, mas ainda faltam UX geral, chunking interativo e explicação uniforme de conteúdo omitido. **Ambos**.
 
 ## P1.3 — Shell, processos e ambiente
 
@@ -179,56 +181,64 @@ Dentro de P1, **P1.5 — Empresas, contas, perfis e isolamento** é o primeiro b
 - [ ] AUSENTE — Nunca permitir que uma mensagem web, arquivo, MCP ou agente filho eleve as próprias permissões. **Ambos**.
 - [ ] AUSENTE — Auditoria por sessão de todas as aprovações, negações, regras aplicadas e ações sensíveis. **Ambos**.
 - [ ] AUSENTE — Redaction consistente de segredos em prompt, tool result, terminal, diff, log e export local. **Ambos**.
-- [ ] AUSENTE — Resolver API Keys somente no main process/adapter no momento da chamada; renderer, modelo, tools, plugins e MCPs recebem no máximo uma referência não secreta. **Objetivo Axis**.
-- [ ] AUSENTE — Injetar a chave apenas no header/campo exigido pelo provider, com redaction de requests, respostas de erro, traces e diagnósticos. **Objetivo Axis**.
-- [ ] AUSENTE — Validar endpoint customizado, TLS e redirects antes de enviar uma API Key, impedindo vazamento para host diferente do configurado. **Objetivo Axis**.
-- [ ] AUSENTE — Teste de API Key deve usar operação mínima/não mutativa e nunca registrar a chave ou devolvê-la à UI. **Objetivo Axis**.
+- [ ] PARCIAL — Resolver API Keys somente no main process/adapter no momento da chamada; o Connection Center já mantém segredo fora do renderer e usa referências estáveis, mas a regra ainda precisa cobrir o futuro loop geral de tools/plugins/MCPs. **Objetivo Axis**.
+- [ ] PARCIAL — Injetar a chave apenas no header/campo exigido pelo provider, com redaction de requests, respostas de erro, traces e diagnósticos; adapters atuais fazem a chamada sem devolver a chave à UI, porém a política transversal ainda não existe. **Objetivo Axis**.
+- [ ] PARCIAL — Validar endpoint customizado, TLS e redirects antes de enviar uma API Key, impedindo vazamento para host diferente do configurado. O lifecycle já preserva endpoint por conexão, mas ainda falta hardening completo de redirect/TLS/proxy. **Objetivo Axis**.
+- [x] BASE — Teste de API Key usa operação mínima/não mutativa e não registra nem devolve a chave à UI. **Objetivo Axis**.
 - [ ] PARCIAL — Política deny-by-default de capabilities precisa governar as ferramentas reais do loop, e não apenas metadados enviados ao provedor. **Objetivo Axis**.
 
 ## P1.5 — Empresas, contas, perfis e isolamento
 
-- [x] BASE — Projetos já possuem `organizationId`, política de conexão, privacidade, memória e workspace separados no dispositivo.
+- [x] BASE — Projetos já possuem Company/`organizationId`, política de conexão, privacidade, memória e workspace separados no dispositivo.
 - [x] BASE — Perfis Claude e ChatGPT/Codex usam diretórios de configuração separados e não copiam credenciais OAuth para o Axis.
-- [ ] AUSENTE — Adotar um modelo canônico e visível `empresa → conexões/recursos → projetos → sessões`; “organização”, “workspace” e “perfil corporativo” não podem representar conceitos conflitantes. **Objetivo Axis**.
-- [ ] AUSENTE — Criar, editar, arquivar, restaurar, ordenar, buscar e identificar empresas por nome, cor, ícone e descrição, tudo persistido localmente. **Objetivo Axis**.
-- [ ] AUSENTE — Manter um contexto Pessoal separado das empresas, sem herança implícita de contas, histórico ou recursos corporativos. **Objetivo Axis**.
-- [ ] AUSENTE — Seletor de empresa sempre visível no chrome, no composer, nas aprovações e nos resultados; trocar de empresa exige uma ação explícita. **Objetivo Axis**.
-- [ ] AUSENTE — Central de conexões capaz de registrar vários Accounts e várias API Keys do mesmo provedor, com nome amigável, empresa proprietária, `authKind`, restrições administradas e estado. **Objetivo Axis**.
-- [ ] AUSENTE — Suportar Ollama, perfil Claude, perfil ChatGPT/Codex, API Key com endpoint oficial/customizado e futuros adaptadores como conexões independentes; nenhum deles é obrigatório para os demais funcionarem. **Objetivo Axis**.
-- [ ] AUSENTE — O mesmo formulário/base de detalhes deve atender Account e API Key, variando somente autenticação e campos específicos do provedor. **Objetivo Axis**.
-- [ ] AUSENTE — Adicionar, nomear, testar, editar endpoint/headers permitidos, rotacionar chave, desabilitar e remover uma conexão por API Key. **Objetivo Axis**.
-- [ ] AUSENTE — Permitir várias API Keys do mesmo provedor na mesma empresa ou em empresas diferentes, sem colisão de nome, credencial, uso ou configuração. **Objetivo Axis**.
-- [ ] AUSENTE — Descobrir/atualizar o catálogo de modelos pela API Key quando o provedor permitir e oferecer catálogo configurável quando não houver discovery. **Objetivo Axis**.
-- [ ] AUSENTE — Armazenar por modelo de uma conexão API Key context window, preços conhecidos, multimodalidade, tool calling, structured output e limites específicos. **Objetivo Axis**.
+- [x] BASE — Adotar um modelo canônico e visível `empresa → conexões/recursos → projetos → sessões`; “organização”, “workspace” e “perfil corporativo” não podem representar conceitos conflitantes. **Objetivo Axis**.
+- [x] BASE — Criar, editar, arquivar, restaurar, ordenar, buscar e identificar empresas por nome, cor, ícone e descrição, tudo persistido localmente. **Objetivo Axis**.
+- [x] BASE — Manter um contexto Pessoal separado das empresas, sem herança implícita de contas, histórico ou recursos corporativos. **Objetivo Axis**.
+- [x] BASE — Seletor de empresa sempre visível no chrome, no composer, nas aprovações e nos resultados; trocar de empresa exige uma ação explícita. **Objetivo Axis**.
+- [x] BASE — Central de conexões capaz de registrar vários Accounts e várias API Keys do mesmo provedor, com nome amigável, empresa proprietária, `authKind`, restrições administradas e estado. **Objetivo Axis**.
+- [x] BASE — Suportar Ollama, perfil Claude, perfil ChatGPT/Codex, API Key com endpoint oficial/customizado e futuros adaptadores como conexões independentes; nenhum deles é obrigatório para os demais funcionarem. **Objetivo Axis**.
+- [x] BASE — O mesmo formulário/base de detalhes deve atender Account e API Key, variando somente autenticação e campos específicos do provedor. **Objetivo Axis**.
+- [x] BASE — Adicionar, nomear, testar, editar endpoint/headers permitidos, rotacionar chave, desabilitar e remover uma conexão por API Key. **Objetivo Axis**.
+- [x] BASE — Permitir várias API Keys do mesmo provedor na mesma empresa ou em empresas diferentes, sem colisão de nome, credencial, uso ou configuração. **Objetivo Axis**.
+- [ ] PARCIAL — Descobrir/atualizar o catálogo de modelos pela API Key quando o provedor permitir; OpenAI/Anthropic já usam `listModels`, mas falta um catálogo configurável de fallback para providers sem discovery. **Objetivo Axis**.
+- [ ] PARCIAL — Armazenar por modelo de uma conexão API Key context window, preços conhecidos, multimodalidade, tool calling, structured output e limites específicos. `ModelDefinition`/catálogo já carregam parte dos limites/capabilities, mas não toda a matriz de preço/capability por conexão. **Objetivo Axis**.
 - [ ] AUSENTE — Central de destinos capaz de registrar o desktop atual e um ou mais Local Workers Windows, mostrando host, versão, health, modelos e modo de execução suportado. **Objetivo Axis**.
-- [ ] AUSENTE — Vincular cada instância de conexão a exatamente uma empresa; reutilizar a mesma identidade em outra empresa exige criar um vínculo explícito e separado. **Objetivo Axis**.
-- [ ] AUSENTE — Testar, autenticar/reautenticar ou validar/rotacionar chave, desconectar, desabilitar e remover conexão sem afetar os outros Accounts/API Keys do mesmo provedor. **Ambos**.
-- [ ] AUSENTE — Mostrar inventário por conexão e modelo: `authKind`, limites, MCPs disponíveis/bloqueados, skills/instruções, plugins, agents, capabilities, origem das restrições, última verificação e erros. **Objetivo Axis**.
-- [ ] AUSENTE — Permitir defaults por empresa e projeto para conexão, modelo, destino de execução, esforço, modo de interação e estratégia de fallback. **Objetivo Axis**.
-- [ ] AUSENTE — Fallback entre conexões somente dentro da allowlist da mesma empresa, com confirmação quando mudar Account/API Key, identidade, política ou custo. **Objetivo Axis**.
+- [x] BASE — Vincular cada instância de conexão a exatamente uma empresa; reutilizar a mesma identidade em outra empresa exige criar um vínculo explícito e separado. **Objetivo Axis**.
+- [x] BASE — Testar, autenticar/reautenticar ou validar/rotacionar chave, desconectar, desabilitar e remover conexão sem afetar os outros Accounts/API Keys do mesmo provedor. **Ambos**.
+- [ ] PARCIAL — Mostrar inventário por conexão e modelo: Connection Center já mostra identidade, `authKind`, Company, provider, estado e restrições administradas; ainda faltam limites/MCPs/skills/plugins/agents/capabilities completos por modelo. **Objetivo Axis**.
+- [ ] PARCIAL — Permitir defaults por empresa e projeto para conexão, modelo, destino de execução, esforço, modo de interação e estratégia de fallback. Projects já possuem defaults/policies de conexão/modelo; ainda faltam defaults completos de Company/destino/mode/fallback. **Objetivo Axis**.
+- [ ] PARCIAL — Fallback entre conexões somente dentro da allowlist da mesma empresa: o Project runtime já limita candidates à política/Company, mas ainda falta confirmação explícita quando identidade, custo ou Account/API Key mudar. **Objetivo Axis**.
 - [ ] AUSENTE — Rate limit, quota, falha e circuit breaker são calculados por conexão/credential reference, não apenas por provedor. **Objetivo Axis**.
-- [ ] AUSENTE — API Keys ficam no Keychain/cofre do SO; credenciais de Account ficam no runtime oficial; arquivos locais guardam somente referências e metadados não secretos. **Objetivo Axis**.
-- [ ] AUSENTE — Fixar empresa, projeto, conexão, modelo, destino, roots e conjunto efetivo de recursos na criação da sessão; nada disso pode mudar silenciosamente. **Objetivo Axis**.
-- [ ] AUSENTE — Definir precedência verificável: regras de segurança do app → empresa → projeto → sessão; conteúdo pessoal ou de outra empresa nunca participa da herança. **Objetivo Axis**.
+- [x] BASE — API Keys ficam no Keychain/cofre do SO; credenciais de Account ficam no runtime oficial; arquivos locais guardam somente referências e metadados não secretos. **Objetivo Axis**.
+- [ ] PARCIAL — Fixar empresa, projeto, conexão, modelo, destino, roots e conjunto efetivo de recursos na criação da sessão; Company e Project já são validados/fixados pelo runtime e nunca vêm como autoridade do renderer, mas modelo/destino/resources ainda não formam um snapshot imutável completo. **Objetivo Axis**.
+- [ ] PARCIAL — Definir precedência verificável: regras de segurança do app → empresa → projeto → sessão; isolamento de Company e Project instructions já é aplicado, mas ainda falta um resolver/inspector uniforme para todos os tipos de recurso. **Objetivo Axis**.
 - [ ] AUSENTE — Inspector “Contexto efetivo” mostrando conexão/`authKind`, modelo, destino, instruções, padrões, skills, plugins, MCPs disponíveis/bloqueados, agents, hooks, memória, variáveis, roots e políticas, com origem de cada item. **Objetivo Axis**.
 - [ ] AUSENTE — Configurar por empresa suas peculiaridades: linguagem, glossário, stack, padrões de código, comandos, Git workflow, templates, revisão, apps permitidos e critérios de conclusão. **Objetivo Axis**.
 - [ ] AUSENTE — Templates de projeto por empresa que instalam o conjunto correto de instruções, skills, MCPs, agentes e validações sem duplicação manual. **Objetivo Axis**.
-- [ ] AUSENTE — Perfil de browser/cookies, processos, worktrees, anexos, memória e índices isolados por empresa e depois por projeto. **Objetivo Axis**.
-- [ ] AUSENTE — Bloquear por construção acesso cruzado a pastas, segredos, Accounts, API Keys, MCPs, cookies, processos, worktrees e históricos de outra empresa. **Objetivo Axis**.
+- [ ] PARCIAL — Perfil de browser/cookies, processos, worktrees, anexos, memória e índices isolados por empresa e depois por projeto. O índice reutilizável de Project Chat já é particionado por Company; browser/process/worktree/attachments ainda não existem como recursos completos. **Objetivo Axis**.
+- [ ] PARCIAL — Bloquear por construção acesso cruzado a pastas, segredos, Accounts, API Keys, MCPs, cookies, processos, worktrees e históricos de outra empresa. Jobs, Projects, Connections e históricos já falham fechados no Company scope; recursos ainda inexistentes e o futuro loop geral precisam herdar a mesma garantia. **Objetivo Axis**.
 - [ ] AUSENTE — Um mesmo caminho físico não pode ser associado a empresas conflitantes sem migração ou compartilhamento local explícito, limitado e registrado. **Objetivo Axis**.
-- [ ] AUSENTE — Dashboard agregado mostra tarefas de várias empresas com badge e filtros, mas abrir ou agir sobre uma tarefa fixa imediatamente o contexto daquela empresa. **Objetivo Axis**.
+- [x] BASE — Mover Companies para uma superfície de contexto de primeira classe fora de Settings, listando Personal + Companies na sidebar primária. **Objetivo Axis**.
+- [x] BASE — Ao selecionar uma Company, abrir uma sidebar secundária Company-scoped com Overview, Projects, Connections, MCPs, Skills e Settings; cada seção usa somente o contexto canônico daquela Company. **Objetivo Axis**.
+- [x] BASE — Administrar Sources/connections dentro da Company proprietária; configuração de fonte não pertence ao Work Hub global. **Objetivo Axis**.
+- [x] BASE — Manter um único **Work Hub global e de primeira classe**, sem Work Hubs duplicados por Company, agregando Personal + todas as Companies em Inbox, My Work, Today, Calendar e Sources. **Objetivo Axis**.
+- [x] BASE — Usar `All` como escopo padrão do Work Hub e oferecer filtros explícitos por Company/Personal, mantendo Company identity visível em todos os itens. **Objetivo Axis**.
+- [x] BASE — Preservar provenance/ownership no Work Hub, no mínimo `companyId`, `connectionId` e `sourceId`, para que agregação nunca apague isolamento. **Objetivo Axis**.
+- [x] BASE — Tratar Work Hub `Sources` como superfície agregada de visibilidade/health; edição e administração continuam na Company proprietária. **Objetivo Axis**.
+- [x] BASE — Permitir que Company Overview mostre resumo scoped e abra o Work Hub global já filtrado para aquela Company. **Objetivo Axis**.
+- [x] BASE — Manter no Axis Settings global somente configurações app-wide; configurações específicas de Company pertencem ao Company Hub. **Objetivo Axis**.
 - [ ] AUSENTE — Busca global pode pesquisar várias empresas somente quando o usuário pedir; resultados nunca misturam trechos no contexto de uma sessão. **Objetivo Axis**.
 - [ ] AUSENTE — Mover/copiar projeto, conversa, skill ou padrão entre empresas exige preview do que será copiado, remoção de segredos e confirmação do destino. **Objetivo Axis**.
 - [ ] AUSENTE — Exportar a ficha de isolamento da sessão: empresa, projeto, conexão, paths, MCPs, regras, rede e arquivos persistidos. **Objetivo Axis**.
 - [ ] AUSENTE — Exportar/importar um pacote local de configuração da empresa sem credenciais, permitindo backup e onboarding manual sem backend Axis. **Objetivo Axis**.
-- [ ] AUSENTE — Testes de não vazamento entre pelo menos duas empresas, dois Accounts, duas API Keys do mesmo provedor, dois provedores e um Local Worker, inclusive cancelamento, retry, fallback, crash e restauração. **Objetivo Axis**.
+- [ ] PARCIAL — Testes de não vazamento entre pelo menos duas empresas, dois Accounts, duas API Keys do mesmo provedor, dois provedores e um Local Worker, inclusive cancelamento, retry, fallback, crash e restauração. Já há contratos/regressões multi-Company e visual smoke real para Company/Connections/Work Hub; ainda falta a matriz E2E completa de falhas/restauração. **Objetivo Axis**.
 
 ## P1.6 — Git, diff e revisão
 
-- [ ] PARCIAL — Substituir o diff textual colapsável por review pane com file list, syntax highlighting, números de linha, adições/remoções e navegação. **Ambos**.
-- [ ] AUSENTE — Escopos Unstaged, Staged, Commit, Branch/base e Last turn; indicar claramente qual está sendo visto. **Codex**; diff de sessão no **Claude**.
+- [ ] PARCIAL — Review do último turno já possui file list, hunks colapsáveis, números old/new, adições/remoções coloridas e navegação; ainda faltam syntax highlighting de linguagem e uma pane dedicada independente do transcript. **Ambos**.
+- [ ] PARCIAL — Escopos Unstaged, Staged, Commit, Branch/base e Last turn; `Last turn` agora é identificado explicitamente, mas os demais escopos Git ainda não existem. **Codex**; diff de sessão no **Claude**.
 - [ ] AUSENTE — Mostrar alterações do usuário e de outras ferramentas, não apenas as produzidas pelo pipeline Axis. **Ambos**.
-- [ ] AUSENTE — Diff side-by-side e unified, quebra de linha, collapse de arquivo/hunk e busca. **Ambos**.
+- [ ] PARCIAL — Diff unified, collapse por arquivo/hunk e navegação já existem no review do último turno; faltam side-by-side, wrap configurável e busca. **Ambos**.
 - [ ] AUSENTE — Comentários inline em linhas/hunks, fila de comentários e envio conjunto como instrução ao agente. **Ambos**.
 - [ ] AUSENTE — Review automático sob demanda com achados inline, severidade, evidência e ação “corrigir”. **Ambos**.
 - [ ] AUSENTE — Stage/unstage/revert por hunk, arquivo e conjunto; confirmação forte para revert. **Codex**; controles de diff no **Claude**.
@@ -295,7 +305,7 @@ P1 só termina quando os testes E2E comprovarem o fluxo com Ollama, Local Worker
 ## P2.3 — Sessões paralelas, subagentes e coordenação
 
 - [ ] PARCIAL — Rodar várias sessões simultaneamente com scheduler por recursos, não apenas jobs concorrentes sobre o mesmo checkout. **Ambos**.
-- [ ] AUSENTE — Filtros de sessão por status, empresa, conexão, `authKind`, projeto e ambiente; agrupar por empresa/projeto. **Claude**; Activity/Projects no **Codex**.
+- [ ] PARCIAL — Filtros de sessão por status, empresa, conexão, `authKind`, projeto e ambiente; a Company ativa já filtra Jobs/Projects/histórico e conversas ficam agrupadas sob Projects, mas ainda não há uma busca/filtro cross-Company deliberada por todos esses campos. **Claude**; Activity/Projects no **Codex**.
 - [ ] AUSENTE — Abrir duas sessões lado a lado e alternar foco sem perder panes. **Claude**.
 - [ ] AUSENTE — Layout de panes arrastável/redimensionável: chat, diff, browser, terminal, file, plan, tasks e subagent. **Claude**; panes no **Codex**.
 - [ ] AUSENTE — Side chat que lê o contexto até aquele ponto sem contaminar a conversa principal. **Claude**.
@@ -337,7 +347,7 @@ P1 só termina quando os testes E2E comprovarem o fluxo com Ollama, Local Worker
 - [ ] AUSENTE — Importar/espelhar MCPs de vários perfis Claude, ChatGPT/Codex e APIs sem mesclar credenciais, nomes ou políticas de empresas diferentes. **Objetivo Axis**.
 - [ ] AUSENTE — Catálogo central agrupado por empresa com busca, status, descrição, origem, conexão/`authKind`, permissões e ações reconnect/reconfigurar. **Objetivo Axis**.
 - [ ] AUSENTE — Mostrar claramente quando uma tool enviará dados para um SaaS ou MCP remoto, incluindo empresa, conexão, host e campos relevantes. **Objetivo Axis**.
-- [ ] AUSENTE — Work Hub multiempresa com filtros e badges de origem, sem transformar conteúdo de uma empresa em contexto de outra. **Objetivo Axis**.
+- [x] BASE — Work Hub global multiempresa com `All` por padrão, filtros Company/Personal e badges de origem, sem transformar conteúdo de uma empresa em contexto de outra nem criar Work Hubs duplicados por Company. **Objetivo Axis**.
 - [ ] AUSENTE — Trace local por tool com empresa, MCP, origem/ownership, conexão/`authKind`, modelo, destino de execução, duração, bytes, resultado e erro. **Ambos**.
 - [ ] AUSENTE — Defesa contra instrução maliciosa em tool result/resource e proibição de elevação de privilégio. **Ambos**.
 
@@ -359,24 +369,7 @@ P1 só termina quando os testes E2E comprovarem o fluxo com Ollama, Local Worker
 - [ ] AUSENTE — Hooks de lifecycle antes/depois de tool, edit, command, turn, subagent e session, com timeout e decisão allow/deny. **Ambos**.
 - [ ] AUSENTE — Rules declarativas para comandos e ferramentas, separadas de hooks executáveis. **Codex**; permissions rules no **Claude**.
 - [ ] AUSENTE — Memória automática pessoal, por empresa e por projeto/repo, editável, deletável, com fonte, freshness e isolamento. **Ambos**.
-- [ ] PARCIAL — Integrar a Repo Intelligence atual ao contexto visível da sessão e permitir inspecionar/esquecer fatos. **Ambos**.
-- [ ] AUSENTE — Promover `Repo Intelligence` de capability do `local_engineer`/worker para **Project Memory** canônica do Axis, provider-agnostic e disponível a qualquer conexão/modelo autorizado no projeto. **Objetivo Axis**.
-- [ ] AUSENTE — A identidade da Project Memory deve pertencer explicitamente a `companyId + projectId + repo/workspace identity`; conta, modelo, `authKind`, sessão, desktop e Local Worker são consumidores/produtores, nunca proprietários da memória. **Objetivo Axis**.
-- [ ] AUSENTE — Separar **conhecimento durável** (`architecture`, `convention`, `invariant`, `regression`, `procedure`, `decision`, `gotcha`) de **memória episódica/handoff** (`goal`, branch/worktree, investigação, arquivos ativos/alterados, decisões, tentativas falhas, validações, questões abertas e próximo passo). **Objetivo Axis**.
-- [ ] AUSENTE — Preservar no Project Memory o modelo de evidência já existente: fatos duráveis têm `sourcePaths`, fingerprints, Git SHA observado/validado, confidence, freshness/stale e timestamps; fonte/testes/requisitos atuais sempre vencem memória. **Objetivo Axis**.
-- [ ] AUSENTE — Capturar memória automaticamente a partir do lifecycle do runtime Axis — prompt, tool calls, reads, edits, commands, Git, testes, review, erros, compactação e session end — sem depender de a IA “lembrar de lembrar”. **Objetivo Axis**.
-- [ ] AUSENTE — Consolidar somente fatos reutilizáveis; aprendizagem de arquitetura/convenção/invariante/procedimento exige evidência no repositório e resultado validado, impedindo especulação de uma IA de virar verdade compartilhada. **Objetivo Axis**.
-- [ ] AUSENTE — Recuperar memória por tarefa com capsule limitado e ranqueado por tipo, tags, paths, relevância lexical, confidence, freshness, recency e proximidade Git; nunca despejar toda a memória no prompt. **Objetivo Axis**.
-- [ ] AUSENTE — Suportar baseline de Project Memory sem chamada adicional a LLM; consolidação semântica e embeddings são upgrades opcionais e podem usar modelo local/barato quando houver ganho mensurável. **Objetivo Axis**.
-- [ ] AUSENTE — Claude Account, ChatGPT/Codex Account, Claude/OpenAI por API Key, Ollama e Local Worker devem ler e aprender na **mesma memória do projeto** quando pertencem à mesma empresa, sem importar a memória privada de cada provedor como autoridade. **Objetivo Axis**.
-- [ ] AUSENTE — Ao trocar Claude → Codex → Ollama → outra conexão no mesmo projeto, gerar/consumir handoff estruturado automaticamente para continuar a tarefa sem reanalisar do zero o que já foi investigado, decidido, tentado e validado. **Objetivo Axis**.
-- [ ] AUSENTE — Handoffs devem ter autoria/origem, session/run id, branch/worktree, timestamp e política de consumo; receber um handoff não concede permissões nem torna observações anteriores mais autoritativas que o checkout atual. **Objetivo Axis**.
-- [ ] AUSENTE — Duas sessões/worktrees concorrentes podem compartilhar conhecimento durável, mas episódios/handoffs e mutações permanecem identificados por sessão/worktree; writes de memória usam lock/transação/atomicidade para não perder aprendizado concorrente. **Objetivo Axis**.
-- [ ] AUSENTE — UI de Project Memory para buscar, inspecionar fonte, freshness, origem/modelo, editar, corrigir, pin/unpin, revalidar, esquecer e resetar memória de um projeto sem apagar conversas ou credenciais. **Objetivo Axis**.
-- [ ] AUSENTE — Isolamento de memória é por empresa/projeto mesmo quando duas empresas apontam para o mesmo Git origin ou caminho equivalente; nenhuma busca automática pode atravessar esse boundary. **Objetivo Axis**.
-- [ ] AUSENTE — Expor opcionalmente a Project Memory do Axis por **MCP stdio/on-demand** para Claude Code, Codex CLI, Cursor e outros clientes externos acessarem a mesma memória sem Docker, porta fixa ou daemon obrigatório. **Objetivo Axis**.
-- [ ] AUSENTE — Integrações externas de memória podem importar/exportar fatos e handoffs de forma revisável, mas nenhuma solução externa vira source of truth obrigatório; `ai-memory` é referência arquitetural e possível adapter opcional, não dependência central do Axis. **Objetivo Axis**.
-- [ ] AUSENTE — O produto principal não pode exigir Docker nem servidor de memória permanentemente residente; qualquer bridge externa deve preferir processo filho/stdio sob demanda ou sidecar explicitamente opcional e gerenciado. **Objetivo Axis**.
+- [ ] PARCIAL — Integrar a Repo Intelligence atual ao contexto visível da sessão e permitir inspecionar/esquecer fatos. Project Chat já injeta mapa + excerpts ranqueados do Project com índice particionado por Company, mas a UI ainda não oferece inspector/fatos editáveis. **Ambos**.
 - [ ] AUSENTE — Importar configuração/memória de outro agente de forma revisável e sem copiar credenciais. **Codex**.
 - [ ] AUSENTE — Record & Replay de um fluxo de UI para gerar uma skill reutilizável. **Codex**.
 
@@ -391,10 +384,6 @@ P1 só termina quando os testes E2E comprovarem o fluxo com Ollama, Local Worker
 - [ ] Um subagente em outro modelo não consegue invocar um MCP que existe apenas no modelo do agente principal.
 - [ ] Arquivos Markdown, HTML, PDF, imagem e planilha abrem em preview e aceitam feedback localizado.
 - [ ] Computer Use só opera apps autorizados para a empresa ativa, é visível, interrompível e não consegue furar sandbox/regras corporativas.
-- [ ] Uma tarefa iniciada por Claude pode ser continuada por Codex, API Key ou Ollama no mesmo projeto recebendo automaticamente conhecimento relevante e um handoff estruturado, sem repetir toda a exploração já concluída.
-- [ ] Arquitetura/convenções/invariantes aprendidos por uma conexão autorizada ficam disponíveis às outras conexões do mesmo projeto, enquanto memória de outra empresa permanece inacessível mesmo para o mesmo Git origin.
-- [ ] Uma alteração no código que invalida a evidência de um fato torna a memória stale/revalidável antes de reutilização; source e testes atuais sempre prevalecem.
-- [ ] Um cliente externo MCP-capable pode consultar a Project Memory do projeto por bridge local on-demand sem exigir Docker ou daemon permanente, quando essa integração estiver habilitada pelo usuário.
 
 ---
 
@@ -483,7 +472,7 @@ P1 só termina quando os testes E2E comprovarem o fluxo com Ollama, Local Worker
 - [ ] AUSENTE — Controles por empresa para Accounts/API Keys/modelos, destinos como Local Worker, Computer Use, browser, MCPs, plugins, skills, bypass e retenção. **Ambos**.
 - [ ] AUSENTE — Allow/block lists por empresa de sites, plugins, executáveis MCP, tools, SaaS e apps de Computer Use. **Ambos**.
 - [ ] AUSENTE — Configuração de TLS, custom CA e proxy por conexão para alcançar Ollama, provedores e MCPs corporativos. **Objetivo Axis**.
-- [ ] AUSENTE — Instalação e atualização por pacote assinado baixado/aplicado pelo usuário, com changelog e rollback local. **Objetivo Axis**.
+- [x] BASE — Instalação e atualização automática por pacote macOS assinado de forma estável, com changelog vindo da versão da release; rollback local ainda não existe. **Objetivo Axis**.
 - [ ] AUSENTE — macOS, Windows x64/ARM64 e Linux com matriz clara de capacidades e degradação. **Claude**; desktop multiplataforma no **Codex**.
 - [ ] AUSENTE — Política de compatibilidade/versionamento para adaptadores de IA, protocolo Ollama, tools, plugins, skills e migrações de arquivos locais. **Objetivo Axis**.
 
@@ -502,15 +491,15 @@ P1 só termina quando os testes E2E comprovarem o fluxo com Ollama, Local Worker
 
 ## Marco 1 — Fundação multiempresa e harness unificado (P1.5 + P1.1–P1.4)
 
-Primeiro consolidar empresa, conexão, projeto, sessão e recurso como escopos imutáveis. Depois construir o protocolo de eventos e tools para Ollama, Accounts e API Keys, executor local sandboxed, filesystem/patch/shell/process tools, approvals e transcript. Os eventos desse runtime já devem nascer como fonte canônica para a futura Project Memory, evitando criar depois bridges específicas por provider. Manter o pipeline atual atrás de feature flag somente como fallback até os E2Es do novo runtime passarem.
+A fundação de Company/Connections/Projects/Sessions já está utilizável e deve permanecer como boundary obrigatória. O próximo passo é fazer Chat e Cowork convergirem para o mesmo protocolo de eventos/tools para Ollama, Accounts e API Keys, com executor local sandboxed, filesystem/patch/shell/process tools, approvals e transcript. Manter o pipeline Cowork atual atrás do contrato comum até os E2Es do runtime unificado passarem.
 
 ## Marco 2 — Git e sessões seguras (P1.5–P1.6)
 
-Completar testes de isolamento entre empresas/contas, implementar worktrees, review pane e ações Git locais. Este marco libera o uso cotidiano real e fixa as identidades de repo/worktree necessárias para memória e handoff seguros.
+O review `Last turn` estruturado já estabelece a primeira superfície de revisão. Completar agora os escopos Git reais, dirty-tree protection, stage/revert, comentários, worktrees e testes de isolamento entre empresas/contas. Este marco libera o uso cotidiano real.
 
-## Marco 3 — Ambiente de desenvolvimento e Project Memory (P2)
+## Marco 3 — Ambiente de desenvolvimento (P2)
 
-Adicionar terminal/editor/browser/preview, rich files, subagentes, host MCP universal e sistema de skills/plugins/hooks por empresa. Em paralelo, promover a Repo Intelligence existente para Project Memory provider-agnostic, adicionar handoffs entre conexões e disponibilizar uma bridge MCP stdio opcional para clientes externos. Depois deste marco, Ollama e contas externas passam a compartilhar o mesmo “corpo” operacional **e a mesma familiaridade acumulada do projeto**, sem depender da memória privada de um provider.
+Adicionar terminal/editor/browser/preview, rich files, subagentes, host MCP universal e sistema de skills/plugins/hooks por empresa. Depois deste marco, Ollama e contas externas passam a compartilhar o mesmo “corpo” operacional.
 
 ## Marco 4 — Automação e multimodalidade locais (P3)
 
@@ -531,10 +520,6 @@ Completar busca/organização, atalhos, notificações, acessibilidade, diagnós
 7. **Conexões diretas e atribuíveis.** Toda saída de dados vai diretamente do desktop ou Local Worker autorizado à conexão escolhida e registra empresa, `connectionId`, `authKind`, modelo, destino, finalidade e política aplicável.
 8. **Paridade entre métodos de autenticação.** Account e API Key diferem apenas na obtenção/renovação da credencial; catálogo, bindings, tools e superfícies do produto usam a mesma abstração de conexão.
 9. **Compatibilidade sem dependência exclusiva.** Importar capacidades de `AGENTS.md`, `CLAUDE.md`, skills, MCPs e perfis conhecidos é parte da centralização; nenhuma função essencial do Axis pode existir apenas dentro de um CLI concorrente.
-10. **Project Memory pertence ao Axis/projeto, não ao provider.** Claude, Codex, API Keys, Ollama, desktop e Local Worker consomem e produzem conhecimento sob a mesma identidade de empresa/projeto; trocar de IA não deve zerar familiaridade nem exigir reanálise integral.
-11. **Conhecimento durável e handoff são camadas diferentes.** Arquitetura, convenções, invariantes, decisões e procedimentos têm lifecycle de evidência/freshness; estado de tarefa, tentativas, branch, validações e próximo passo são episódicos e transferíveis entre sessões/conexões.
-12. **Memória é evidence-backed e retrieval-bounded.** Source, testes e requisitos atuais sempre vencem; fatos stale são revalidados; cada turno recebe somente um capsule relevante, nunca o store inteiro. A operação básica deve funcionar sem embeddings ou chamadas extras a LLM.
-13. **Interoperabilidade não cria dependência central.** O Axis pode expor Project Memory por MCP stdio e integrar/importar/exportar com projetos como `ai-memory`, mas a experiência principal não exige Docker, daemon de memória permanente nem servidor externo; o source of truth continua local e controlado pelo Axis.
 
 # Fontes oficiais usadas para o inventário
 
@@ -568,11 +553,6 @@ Completar busca/organização, atalhos, notificações, acessibilidade, diagnós
 - [Desktop extensions e MCP local](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop)
 - [Projects](https://support.claude.com/en/articles/9517075-what-are-projects)
 - [Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them)
-
-## Referências arquiteturais adicionais para memória compartilhada
-
-- [`docs/REPO_INTELLIGENCE.md`](./REPO_INTELLIGENCE.md) — implementação atual do Axis para memória de repositório evidence-backed, freshness e familiaridade.
-- [`akitaonrails/ai-memory`](https://github.com/akitaonrails/ai-memory) — referência para memória cross-agent, lifecycle capture, handoff estruturado, source of truth legível e interoperabilidade MCP; deve ser tratada como inspiração/integração opcional, não dependência do core.
 
 ## Manutenção deste inventário
 
