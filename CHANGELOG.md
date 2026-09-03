@@ -5,6 +5,10 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ## [0.20.0] - 2026-09-03
 
 ### Added
+- Added provider-neutral Axis browser tools for explicit navigation, page reads, isolated session state, bounded DOM/form inspection, developer diagnostics, opaque screenshot references and explicit DOM interaction, each behind its own capability/permission boundary where appropriate.
+- Added an explicit browser backend/session contract plus a built-in read-only fetch backend with HTTP(S) navigation, redirect handling, text/HTML/link extraction, bounded search, static DOM/forms inspection and observable session state, so future Electron/CDP or Local Worker implementations can connect through `ToolRegistry` without runtime or provider-adapter changes.
+- Added a reusable browser navigation policy with host allow/block rules, default protection against loopback/private/link-local/metadata targets and redirect re-authorization, allowing Company/Project composition to narrow browser reach without provider-specific code.
+- Added browser-runtime coverage for reads/navigation, host/redirect policy, prompt-injection provenance, DOM/forms, state, developer/screenshot boundaries, navigation failures, timeout, cancellation, permissions, provider independence, Company/session isolation and explicit no-fallback behavior.
 - Added a provider-neutral Agent Runtime activity timeline that projects the frozen lifecycle protocol into running/provider progress, tool progress, read, mutation, command, validation, error, cancellation, pause and completion states without provider-specific UI semantics.
 - Added canonical approval and decision surfaces for permission requests and `AgentDecisionRequest`, including accessible native progress controls, attachment metadata rendering and keyboard-operable responses.
 - Added reusable runtime evidence panes prepared for filesystem, process, Git, MCP and browser integration, plus isolated canonical lifecycle fixtures for integration and visual verification without inventing new backend contracts.
@@ -47,6 +51,9 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - MCP authority is resolved from the immutable session Company/Project resource set and canonical source Connection ownership; an MCP source may differ from the inference Connection but cannot cross Company or Project boundaries.
 - Sensitive MCP headers and environment variables must be stored as secret references. Ambient sensitive process environment variables are not inherited by stdio MCP servers, and arbitrary persisted cwd paths are replaced by session-authorized root IDs.
 - MCP tools without an explicit read-only annotation are treated as potentially mutating, and failed or uncertain mutations remain non-retryable without confirmation through the common runtime mutation-safety contract.
+- Browser state is isolated by immutable Company + Project + Axis session + execution-target context, with a Company + Project + target storage partition key prepared for future persistent profiles; provider/account identity cannot broaden or merge browser scope and state tools do not expose cookie/localStorage values.
+- External browser content is marked as untrusted data with a `treat-as-data` instruction policy and defensive prompt-injection signals; the detector is advisory and does not elevate web content into instructions.
+- External navigation, developer diagnostics, screenshots and DOM interaction use explicit canonical permissions. Redirect destinations are re-checked against policy, HTTP(S) URLs reject embedded credentials, reads are bounded, and unsupported interaction/CDP/screenshot operations never fall back to another browser backend, shell, screen capture or Computer Use.
 
 ## [0.19.0] - 2026-09-03
 
