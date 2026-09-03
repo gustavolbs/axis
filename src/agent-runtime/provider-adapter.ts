@@ -48,6 +48,8 @@ export interface AgentProviderControl {
  *
  * `connectionId` and `modelId` identify one exact already-resolved session
  * selection. Adapters must never choose another connection/model as fallback.
+ * Provider-managed tools that execute outside Axis must be disabled or adapted
+ * into canonical ToolCall/ToolResult traffic before this boundary is used.
  */
 export interface AgentProviderAdapter {
   readonly connectionId: string;
@@ -142,12 +144,17 @@ function structuredSystemPrompt(
 }
 
 /**
- * Compatibility adapter for every existing Axis `InferenceProvider`, including
- * Account and API-key connections returned by ProviderConnectionRuntime.
+ * Structured-output compatibility adapter for an existing `InferenceProvider`.
  *
- * Existing inference providers do not yet expose native tool blocks, so this
- * adapter uses their common structured-output contract. Provider-specific
- * native tool adapters can replace it later without changing AgentRuntime/tools.
+ * This bridge is intentionally fail-closed: callers may construct it only when
+ * provider-managed tool execution has already been disabled by that provider's
+ * invocation path. This is naturally true for the current direct API inference
+ * providers. Subscription-account CLIs that can execute filesystem/shell/MCP
+ * tools internally need a dedicated AgentProviderAdapter (or a future explicit
+ * no-tools invocation mode) before they can enter the canonical Axis loop.
+ *
+ * That restriction prevents an apparently unified run from hiding reads,
+ * commands or mutations outside Axis permission/lifecycle handling.
  */
 export class InferenceProviderAgentAdapter implements AgentProviderAdapter {
   readonly connectionId: string;
@@ -161,6 +168,8 @@ export class InferenceProviderAgentAdapter implements AgentProviderAdapter {
       connectionId: string;
       providerFamily: string;
       modelId: string;
+      /** Explicit assertion from composition that this invocation cannot run hidden provider tools. */
+      providerManagedToolExecution: 'disabled';
     }
   ) {
     this.connectionId = input.connectionId;
