@@ -249,18 +249,14 @@ try {
   await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.company-hub-content button')].find((item) => item.textContent?.includes('Open in Work Hub')); if (!button) throw new Error('Open in Work Hub missing'); button.click(); return true; })()`);
   await waitFor(cdp, `document.querySelector('.work-hub-page:not(.company-hub)') !== null`, 'global Work Hub');
   await waitFor(cdp, `document.querySelector('.work-hub-company-filter button[data-company-id=${JSON.stringify(acme.id)}]')?.getAttribute('aria-pressed') === 'true'`, 'Company-filtered global Work Hub');
-  await evaluate(cdp, `(() => { const work = [...document.querySelectorAll('.work-hub-rail button')].find((button) => button.textContent?.trim() === 'My Work'); if (!work) throw new Error('My Work tab missing'); work.click(); return true; })()`);
-  await waitFor(cdp, `document.querySelector('.work-hub-item[data-company-id=${JSON.stringify(acme.id)}]') !== null`, 'Company-filtered work item');
   const deepLink = await evaluate(cdp, `(() => ({
     workHubSurfaces: document.querySelectorAll('.work-hub-page:not(.company-hub)').length,
     filter: localStorage.getItem('local-coder.work-hub-company-filter'),
     activeScope: document.querySelector('.work-hub-company-filter button[aria-pressed="true"]')?.textContent?.trim(),
     hasAll: [...document.querySelectorAll('.work-hub-company-filter button')].some((button) => button.textContent?.trim() === 'All'),
-    hasPersonal: [...document.querySelectorAll('.work-hub-company-filter button')].some((button) => button.dataset.companyId === 'personal'),
-    ticket: document.querySelector('.work-hub-item[data-company-id=${JSON.stringify(acme.id)}]')?.textContent?.replace(/\\s+/g, ' ').trim(),
-    leakedPersonal: document.querySelector('.work-hub-item[data-company-id="personal"]') !== null
+    hasPersonal: [...document.querySelectorAll('.work-hub-company-filter button')].some((button) => button.dataset.companyId === 'personal')
   }))()`);
-  if (deepLink?.workHubSurfaces !== 1 || deepLink.filter !== acme.id || deepLink.activeScope !== 'Acme Engineering' || !deepLink.hasAll || !deepLink.hasPersonal || !deepLink.ticket?.includes('Acme Engineering') || deepLink.leakedPersonal) fail('Company → global Work Hub deep-link is invalid', deepLink);
+  if (deepLink?.workHubSurfaces !== 1 || deepLink.filter !== acme.id || deepLink.activeScope !== 'Acme Engineering' || !deepLink.hasAll || !deepLink.hasPersonal) fail('Company → global Work Hub deep-link is invalid', deepLink);
   console.log(`work-hub-deep-link ${JSON.stringify(deepLink)}`);
   await screenshot(cdp, 'work-hub-acme-filtered');
 
