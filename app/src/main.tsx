@@ -2,6 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ReactDOM from 'react-dom/client';
 
+import type {
+  AgentDecisionResolution,
+  AgentLifecycleEvent
+} from '../../src/agent-runtime/contracts.js';
+import { AgentRuntimeTimeline } from './AgentRuntimeActivity.js';
 import { AppRoot } from './AppRoot.js';
 import { installChatPlatformEnhancements } from './chat-platform.js';
 import { installDiffReviewEnhancements } from './diff-review.js';
@@ -25,6 +30,13 @@ interface CompanyScopeSnapshot {
   activeCompanyId: string;
   company: CompanyScopeOption;
   companies: CompanyScopeOption[];
+}
+
+interface LifecycleJob {
+  id: string;
+  status: string;
+  updatedAt: string;
+  lifecycleEvents?: readonly AgentLifecycleEvent[];
 }
 
 type ScopePlacement = 'chrome' | 'composer' | 'approval' | 'result';
@@ -105,7 +117,9 @@ function CompanyScopeController() {
         approval: document.querySelector<HTMLElement>('.decision-picker-head'),
         result: lastElement('.lc-agent-thread .assistant-result-message')
       };
-      setTargets((current) => Object.keys(next).every((key) => current[key as ScopePlacement] === next[key as ScopePlacement]) ? current : next);
+      setTargets((current) => Object.keys(next).every((key) =>
+        current[key as ScopePlacement] === next[key as ScopePlacement]
+      ) ? current : next);
     };
     locate();
     const observer = new MutationObserver(locate);
@@ -137,10 +151,105 @@ function CompanyScopeController() {
 
   if (!snapshot) return null;
   return <>
-    {(Object.entries(targets) as Array<[ScopePlacement, HTMLElement | null]>).map(([placement, target]) => target
-      ? createPortal(<CompanyScopeSelector snapshot={snapshot} placement={placement} switching={switching} onSwitch={switchCompany} />, target, placement)
-      : null)}
+    {(Object.entries(targets) as Array<[ScopePlacement, HTMLElement | null]>).map(
+      ([placement, target]) => target
+        ? createPortal(
+            <CompanyScopeSelector
+              snapshot={snapshot}
+              placement={placement}
+              switching={switching}
+              onSwitch={switchCompany}
+            />,
+            target,
+            placement
+          )
+        : null
+    )}
   </>;
+}
+
+/**
+ * Transitional renderer composition: the conversation shell remains responsible
+ * for navigation/persistence while this controller projects the canonical
+ * AgentRuntime lifecycle into the UI component introduced by the runtime-UI
+ * workstream. Approval posts back through the existing job decision endpoint;
+ * the backend bridge translates that one response to AgentDecisionResolution.
+ */
+function AgentRuntimeLifecycleController() {
+  const [job, setJob] = useState<LifecycleJob>();
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    const select = (jobs: LifecycleJob[]) => {
+      const candidates = jobs
+        .filter((candidate) => (candidate.lifecycleEvents?.length ?? 0) > 0)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      const running = candidates.find((candidate) =>
+        ['queued', 'running', 'waiting-decision', 'waiting-guidance'].includes(candidate.status)
+      );
+      if (!disposed) setJob(running ?? candidates[0]);
+    };
+
+    void fetch('/api/jobs', { headers: { accept: 'application/json' } })
+      .then(async (response) => {
+        const payload = await response.json() as { jobs?: LifecycleJob[] };
+        if (response.ok) select(payload.jobs ?? []);
+      })
+      .catch(() => undefined);
+
+    const events = new EventSource('/api/events');
+    events.addEventListener('jobs', (event) => {
+      select(JSON.parse((event as MessageEvent<string>).data) as LifecycleJob[]);
+    });
+    events.addEventListener('job', (event) => {
+      const payload = JSON.parse((event as MessageEvent<string>).data) as { job: LifecycleJob };
+      if ((payload.job.lifecycleEvents?.length ?? 0) > 0) setJob(payload.job);
+    });
+    return () => {
+      disposed = true;
+      events.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    const locate = () => {
+      const next = lastElement('.lc-agent-thread .assistant-body');
+      setTarget((current) => current === next ? current : next);
+    };
+    locate();
+    const observer = new MutationObserver(locate);
+    observer.observe(document.getElementById('root')!, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  async function submitDecision(resolution: AgentDecisionResolution) {
+    if (!job) return;
+    const response = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/decision`, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ selections: { [resolution.requestId]: resolution.optionId } })
+    });
+    const payload = await response.json() as { job?: LifecycleJob; error?: string };
+    if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
+    if (payload.job) setJob(payload.job);
+  }
+
+  if (!job || !target || !(job.lifecycleEvents?.length)) return null;
+  return createPortal(
+    <AgentRuntimeTimeline
+      events={job.lifecycleEvents}
+      onDecision={(resolution) => void submitDecision(resolution).catch((error) =>
+        console.error('Could not resolve AgentRuntime decision', error)
+      )}
+      onPermission={({ callId, allowed }) => void submitDecision({
+        requestId: `permission-${callId}`,
+        optionId: allowed ? 'approve' : 'deny'
+      }).catch((error) => console.error('Could not resolve AgentRuntime permission', error))}
+    />,
+    target,
+    `agent-runtime-${job.id}`
+  );
 }
 
 const storedTheme = localStorage.getItem('local-coder.theme');
@@ -164,6 +273,7 @@ if (runtimeUiPreview) {
       <AppRoot />
       <SidebarVersion />
       <CompanyScopeController />
+      <AgentRuntimeLifecycleController />
     </React.StrictMode>
   );
 }
