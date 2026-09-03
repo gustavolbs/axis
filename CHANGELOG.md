@@ -2,6 +2,20 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.20.0] - 2026-09-03
+
+### Added
+- Added the provider-agnostic `process_exec` Axis tool and reusable process runner for `axis.process.exec`, with explicit session-root/cwd scoping, argv-only execution, separate bounded stdout/stderr, incremental tool progress, exit codes and canonical command lifecycle activity.
+- Added cross-platform process-tree cancellation: POSIX executions use an isolated process group with TERM/KILL escalation and Windows executions terminate descendants through `taskkill /T /F`.
+- Added session-owned background process lifecycle tools: `process_start`, `process_poll`, `process_wait`, `process_stdin`, `process_signal`, `process_terminate` and `process_list`. Background commands expose stable process IDs, incremental cursor-based output, explicit retention gaps, bounded stdin, controlled signals and final mutation status without requiring a PTY.
+- Added `process_which` diagnostics for the exact executable PATH visible to Axis plus a `createProcessTools()` suite so Git, validation and later runtime composition can reuse one policy/environment/registry boundary instead of inventing process execution separately.
+- Added process runtime coverage for successful and non-zero commands, timeout, tree cancellation, cwd escapes, environment filtering, exact execution-target selection, command lifecycle, permission denial, mutation status, read-only fail-closed policy, provider/auth independence, background process isolation, cursored/truncated logs, wait cancellation, stdin, signals and session cleanup.
+
+### Security
+- Process commands no longer inherit the application environment wholesale: only a small toolchain/system allowlist is inherited, secret-shaped variables are dropped, explicit secret-shaped overrides are rejected, shell interpreters/scripts are blocked by the default policy, and executable selection is allowlisted.
+- Mutating process calls require a write-authorized session root. Successful workspace mutation is marked committed only after a clean exit; non-zero exits, cancellation and timeout retain uncertain mutation state so the runtime will not retry them as safe mutations.
+- Background process handles are bound to the immutable Axis session identity, including Company, Project, connection, model and execution target. A leaked process ID cannot be polled, fed, signalled or terminated by another session, and the registry exposes `terminateSession()` for future cancellation/restart composition.
+
 ## [0.19.0] - 2026-09-03
 
 ### Added
