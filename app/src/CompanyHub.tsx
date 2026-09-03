@@ -11,6 +11,7 @@ import {
 
 import type { AdminProject, CompanyDefinition } from './app-types.js';
 import { ConnectionCenterSettings } from './ConnectionCenterSettings.js';
+import { CompanySourcesSettings } from './CompanySourcesSettings.js';
 import type { McpConnectorView, ProviderConnectionView } from './native.js';
 
 export type CompanyHubSection = 'overview' | 'projects' | 'connections' | 'mcps' | 'skills' | 'settings';
@@ -206,6 +207,7 @@ export function CompanyHub({
 
       {section === 'connections' ? <div className="company-connections-page">
         <ConnectionCenterSettings companyId={company.id} companyName={company.name} showConnectors={false} />
+        <CompanySourcesSettings companyId={company.id} companyName={company.name} />
       </div> : null}
 
       {section === 'mcps' ? <>
