@@ -614,9 +614,335 @@ button {
   color: var(--lc-negative);
 }
 
+/* Company Hub pages use the same quiet hierarchy as the chat/settings surfaces:
+   one clear header, lightweight rows, and details only where they help action. */
+.company-hub-content > .work-hub-header,
+.company-hub-content > .company-overview-section,
+.company-hub-content > .company-overview-shortcuts,
+.company-hub-content > .company-project-grid,
+.company-hub-content > .company-mcp-list,
+.company-hub-content > .company-skills-empty,
+.company-hub-content > .company-settings-form,
+.company-hub-content > .company-personal-settings {
+  width: min(900px, 100%);
+}
+
+.company-hub-content > .work-hub-header {
+  margin-bottom: 24px;
+}
+
+.company-hub-content > .work-hub-header h2 {
+  font-family: var(--lc-font-sans);
+  font-size: 20px;
+  font-weight: 640;
+  letter-spacing: -.018em;
+}
+
+.company-hub-content > .work-hub-header p {
+  max-width: 580px;
+  margin-top: 5px;
+  color: var(--lc-muted);
+  font-size: 11.5px;
+}
+
+.company-overview-section {
+  margin-top: 2px;
+}
+
+.company-overview-section .work-hub-section-heading,
+.company-mcp-account-header {
+  margin-bottom: 7px;
+}
+
+.company-hub-content .company-project-list,
+.company-hub-content .company-project-grid,
+.company-hub-content .company-mcp-connectors {
+  gap: 0;
+  border-top: 1px solid var(--lc-border-soft);
+}
+
+.company-hub-content .company-project-list .work-hub-item,
+.company-hub-content .company-project-grid .work-hub-item,
+.company-hub-content .company-mcp-connectors .work-hub-item {
+  min-height: 54px;
+  padding: 9px 6px;
+  border: 0;
+  border-bottom: 1px solid var(--lc-border-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+.company-hub-content .company-project-list .work-hub-item:hover,
+.company-hub-content .company-project-grid .work-hub-item:hover,
+.company-hub-content .company-mcp-connectors .work-hub-item:hover {
+  border-color: var(--lc-border-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--lc-hover) 58%, transparent);
+}
+
+.company-hub-content .company-project-list .work-hub-item > svg,
+.company-hub-content .company-project-grid .work-hub-item > svg {
+  color: var(--lc-blue);
+}
+
+.company-hub-content .company-project-card .work-hub-item-copy strong,
+.company-hub-content .company-project-list .work-hub-item-copy strong,
+.company-hub-content .company-mcp-connectors .work-hub-item-copy strong {
+  color: var(--lc-text);
+  font-weight: 590;
+}
+
+.company-compact-empty {
+  min-height: 112px;
+  border: 0;
+  background: transparent;
+}
+
+.company-overview-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 28px;
+}
+
+.company-overview-shortcuts > button {
+  display: grid;
+  min-width: 0;
+  min-height: 58px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--lc-border-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--lc-surface-2) 24%, transparent);
+  color: var(--lc-text-soft);
+  text-align: left;
+}
+
+.company-overview-shortcuts > button:hover {
+  border-color: var(--lc-border);
+  background: color-mix(in srgb, var(--lc-surface-2) 55%, transparent);
+}
+
+.company-overview-shortcut-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--lc-accent-soft);
+  color: var(--lc-accent);
+}
+
+.company-overview-shortcuts > button:last-child .company-overview-shortcut-icon {
+  background: var(--lc-blue-soft);
+  color: var(--lc-blue);
+}
+
+.company-overview-shortcuts strong,
+.company-overview-shortcuts small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.company-overview-shortcuts strong {
+  color: var(--lc-text);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.company-overview-shortcuts small {
+  margin-top: 2px;
+  color: var(--lc-muted);
+  font-size: 9.5px;
+}
+
+.company-mcp-list {
+  display: grid;
+  gap: 28px;
+}
+
+.company-mcp-account {
+  min-width: 0;
+}
+
+.company-mcp-account-header {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.company-mcp-account-header strong,
+.company-mcp-account-header small {
+  display: block;
+}
+
+.company-mcp-account-header strong {
+  color: var(--lc-text);
+  font-size: 12px;
+  font-weight: 610;
+}
+
+.company-mcp-account-header small {
+  margin-top: 2px;
+  color: var(--lc-muted);
+  font-size: 9.5px;
+}
+
+.company-mcp-account-header > button {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--lc-muted);
+  font-size: 10px;
+}
+
+.company-mcp-account-header > button:hover:not(:disabled) {
+  background: var(--lc-hover);
+  color: var(--lc-text-soft);
+}
+
+.company-mcp-account-header > button:disabled {
+  opacity: .55;
+}
+
+.company-hub-content .company-mcp-connectors .work-hub-item > svg {
+  color: var(--lc-positive);
+}
+
+.company-mcp-empty {
+  padding: 15px 5px;
+  border-top: 1px solid var(--lc-border-soft);
+  color: var(--lc-faint);
+  font-size: 10.5px;
+}
+
+.company-action-empty .btn-secondary {
+  margin-top: 7px;
+}
+
+.company-skills-empty {
+  min-height: 230px;
+  margin-top: 8px;
+  border: 0;
+  background: transparent;
+}
+
+.company-skills-empty > svg {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 5px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--lc-accent-soft);
+  color: var(--lc-accent);
+}
+
+.company-settings-form {
+  padding: 0;
+  border-top: 1px solid var(--lc-border-soft);
+}
+
+.company-hub-content .company-settings-form .settings-form-section {
+  grid-template-columns: minmax(120px, .6fr) minmax(240px, 1fr);
+  min-height: 62px;
+  gap: 28px;
+  padding: 12px 4px;
+}
+
+.company-hub-content .company-settings-form .settings-section-copy strong {
+  color: var(--lc-text-soft);
+  font-size: 11.5px;
+  font-weight: 560;
+}
+
+.company-hub-content .company-settings-form input:not([type='color']) {
+  width: 100%;
+  height: 34px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--lc-border);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--lc-surface-2);
+  color: var(--lc-text);
+  font-size: 11.5px;
+}
+
+.company-hub-content .company-settings-form input:not([type='color']):focus {
+  border-color: var(--lc-border-strong);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--lc-accent) 12%, transparent);
+}
+
+.company-hub-content .company-settings-form input[type='color'] {
+  width: 42px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--lc-border);
+  border-radius: 8px;
+  background: var(--lc-surface-2);
+}
+
+.company-settings-actions {
+  justify-content: flex-end;
+  padding-top: 18px;
+}
+
+.company-personal-settings {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  min-height: 64px;
+  padding: 10px 4px;
+  border-top: 1px solid var(--lc-border-soft);
+  border-bottom: 1px solid var(--lc-border-soft);
+}
+
+.company-personal-settings-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--lc-blue-soft);
+  color: var(--lc-blue);
+}
+
+.company-personal-settings strong {
+  color: var(--lc-text);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.company-personal-settings p {
+  margin: 3px 0 0;
+  color: var(--lc-muted);
+  font-size: 10px;
+}
+
 @media (max-width: 900px) {
   .company-connections-page .connections-runtime + .connections-runtime {
     border-top: 1px solid var(--lc-border-soft);
     border-left: 0;
+  }
+
+  .company-overview-shortcuts {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .company-hub-content .company-settings-form .settings-form-section {
+    grid-template-columns: 1fr;
+    gap: 8px;
   }
 }
