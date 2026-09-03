@@ -26,10 +26,10 @@ const SHELL_EXECUTABLES = new Set([
   'bash', 'cmd', 'command', 'dash', 'fish', 'ksh', 'powershell', 'pwsh', 'sh', 'zsh'
 ]);
 
-const READ_ONLY_EXECUTABLES = new Set([
-  'awk', 'cat', 'find', 'grep', 'head', 'printf', 'rg', 'sed', 'sort', 'tail', 'uniq', 'wc', 'where'
-]);
-
+// These programs have no output-file/exec mode in their ordinary argv contract.
+// More flexible tools (find, rg, sed, awk, sort, etc.) stay mutation-possible because
+// flags such as -exec, --pre, -i or -o can execute/write even without a shell.
+const READ_ONLY_EXECUTABLES = new Set(['cat', 'grep', 'head', 'printf', 'tail', 'wc', 'where']);
 const VERSION_ARGUMENTS = new Set(['--help', '--version', '-h', '-v']);
 
 function normalizedExecutable(command: string): string {
