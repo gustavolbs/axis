@@ -116,18 +116,22 @@ jobs:
           node --check scripts/run-desktop.mjs
           node --check scripts/capture-companies-visual.mjs
           node --check scripts/capture-company-scope-visual.mjs
+          node --check scripts/capture-connections-visual.mjs
           npx tsx --test test/desktop-shell.test.ts test/desktop-ui-contract.test.ts
 
-      - name: Render Companies settings states
+      - name: Render Company and Connection settings states
         run: |
           node scripts/capture-companies-visual.mjs
           node scripts/capture-company-scope-visual.mjs
+          node scripts/capture-connections-visual.mjs
 
-      - name: Upload Companies visual smoke
+      - name: Upload Company and Connection visual smoke
         uses: actions/upload-artifact@v4
         with:
           name: axis-companies-visual-smoke
-          path: visual-artifacts/companies/*.png
+          path: |
+            visual-artifacts/companies/*.png
+            visual-artifacts/connections/*.png
           if-no-files-found: error
           retention-days: 7
 
