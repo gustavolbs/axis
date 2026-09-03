@@ -1,6 +1,7 @@
 import { ActiveCompanyScope } from './active-company-scope.js';
 import { PERSONAL_COMPANY_ID } from './company-context.js';
 import { DesktopAppRuntime, type AppRuntimeListener, type AppRuntimeRequest } from './app-runtime.js';
+import { readProjectGitReview } from './project-git-review.js';
 
 interface ScopedProject {
   id: string;
@@ -9,6 +10,7 @@ interface ScopedProject {
   companyName?: string;
   organizationId: string;
   organizationName?: string;
+  workspace?: string;
   archived?: boolean;
 }
 
@@ -38,6 +40,10 @@ function projectPath(pathname: string): string | undefined {
   return /^\/projects\/([^/]+)(?:\/catalog|\/usage|\/archive)?$/.exec(pathname)?.[1];
 }
 
+function projectGitReviewPath(pathname: string): string | undefined {
+  return /^\/projects\/([^/]+)\/git-diff$/.exec(pathname)?.[1];
+}
+
 function jobPath(pathname: string): string | undefined {
   return /^\/jobs\/([A-Za-z0-9-]+)(?:\/.*)?$/.exec(pathname)?.[1];
 }
@@ -45,8 +51,8 @@ function jobPath(pathname: string): string | undefined {
 /**
  * Decorates the existing standalone runtime with one explicit active-Company
  * boundary. It intentionally does not implement corporate projectless Chat:
- * until the connection-center item lands, corporate conversations must select
- * a Project whose connection policy already supplies the complete boundary.
+ * corporate conversations select a Project whose connection policy, folder,
+ * repository context and Company ownership define the complete boundary.
  */
 export class CompanyScopedDesktopRuntime {
   private readonly active = new ActiveCompanyScope();
@@ -100,6 +106,17 @@ export class CompanyScopedDesktopRuntime {
       const scope = this.active.snapshot();
       const next = { ...body(request.body), organizationId: scope.activeCompanyId, organizationName: scope.company.name };
       return await this.base.request({ ...request, body: next });
+    }
+
+    const gitReviewProjectId = projectGitReviewPath(pathname);
+    if (gitReviewProjectId && method === 'GET') {
+      const project = await this.requireActiveProject(decodeURIComponent(gitReviewProjectId));
+      return {
+        review: await readProjectGitReview(
+          { id: project.id, workspace: project.workspace ?? '' },
+          url.searchParams.get('scope')
+        )
+      };
     }
 
     const scopedProjectId = projectPath(pathname);
