@@ -39,6 +39,12 @@ const bridge = {
 
   providerConnections: () => ipcRenderer.invoke('local-coder:connection-center-connections'),
   createApiKeyConnection: (input) => ipcRenderer.invoke('local-coder:connection-center-api-create', input),
+  apiKeyConnectionDetails: (connectionId) => ipcRenderer.invoke('local-coder:connection-center-api-details', String(connectionId)),
+  updateApiKeyConnection: (input) => ipcRenderer.invoke('local-coder:connection-center-api-update', input),
+  rotateApiKeyConnection: (input) => ipcRenderer.invoke('local-coder:connection-center-api-rotate', input),
+  setApiKeyConnectionEnabled: (input) => ipcRenderer.invoke('local-coder:connection-center-api-enabled', input),
+  testApiKeyConnection: (connectionId) => ipcRenderer.invoke('local-coder:connection-center-api-test', String(connectionId)),
+  removeApiKeyConnection: (connectionId) => ipcRenderer.invoke('local-coder:connection-center-api-remove', String(connectionId)),
   workHubSnapshot: () => ipcRenderer.invoke('local-coder:work-hub-snapshot'),
   upsertWorkHubSource: (input) => ipcRenderer.invoke('local-coder:work-hub-source-upsert', input),
   removeWorkHubSource: (sourceId) => ipcRenderer.invoke('local-coder:work-hub-source-remove', String(sourceId)),
