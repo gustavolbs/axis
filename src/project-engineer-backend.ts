@@ -25,6 +25,7 @@ import {
   ProjectBudgetSession,
   type ProjectBudgetSnapshot
 } from './project-budget.js';
+import { attachProjectChatRepositoryContext } from './project-chat-context.js';
 import { executePremiumLocalAgent } from './premium-agent.js';
 import {
   ProjectProviderRuntime,
@@ -356,7 +357,18 @@ export class ProjectAwareEngineerBackend {
       return await this.legacy.executeEngineer(legacyInput);
     }
     const { project, workspace: projectWorkspace } = resolved;
-    const scopedInput = withProjectInstructions(project, input);
+    const instructionScopedInput = withProjectInstructions(project, input);
+    const scopedInput = input.interactionMode === 'chat'
+      ? {
+          ...instructionScopedInput,
+          context: await attachProjectChatRepositoryContext(
+            this.config,
+            project,
+            input.goal,
+            instructionScopedInput.context
+          )
+        }
+      : instructionScopedInput;
 
     const budget = this.createBudgetSession(project, input.budgetJobId);
     const localProvider = createLocalInferenceProvider(this.config, this.ollama, this.remoteClient);
