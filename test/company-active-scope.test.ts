@@ -13,13 +13,13 @@ function temp(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-function withPaths<T>(run: (companyFile: string) => T): T {
+async function withPaths<T>(run: (companyFile: string) => T | Promise<T>): Promise<T> {
   const root = temp('axis-active-company-');
   const previousSettings = process.env.LOCAL_CODER_SETTINGS_PATH;
   const previousCompanies = process.env.LOCAL_CODER_COMPANY_CONTEXT_PATH;
   process.env.LOCAL_CODER_SETTINGS_PATH = path.join(root, 'settings.json');
   process.env.LOCAL_CODER_COMPANY_CONTEXT_PATH = path.join(root, 'companies.json');
-  try { return run(process.env.LOCAL_CODER_COMPANY_CONTEXT_PATH); }
+  try { return await run(process.env.LOCAL_CODER_COMPANY_CONTEXT_PATH); }
   finally {
     if (previousSettings === undefined) delete process.env.LOCAL_CODER_SETTINGS_PATH;
     else process.env.LOCAL_CODER_SETTINGS_PATH = previousSettings;
@@ -28,20 +28,22 @@ function withPaths<T>(run: (companyFile: string) => T): T {
   }
 }
 
-test('active Company is explicit, persisted, validated and falls back when archived', () => withPaths((companyFile) => {
-  const companies = new CompanyContextStore(companyFile);
-  const acme = companies.createCompany({ name: 'Acme', color: '#2563EB' });
-  const active = new ActiveCompanyScope(companies);
+test('active Company is explicit, persisted, validated and falls back when archived', async () => {
+  await withPaths(async (companyFile) => {
+    const companies = new CompanyContextStore(companyFile);
+    const acme = companies.createCompany({ name: 'Acme', color: '#2563EB' });
+    const active = new ActiveCompanyScope(companies);
 
-  assert.equal(active.snapshot().activeCompanyId, PERSONAL_COMPANY_ID);
-  assert.deepEqual(active.snapshot().companies.map((item) => item.name), ['Personal', 'Acme']);
-  assert.equal(active.set(acme.id).activeCompanyId, acme.id);
-  assert.equal(new ActiveCompanyScope(companies).currentId(), acme.id);
+    assert.equal(active.snapshot().activeCompanyId, PERSONAL_COMPANY_ID);
+    assert.deepEqual(active.snapshot().companies.map((item) => item.name), ['Personal', 'Acme']);
+    assert.equal(active.set(acme.id).activeCompanyId, acme.id);
+    assert.equal(new ActiveCompanyScope(companies).currentId(), acme.id);
 
-  companies.setCompanyArchived(acme.id, true);
-  assert.equal(active.currentId(), PERSONAL_COMPANY_ID);
-  assert.rejects(async () => active.set(acme.id), /archived/);
-}));
+    companies.setCompanyArchived(acme.id, true);
+    assert.equal(active.currentId(), PERSONAL_COMPANY_ID);
+    await assert.rejects(async () => active.set(acme.id), /archived/);
+  });
+});
 
 test('desktop runtime filters projects and jobs by active Company and blocks cross-company actions', async () => {
   await withPaths(async (companyFile) => {
