@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,45 @@ import { LOCAL_ORGANIZATION_ID, PERSONAL_ORGANIZATION_ID } from './connection-id
  * metadata. Neither is allowed to become an identity boundary in this module.
  */
 export const PERSONAL_COMPANY_ID = PERSONAL_ORGANIZATION_ID;
+export const DEFAULT_COMPANY_COLOR = '#64748B';
+export const COMPANY_ICON_IDS = [
+  'building-2',
+  'briefcase-business',
+  'code-2',
+  'rocket',
+  'landmark',
+  'heart-pulse',
+  'graduation-cap',
+  'palette'
+] as const;
+
+export type CompanyIconId = (typeof COMPANY_ICON_IDS)[number];
+
+export interface CompanyDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  color: string;
+  icon: CompanyIconId;
+  archivedAt?: string;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateCompanyInput {
+  name: string;
+  description?: string;
+  color?: string;
+  icon?: CompanyIconId;
+}
+
+export interface UpdateCompanyInput {
+  name?: string;
+  description?: string;
+  color?: string;
+  icon?: CompanyIconId;
+}
 
 export interface CompanyContextProjectInput {
   id: string;
@@ -43,9 +83,7 @@ export interface CompanyContextSessionInput {
   };
 }
 
-export interface CompanyContextCompany {
-  id: string;
-  name: string;
+export interface CompanyContextCompany extends CompanyDefinition {
   kind: 'personal' | 'company';
   connectionIds: string[];
   projectIds: string[];
@@ -60,9 +98,20 @@ export interface CompanyContextSnapshot {
   sharedConnectionIds: string[];
 }
 
+interface PersistedCompany {
+  name: string;
+  description?: string;
+  color: string;
+  icon: CompanyIconId;
+  archivedAt?: string;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface CompanyContextFile {
   version: 1;
-  companies: Record<string, { name: string; createdAt: string; updatedAt: string }>;
+  companies: Record<string, PersistedCompany>;
   connectionBindings: Record<string, string>;
   updatedAt: string;
 }
@@ -74,7 +123,10 @@ export interface CompanyContextServiceInput {
 }
 
 const SAFE_COMPANY_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const COMPANY_COLOR = /^#[0-9A-F]{6}$/;
 const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+const COMPANY_ICONS = new Set<string>(COMPANY_ICON_IDS);
+const MAX_COMPANY_DESCRIPTION = 2_000;
 
 function hasOwn(record: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
@@ -104,13 +156,44 @@ function displayName(value: string | undefined, fallbackId: string): string {
   const clean = value?.trim();
   if (clean) {
     if (/[\0\r\n]/.test(clean)) throw new Error('Company display name contains unsupported control characters.');
-    return clean.slice(0, 160);
+    if (clean.length > 160) throw new Error('Company name must be at most 160 characters.');
+    return clean;
   }
   return fallbackId
     .split(/[-_.:]+/)
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ') || fallbackId;
+}
+
+function description(value: string | undefined): string | undefined {
+  const clean = value?.trim();
+  if (!clean) return undefined;
+  if (clean.length > MAX_COMPANY_DESCRIPTION) {
+    throw new Error(`Company description must be at most ${MAX_COMPANY_DESCRIPTION} characters.`);
+  }
+  if (/[\0]/.test(clean)) throw new Error('Company description contains unsupported control characters.');
+  return clean;
+}
+
+function companyColor(value: string | undefined): string {
+  const clean = (value?.trim() || DEFAULT_COMPANY_COLOR).toUpperCase();
+  if (!COMPANY_COLOR.test(clean)) throw new Error('Company color must be a six-digit hex color such as #64748B.');
+  return clean;
+}
+
+function companyIcon(value: string | undefined): CompanyIconId {
+  const clean = value?.trim() || 'building-2';
+  if (!COMPANY_ICONS.has(clean)) throw new Error(`Unsupported company icon: ${clean}.`);
+  return clean as CompanyIconId;
+}
+
+function companyNameKey(value: string): string {
+  return value.normalize('NFKC').trim().toLocaleLowerCase('en-US');
+}
+
+function nonNegativeInteger(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback;
 }
 
 function uniqueSorted(values: Iterable<string>): string[] {
@@ -120,7 +203,14 @@ function uniqueSorted(values: Iterable<string>): string[] {
 function freshFile(): CompanyContextFile {
   const now = new Date().toISOString();
   const companies = Object.create(null) as CompanyContextFile['companies'];
-  companies[PERSONAL_COMPANY_ID] = { name: 'Personal', createdAt: now, updatedAt: now };
+  companies[PERSONAL_COMPANY_ID] = {
+    name: 'Personal',
+    color: DEFAULT_COMPANY_COLOR,
+    icon: 'building-2',
+    order: 0,
+    createdAt: now,
+    updatedAt: now
+  };
   return {
     version: 1,
     companies,
@@ -131,6 +221,27 @@ function freshFile(): CompanyContextFile {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function cloneCompany(id: string, company: PersistedCompany): CompanyDefinition {
+  return {
+    id,
+    name: company.name,
+    description: company.description,
+    color: company.color,
+    icon: company.icon,
+    archivedAt: company.archivedAt,
+    order: company.order,
+    createdAt: company.createdAt,
+    updatedAt: company.updatedAt
+  };
+}
+
+function sortCompanies(left: CompanyDefinition, right: CompanyDefinition): number {
+  const leftArchived = Boolean(left.archivedAt);
+  const rightArchived = Boolean(right.archivedAt);
+  if (leftArchived !== rightArchived) return leftArchived ? 1 : -1;
+  return left.order - right.order || left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
 }
 
 export function companyContextPath(): string {
@@ -147,6 +258,119 @@ export function companyContextPath(): string {
 export class CompanyContextStore {
   constructor(private readonly file = companyContextPath()) {}
 
+  listCompanies(options: { includeArchived?: boolean; query?: string } = {}): CompanyDefinition[] {
+    const state = this.read();
+    const needle = options.query?.trim().toLocaleLowerCase('en-US') ?? '';
+    return Object.entries(state.companies)
+      .filter(([id]) => id !== PERSONAL_COMPANY_ID)
+      .map(([id, company]) => cloneCompany(id, company))
+      .filter((company) => options.includeArchived === true || !company.archivedAt)
+      .filter((company) => !needle || [company.name, company.description ?? '']
+        .some((value) => value.toLocaleLowerCase('en-US').includes(needle)))
+      .sort(sortCompanies);
+  }
+
+  getCompany(idValue: string): CompanyDefinition {
+    const id = cleanCompanyId(idValue, 'Company id');
+    if (!id || id === PERSONAL_COMPANY_ID) throw new Error('Company not found.');
+    const state = this.read();
+    const company = hasOwn(state.companies, id) ? state.companies[id] : undefined;
+    if (!company) throw new Error(`Company not found: ${id}`);
+    return cloneCompany(id, company);
+  }
+
+  createCompany(input: CreateCompanyInput): CompanyDefinition {
+    const state = this.read();
+    const name = displayName(input.name, 'Company');
+    this.assertUniqueName(state, name);
+    const now = new Date().toISOString();
+    const activeOrders = Object.entries(state.companies)
+      .filter(([id, company]) => id !== PERSONAL_COMPANY_ID && !company.archivedAt)
+      .map(([, company]) => company.order);
+    const company: PersistedCompany = {
+      name,
+      description: description(input.description),
+      color: companyColor(input.color),
+      icon: companyIcon(input.icon),
+      order: activeOrders.length > 0 ? Math.max(...activeOrders) + 1 : 0,
+      createdAt: now,
+      updatedAt: now
+    };
+    let id = randomUUID();
+    while (hasOwn(state.companies, id)) id = randomUUID();
+    state.companies[id] = company;
+    state.updatedAt = now;
+    this.write(state);
+    return cloneCompany(id, company);
+  }
+
+  updateCompany(idValue: string, patch: UpdateCompanyInput): CompanyDefinition {
+    const id = cleanCompanyId(idValue, 'Company id');
+    if (!id || id === PERSONAL_COMPANY_ID) throw new Error('Personal is a reserved context and cannot be edited as a company.');
+    const state = this.read();
+    const current = hasOwn(state.companies, id) ? state.companies[id] : undefined;
+    if (!current) throw new Error(`Company not found: ${id}`);
+    const name = patch.name === undefined ? current.name : displayName(patch.name, id);
+    if (name !== current.name) this.assertUniqueName(state, name, id);
+    const next: PersistedCompany = {
+      ...current,
+      name,
+      description: patch.description === undefined ? current.description : description(patch.description),
+      color: patch.color === undefined ? current.color : companyColor(patch.color),
+      icon: patch.icon === undefined ? current.icon : companyIcon(patch.icon),
+      updatedAt: new Date().toISOString()
+    };
+    state.companies[id] = next;
+    state.updatedAt = next.updatedAt;
+    this.write(state);
+    return cloneCompany(id, next);
+  }
+
+  setCompanyArchived(idValue: string, archived: boolean): CompanyDefinition {
+    const id = cleanCompanyId(idValue, 'Company id');
+    if (!id || id === PERSONAL_COMPANY_ID) throw new Error('Personal cannot be archived.');
+    const state = this.read();
+    const current = hasOwn(state.companies, id) ? state.companies[id] : undefined;
+    if (!current) throw new Error(`Company not found: ${id}`);
+    if (Boolean(current.archivedAt) === archived) return cloneCompany(id, current);
+    const now = new Date().toISOString();
+    const activeOrders = Object.entries(state.companies)
+      .filter(([candidateId, company]) => candidateId !== PERSONAL_COMPANY_ID && candidateId !== id && !company.archivedAt)
+      .map(([, company]) => company.order);
+    const next: PersistedCompany = {
+      ...current,
+      archivedAt: archived ? now : undefined,
+      order: archived ? current.order : activeOrders.length > 0 ? Math.max(...activeOrders) + 1 : 0,
+      updatedAt: now
+    };
+    state.companies[id] = next;
+    state.updatedAt = now;
+    this.write(state);
+    return cloneCompany(id, next);
+  }
+
+  reorderCompanies(ids: string[]): CompanyDefinition[] {
+    const state = this.read();
+    const active = Object.entries(state.companies)
+      .filter(([id, company]) => id !== PERSONAL_COMPANY_ID && !company.archivedAt)
+      .map(([id]) => id);
+    const cleanIds = ids.map((id) => cleanCompanyId(id, 'Company id'));
+    if (cleanIds.some((id): id is undefined => !id)) throw new Error('Company order contains an empty company id.');
+    const normalized = cleanIds as string[];
+    if (new Set(normalized).size !== normalized.length) throw new Error('Company order contains duplicate ids.');
+    if (normalized.length !== active.length || active.some((id) => !normalized.includes(id))) {
+      throw new Error('Company order must contain every active company exactly once.');
+    }
+    const now = new Date().toISOString();
+    normalized.forEach((id, order) => {
+      const current = state.companies[id];
+      if (current.order !== order) state.companies[id] = { ...current, order, updatedAt: now };
+    });
+    state.updatedAt = now;
+    this.write(state);
+    return this.listCompanies();
+  }
+
   reconcile(input: CompanyContextServiceInput): CompanyContextSnapshot {
     const state = this.read();
     let dirty = false;
@@ -156,8 +380,14 @@ export class CompanyContextStore {
       const id = cleanCompanyId(idValue, 'Company id') ?? PERSONAL_COMPANY_ID;
       const existing = hasOwn(state.companies, id) ? state.companies[id] : undefined;
       if (!existing) {
+        const activeOrders = Object.entries(state.companies)
+          .filter(([candidateId, company]) => candidateId !== PERSONAL_COMPANY_ID && !company.archivedAt)
+          .map(([, company]) => company.order);
         state.companies[id] = {
           name: id === PERSONAL_COMPANY_ID ? 'Personal' : displayName(nameValue, id),
+          color: DEFAULT_COMPANY_COLOR,
+          icon: 'building-2',
+          order: id === PERSONAL_COMPANY_ID ? 0 : activeOrders.length > 0 ? Math.max(...activeOrders) + 1 : 0,
           createdAt: now,
           updatedAt: now
         };
@@ -240,7 +470,7 @@ export class CompanyContextStore {
     }
 
     const companies = Object.entries(state.companies).map(([id, company]): CompanyContextCompany => ({
-      id,
+      ...cloneCompany(id, company),
       name: id === PERSONAL_COMPANY_ID ? 'Personal' : company.name,
       kind: id === PERSONAL_COMPANY_ID ? 'personal' : 'company',
       connectionIds: uniqueSorted(
@@ -252,16 +482,11 @@ export class CompanyContextStore {
       sessionIds: uniqueSorted(
         [...sessionCompanies.entries()].filter(([, companyId]) => companyId === id).map(([sessionId]) => sessionId)
       )
-    })).filter((company) =>
-      company.kind === 'personal' ||
-      company.connectionIds.length > 0 ||
-      company.projectIds.length > 0 ||
-      company.sessionIds.length > 0
-    );
+    }));
 
     companies.sort((left, right) => {
       if (left.kind !== right.kind) return left.kind === 'personal' ? -1 : 1;
-      return left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
+      return sortCompanies(left, right);
     });
 
     return {
@@ -270,6 +495,14 @@ export class CompanyContextStore {
       companies,
       sharedConnectionIds: uniqueSorted(sharedConnectionIds)
     };
+  }
+
+  private assertUniqueName(state: CompanyContextFile, name: string, ignoreId?: string): void {
+    const key = companyNameKey(name);
+    const conflict = Object.entries(state.companies).find(([id, company]) =>
+      id !== PERSONAL_COMPANY_ID && id !== ignoreId && companyNameKey(company.name) === key
+    );
+    if (conflict) throw new Error(`A company named “${name}” already exists.`);
   }
 
   private read(): CompanyContextFile {
@@ -286,6 +519,7 @@ export class CompanyContextStore {
     }
 
     const state = freshFile();
+    let fallbackOrder = 0;
     for (const [rawId, raw] of Object.entries(parsed.companies)) {
       if (!isRecord(raw)) throw new Error(`Invalid company context entry: ${rawId}`);
       const id = cleanCompanyId(rawId, 'Stored company id');
@@ -293,8 +527,16 @@ export class CompanyContextStore {
       const name = typeof raw.name === 'string' && raw.name.trim()
         ? displayName(raw.name, id)
         : displayName(undefined, id);
+      const archivedAt = typeof raw.archivedAt === 'string' && raw.archivedAt.trim()
+        ? raw.archivedAt
+        : undefined;
       state.companies[id] = {
         name: id === PERSONAL_COMPANY_ID ? 'Personal' : name,
+        description: typeof raw.description === 'string' ? description(raw.description) : undefined,
+        color: typeof raw.color === 'string' ? companyColor(raw.color) : DEFAULT_COMPANY_COLOR,
+        icon: typeof raw.icon === 'string' ? companyIcon(raw.icon) : 'building-2',
+        archivedAt: id === PERSONAL_COMPANY_ID ? undefined : archivedAt,
+        order: id === PERSONAL_COMPANY_ID ? 0 : nonNegativeInteger(raw.order, fallbackOrder++),
         createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date(0).toISOString(),
         updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date(0).toISOString()
       };
@@ -310,6 +552,9 @@ export class CompanyContextStore {
       if (!hasOwn(state.companies, companyId)) {
         state.companies[companyId] = {
           name: displayName(undefined, companyId),
+          color: DEFAULT_COMPANY_COLOR,
+          icon: 'building-2',
+          order: fallbackOrder++,
           createdAt: new Date(0).toISOString(),
           updatedAt: new Date(0).toISOString()
         };
