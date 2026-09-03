@@ -31,7 +31,7 @@
     "smoke:cloud": "npm run build && node scripts/smoke-cloud-providers.mjs",
     "benchmark": "npm run build && node scripts/benchmark-local.mjs",
     "eval:agent": "npm run build && node scripts/eval-local-agent.mjs",
-    "eval:providers": "node scripts/eval-multi-provider.mjs"
+    "eval:providers": "npm run build && node scripts/eval-multi-provider.mjs"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
