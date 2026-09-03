@@ -21,3 +21,4 @@ export * from './managed-process.js';
 export * from './policy.js';
 export * from './runner.js';
 export * from './scope.js';
+export * from './toolchain.js';
