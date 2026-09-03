@@ -32,7 +32,7 @@ export interface RuntimePolicyScope {
   readonly rules?: readonly RuntimePolicyRule[];
 }
 
-interface RuntimeCompanyPolicy extends RuntimePolicyScope {
+export interface RuntimeCompanyPolicy extends RuntimePolicyScope {
   readonly projects?: Readonly<Record<string, RuntimePolicyScope>>;
 }
 
@@ -131,7 +131,7 @@ export function runtimePolicySubject(request: ToolPermissionRequest): RuntimePol
   const command = processDomain ? commandDescriptor(args) : undefined;
   const descriptor = redactRuntimeText(command ?? urlDescriptor(args) ?? pathDescriptor(args) ?? name, { maxChars: 2_000 });
   const executable = command?.split(/\s+/)[0]?.toLowerCase();
-  const destructive = request.tool.mutationRisk === 'high' ||
+  const destructive = request.tool.mutationRisk === 'definite' ||
     Boolean(executable && DESTRUCTIVE_COMMANDS.has(path.basename(executable))) ||
     /(?:^|[_-])(delete|remove|destroy|reset|clean|purge)(?:$|[_-])/i.test(name) ||
     (gitDomain && /\bgit\s+(?:reset\s+--hard|clean\b)/i.test(command ?? ''));
@@ -140,12 +140,20 @@ export function runtimePolicySubject(request: ToolPermissionRequest): RuntimePol
 }
 
 function globRegex(value: string): RegExp {
-  const escaped = value.trim().replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  const escaped = value.trim().replace(/[|\\{}()[\]^$+.]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
   return new RegExp(`^${escaped}$`, 'i');
 }
 
 function matchesRule(rule: RuntimePolicyRule, subject: RuntimePolicySubject): boolean {
-  if (rule.domain !== subject.domain && !(rule.domain === 'destructive' && subject.destructive) && !(rule.domain === 'external' && subject.external)) return false;
+  const networkSubject =
+    (subject.domain === 'browser' || subject.domain === 'mcp' || subject.domain === 'external') &&
+    /^https?:\/\//i.test(subject.descriptor);
+  const domainMatches =
+    rule.domain === subject.domain ||
+    (rule.domain === 'destructive' && subject.destructive) ||
+    (rule.domain === 'external' && subject.external) ||
+    (rule.domain === 'network' && networkSubject);
+  if (!domainMatches) return false;
   return !rule.match?.trim() || globRegex(rule.match).test(subject.descriptor);
 }
 
@@ -290,8 +298,9 @@ export class RuntimePolicyPermissionGate implements ToolPermissionGate {
   ) {}
 
   remember(request: AgentDecisionRequest, call?: { name: string; arguments: Readonly<Record<string, unknown>> }): void {
-    if (!call || !this.lastAsk) return;
-    if (call.name !== this.lastAsk.toolName || runtimeToolArgumentFingerprint(call.arguments) !== this.lastAsk.argumentFingerprint) return;
+    if (!call || !this.lastAsk || call.name !== this.lastAsk.toolName) return;
+    // lastAsk was captured from the raw ToolPermissionRequest before lifecycle redaction.
+    // Never derive approval identity from UI-visible/redacted arguments.
     this.pending = { requestId: request.id, ...this.lastAsk };
     this.resolution = undefined;
     this.consumed = false;
