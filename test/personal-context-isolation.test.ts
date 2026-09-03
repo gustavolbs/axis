@@ -12,9 +12,8 @@ test('Personal catalog excludes every non-local corporate connection regardless 
 test('new conversations receive server-owned canonical Company scope instead of trusting the request body', () => {
   const app = fs.readFileSync('src/app-runtime.ts', 'utf8');
   const composition = fs.readFileSync('src/agent-product-runtime.ts', 'utf8');
-  assert.match(app, /const companyId = project \? this\.companyForProject\(project\.id\) : PERSONAL_COMPANY_ID;/);
+  assert.match(app, /companyId: projectId \? this\.companyForProject\(projectId\) : PERSONAL_COMPANY_ID,/);
   assert.match(app, /const input: StandaloneJobInput & \{ companyId: string \} = \{/);
-  assert.match(app, /companyId,/);
   assert.doesNotMatch(app, /companyId:\s*optionalString\(body, 'companyId'\)/);
   assert.match(composition, /const companyId = canonicalCompanyId\(snapshot, project, input\.companyId\);/);
   assert.match(composition, /companyForProject\(snapshot, project\.id\)/);
@@ -23,9 +22,9 @@ test('new conversations receive server-owned canonical Company scope instead of 
 
 test('Personal history hides projectless corporate conversations through canonical session scope without deleting them', () => {
   const source = fs.readFileSync('src/app-runtime.ts', 'utf8');
-  assert.match(source, /const canonical = job\.input\.projectId\s*\? this\.companyForProject\(job\.input\.projectId\)\s*: existing \?\? PERSONAL_COMPANY_ID;/);
+  assert.match(source, /const companyId = job\.input\.projectId\s*\? this\.companyForProject\(job\.input\.projectId\)\s*: existing \|\| PERSONAL_COMPANY_ID;/);
   assert.match(source, /scoped\.input\.projectId \|\| scoped\.input\.companyId === PERSONAL_COMPANY_ID/);
-  assert.match(source, /this\.jobs\.list\(\)\.map\(\(job\) => this\.personalVisibleJob\(job\)\)\.filter\(Boolean\)/);
+  assert.match(source, /this\.jobs\.list\(\)\s*\.map\(\(job\) => this\.personalVisibleJob\(job\)\)\s*\.filter\(Boolean\)/);
   assert.match(source, /belongs to company scope .* and is not available in Personal/);
   assert.doesNotMatch(source, /connection && connection\.auth !== 'local'\) companyId = connection\.organizationId/);
 });
