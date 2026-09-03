@@ -203,14 +203,25 @@ try {
     const rect = dialog?.getBoundingClientRect();
     const endpoint = dialog?.querySelector('input[type="url"]');
     const key = dialog?.querySelector('input[type="password"]');
+    const actions = dialog?.querySelector('.nested-settings-dialog-actions');
+    actions?.scrollIntoView({ block: 'end' });
+    const actionsRect = actions?.getBoundingClientRect();
+    const buttons = [...(actions?.querySelectorAll('button') ?? [])];
     return {
       withinViewport: Boolean(rect && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight),
       endpointPlaceholder: endpoint?.getAttribute('placeholder'),
       hasApiKey: Boolean(key),
+      actionsReachable: Boolean(
+        rect && actionsRect &&
+        actionsRect.top >= rect.top && actionsRect.bottom <= rect.bottom &&
+        buttons.some((button) => button.textContent?.trim() === 'Cancel') &&
+        buttons.some((button) => button.textContent?.trim() === 'Create connection')
+      ),
+      scrolled: Boolean(dialog && dialog.scrollTop > 0),
       text: dialog?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''
     };
   })()`);
-  if (!form?.withinViewport || form.endpointPlaceholder !== 'https://api.openai.com/v1' || !form.hasApiKey || !form.text.includes('Endpoint optional')) {
+  if (!form?.withinViewport || form.endpointPlaceholder !== 'https://api.openai.com/v1' || !form.hasApiKey || !form.actionsReachable || !form.text.includes('Endpoint optional')) {
     throw new Error(`API connection form contract failed: ${JSON.stringify(form)}`);
   }
   console.log(`api-form ${JSON.stringify(form)}`);
