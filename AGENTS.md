@@ -35,6 +35,45 @@ Before considering visual work complete, the agent MUST render and inspect the a
 
 Use before/after screenshots or equivalent rendered evidence for the affected states and report that visual verification in the handoff. When the intended Claude pattern is ambiguous, inspect the current project implementation and the supplied/reference Claude interface before inventing a new pattern. Any intentional departure from the established Axis/Claude visual language must be explicitly requested or called out to the user before implementation.
 
+## Frozen unified agent runtime boundary
+
+The provider-agnostic runtime contract under `src/agent-runtime/` is a shared architecture boundary for parallel development. Read `docs/PARALLEL_DEVELOPMENT_HANDOFF.md` before changing runtime, tools, providers, Project Memory, MCP, browser, process, Git, or related UI integration.
+
+Unless the task explicitly coordinates a runtime architecture change, agents MUST NOT redefine or casually edit these frozen core files:
+
+- `src/agent-runtime/contracts.ts`
+- `src/agent-runtime/capabilities.ts`
+- `src/agent-runtime/tools.ts`
+- `src/agent-runtime/provider-adapter.ts`
+- `src/agent-runtime/runtime.ts`
+- `src/agent-runtime/session-context.ts`
+- `src/agent-runtime/index.ts`
+
+Extension work should use the existing boundaries instead:
+
+- native tools implement `AxisTool` in feature-owned modules such as `src/agent-tools/<area>/`;
+- provider integrations implement `AgentProviderAdapter` in `src/agent-provider-adapters/<provider>/`;
+- lifecycle consumers implement `AgentLifecycleSink` in feature-owned modules such as `src/project-memory/`;
+- standard provider/model capabilities reuse `PROVIDER_CAPABILITY_IDS` and `providerModelCapabilityOffer()`;
+- feature capabilities use namespaced string IDs and participate in the existing effective-capability negotiation;
+- execution destinations implement `AgentExecutionTarget` rather than adding target-specific branches to `AgentRuntime`.
+
+Do not reintroduce provider-specific tools, auth-specific runtimes, ambient Company lookup, silent provider/model/Company/execution-target fallback, or provider-managed filesystem/shell/MCP execution that bypasses the canonical permission/lifecycle path.
+
+The following existing composition/foundation files are also conflict-sensitive. Avoid broad rewrites from parallel feature branches unless the task is the coordinated integration pass:
+
+- `src/company-context.ts`
+- `src/company-connection-ownership.ts`
+- `src/project-store.ts`
+- `src/provider-connections.ts`
+- `src/project-provider-runtime.ts`
+- `src/providers/types.ts`
+- `src/cancellation.ts`
+- `src/execution-runtime.ts`
+- `src/project-engineer-backend.ts`
+- `src/project-routed-chat.ts`
+- `src/app-runtime.ts`
+
 ## Mandatory release metadata
 
 Every change intended to be merged into `main` MUST update both release metadata sources before the task is considered complete:

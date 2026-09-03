@@ -2,6 +2,18 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.19.0] - 2026-09-03
+
+### Added
+- Added the canonical provider-agnostic agent runtime boundary for model/tool/result loops, immutable multi-company session context, tool registration, execution targets, permission gates, effective capability negotiation, progress, cancellation, timeout, lifecycle events, retry eligibility and mutation status.
+- Added a common provider adapter protocol plus a structured-output compatibility adapter so existing Account and API-key `InferenceProvider` connections can participate in the same runtime without provider-specific tool implementations.
+- Added architecture tests covering provider/auth/tool independence, Company isolation, capability refusal, provider-independent lifecycle observation, cancellation, timeout/mutation safety and exact no-fallback provider/model/execution-target selection.
+- Added the Parallel Development Handoff that freezes the runtime contracts and assigns independent ownership boundaries for filesystem, process, Git, Project Memory, MCP, browser, provider-adapter and UI workstreams.
+
+### Security
+- Agent sessions now have a fail-closed canonical scope contract: Company-owned Projects, connections, roots and resources must match the immutable session Company, and missing execution targets or unavailable capabilities fail explicitly instead of selecting a broader or alternate context.
+- Potentially mutating tool failures remain `mutationStatus: unknown` unless the tool proves a safer state, preventing the common runtime from treating an uncertain local mutation as automatically retryable.
+
 ## [0.18.0] - 2026-09-03
 
 ### Added
