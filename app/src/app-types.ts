@@ -4,6 +4,28 @@ export type ModelSelection =
   | { mode: 'explicit'; providerId: string; modelId: string }
   | { mode: 'local-first'; modelId: string };
 
+export type CompanyIconId =
+  | 'building-2'
+  | 'briefcase-business'
+  | 'code-2'
+  | 'rocket'
+  | 'landmark'
+  | 'heart-pulse'
+  | 'graduation-cap'
+  | 'palette';
+
+export interface CompanyDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  color: string;
+  icon: CompanyIconId;
+  archivedAt?: string;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProjectConnectionPolicy {
   chat: {
     defaultConnectionId?: string;
