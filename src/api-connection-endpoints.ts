@@ -9,7 +9,7 @@ import { ProviderConnectionRuntime, type ProviderConnectionView } from './provid
 import { AnthropicInferenceProvider } from './providers/anthropic-provider.js';
 import { withSafeModelLimits } from './providers/model-limits.js';
 import { OpenAIInferenceProvider } from './providers/openai-provider.js';
-import type { InferenceProvider } from './providers/types.js';
+import type { InferenceProvider, ProviderHealth } from './providers/types.js';
 
 export type ApiEndpointProviderFamily = 'openai' | 'anthropic';
 
@@ -18,6 +18,9 @@ export interface ApiConnectionEndpointConfig {
   providerFamily: ApiEndpointProviderFamily;
   credentialId: string;
   endpoint?: string;
+  /** Non-secret provider metadata headers only; auth headers are never configurable here. */
+  headers: Record<string, string>;
+  enabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -29,6 +32,10 @@ interface ApiConnectionEndpointFile {
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+const ALLOWED_HEADERS: Record<ApiEndpointProviderFamily, ReadonlySet<string>> = {
+  openai: new Set(['openai-organization', 'openai-project']),
+  anthropic: new Set(['anthropic-beta'])
+};
 
 function safeId(value: string, label: string): string {
   const trimmed = value.trim();
@@ -36,7 +43,7 @@ function safeId(value: string, label: string): string {
   return trimmed;
 }
 
-export function normalizeApiEndpoint(value: string | undefined): string | undefined {
+export function normalizeApiEndpoint(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
   let parsed: URL;
@@ -56,6 +63,31 @@ export function normalizeApiEndpoint(value: string | undefined): string | undefi
   return parsed.toString().replace(/\/$/, '');
 }
 
+export function apiConnectionAllowedHeaders(providerFamily: ApiEndpointProviderFamily): string[] {
+  return [...ALLOWED_HEADERS[providerFamily]].sort();
+}
+
+export function normalizeApiConnectionHeaders(
+  providerFamily: ApiEndpointProviderFamily,
+  value: Record<string, string> | undefined
+): Record<string, string> {
+  const entries = Object.entries(value ?? {});
+  if (entries.length > 8) throw new Error('API connection may configure at most 8 additional headers.');
+  const result: Record<string, string> = {};
+  for (const [rawName, rawValue] of entries) {
+    const name = rawName.trim().toLowerCase();
+    if (!ALLOWED_HEADERS[providerFamily].has(name)) {
+      throw new Error(`API header ${rawName} is not allowed for ${providerFamily}.`);
+    }
+    const headerValue = rawValue.trim();
+    if (!headerValue || headerValue.length > 1_024 || /[\0\r\n]/.test(headerValue)) {
+      throw new Error(`API header ${name} must be 1-1024 characters without control line breaks.`);
+    }
+    result[name] = headerValue;
+  }
+  return result;
+}
+
 function validateConfig(value: unknown): ApiConnectionEndpointConfig | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const item = value as Record<string, unknown>;
@@ -67,11 +99,18 @@ function validateConfig(value: unknown): ApiConnectionEndpointConfig | undefined
     typeof item.updatedAt !== 'string'
   ) return undefined;
   try {
+    const headers = item.headers === undefined
+      ? {}
+      : item.headers && typeof item.headers === 'object' && !Array.isArray(item.headers)
+        ? normalizeApiConnectionHeaders(item.providerFamily, item.headers as Record<string, string>)
+        : (() => { throw new Error('Invalid API connection headers.'); })();
     return {
       connectionId: safeId(item.connectionId, 'Connection id'),
       providerFamily: item.providerFamily,
       credentialId: safeId(item.credentialId, 'Credential id'),
       endpoint: typeof item.endpoint === 'string' ? normalizeApiEndpoint(item.endpoint) : undefined,
+      headers,
+      enabled: item.enabled !== false,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt
     };
@@ -89,42 +128,54 @@ export class ApiConnectionEndpointStore {
   constructor(private readonly file = apiConnectionEndpointPath()) {}
 
   list(): ApiConnectionEndpointConfig[] {
-    return this.read().connections.map((connection) => ({ ...connection }));
+    return this.read().connections.map((connection) => ({
+      ...connection,
+      headers: { ...connection.headers }
+    }));
   }
 
   get(connectionIdValue: string): ApiConnectionEndpointConfig | undefined {
     const connectionId = safeId(connectionIdValue, 'Connection id');
     const match = this.read().connections.find((connection) => connection.connectionId === connectionId);
-    return match ? { ...match } : undefined;
+    return match ? { ...match, headers: { ...match.headers } } : undefined;
   }
 
   upsert(input: {
     connectionId: string;
     providerFamily: ApiEndpointProviderFamily;
     credentialId: string;
-    endpoint?: string;
+    endpoint?: string | null;
+    headers?: Record<string, string>;
+    enabled?: boolean;
   }): ApiConnectionEndpointConfig {
     const connectionId = safeId(input.connectionId, 'Connection id');
     const credentialId = safeId(input.credentialId, 'Credential id');
-    const endpoint = normalizeApiEndpoint(input.endpoint);
     const state = this.read();
     const current = state.connections.find((connection) => connection.connectionId === connectionId);
     if (current && (current.providerFamily !== input.providerFamily || current.credentialId !== credentialId)) {
       throw new Error(`Connection ${connectionId} is already bound to another API credential.`);
     }
+    const endpoint = input.endpoint === undefined && current
+      ? current.endpoint
+      : normalizeApiEndpoint(input.endpoint);
+    const headers = input.headers === undefined && current
+      ? { ...current.headers }
+      : normalizeApiConnectionHeaders(input.providerFamily, input.headers);
     const now = new Date().toISOString();
     const config: ApiConnectionEndpointConfig = {
       connectionId,
       providerFamily: input.providerFamily,
       credentialId,
       endpoint,
+      headers,
+      enabled: input.enabled ?? current?.enabled ?? true,
       createdAt: current?.createdAt ?? now,
       updatedAt: now
     };
     state.connections = [config, ...state.connections.filter((connection) => connection.connectionId !== connectionId)];
     state.updatedAt = now;
     this.write(state);
-    return { ...config };
+    return { ...config, headers: { ...config.headers } };
   }
 
   remove(connectionIdValue: string): boolean {
@@ -204,12 +255,16 @@ interface RuntimeInternals {
   capabilities: ProviderCapabilityPolicyManager;
 }
 
+type RuntimeWithProvider = ProviderConnectionRuntime & {
+  provider: (view: ProviderConnectionView) => InferenceProvider;
+};
+
 let installed = false;
 
 /**
- * Keeps endpoint configuration independent from secret storage and provider brand.
+ * Keeps endpoint/header configuration independent from secret storage and provider brand.
  * The provider runtime remains the single connection abstraction; this decorator
- * only supplies per-connection transport configuration for API-key identities.
+ * only supplies per-connection transport configuration and enabled state for API-key identities.
  */
 export function installApiConnectionEndpointRouting(store = new ApiConnectionEndpointStore()): void {
   if (installed) return;
@@ -225,15 +280,24 @@ export function installApiConnectionEndpointRouting(store = new ApiConnectionEnd
     return originalList.call(this).map((connection) => {
       if (connection.auth !== 'api-key') return connection;
       const config = store.get(connection.id);
-      return config?.endpoint ? { ...connection, endpoint: config.endpoint } as ProviderConnectionView : connection;
+      if (!config) return connection;
+      return {
+        ...connection,
+        ...(config.endpoint ? { endpoint: config.endpoint } : {}),
+        apiHeaders: { ...config.headers },
+        enabled: config.enabled,
+        available: config.enabled ? connection.available : false,
+        reason: config.enabled ? connection.reason : 'Disabled in Connection Center.'
+      } as ProviderConnectionView;
     });
   };
 
   prototype.provider = function providerForEndpoint(this: ProviderConnectionRuntime, view: ProviderConnectionView): InferenceProvider {
     if (view.auth !== 'api-key' || !view.credentialId) return originalProvider.call(this, view);
     const config = store.get(view.id);
-    if (!config?.endpoint) return originalProvider.call(this, view);
-    if (config.providerFamily !== view.providerFamily || config.credentialId !== view.credentialId) {
+    if (config?.enabled === false) throw new Error(`API connection ${view.label} is disabled.`);
+    if (!config?.endpoint && Object.keys(config?.headers ?? {}).length === 0) return originalProvider.call(this, view);
+    if (!config || config.providerFamily !== view.providerFamily || config.credentialId !== view.credentialId) {
       throw new Error(`API endpoint metadata does not match connection ${view.id}.`);
     }
 
@@ -241,9 +305,23 @@ export function installApiConnectionEndpointRouting(store = new ApiConnectionEnd
     const secret = runtime.credentials.resolve(view.credentialId);
     if (!secret) throw new Error(`Credential for ${view.label} is unavailable.`);
     const raw = view.providerFamily === 'openai'
-      ? new OpenAIInferenceProvider({ apiKey: secret, baseUrl: config.endpoint })
-      : new AnthropicInferenceProvider({ apiKey: secret, baseUrl: config.endpoint });
+      ? new OpenAIInferenceProvider({ apiKey: secret, baseUrl: config.endpoint, headers: config.headers })
+      : new AnthropicInferenceProvider({ apiKey: secret, baseUrl: config.endpoint, headers: config.headers });
     const guarded = runtime.budget.wrap(withSafeModelLimits(raw));
     return runtime.capabilities.wrap(aliasProvider(view.id, guarded));
   };
+}
+
+/** Uses the connection's normal provider path and performs only its non-mutating model/health probe. */
+export async function testApiKeyConnection(
+  runtime: ProviderConnectionRuntime,
+  connectionId: string
+): Promise<ProviderHealth> {
+  const view = runtime.view(connectionId);
+  if (!view || view.auth !== 'api-key') throw new Error(`Unknown API Key connection: ${connectionId}`);
+  if (!view.available && view.reason === 'Disabled in Connection Center.') {
+    throw new Error(`API connection ${view.label} is disabled.`);
+  }
+  const provider = (runtime as RuntimeWithProvider).provider(view);
+  return await provider.health();
 }
