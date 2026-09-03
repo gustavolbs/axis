@@ -27,23 +27,26 @@ test('preload exposes bounded connection and Work Hub actions without generic ac
   assert.doesNotMatch(preload, /invokeClaudeAccount|claudeAccountInvoke|invokeCodexAccount|codexAccountInvoke|spawn\(|exec\(/);
 });
 
-test('Settings exposes a first-class provider Connections center', () => {
+test('Company Hub exposes the first-class provider Connections center while global Settings stays app-wide', () => {
   const settings = source('app/src/SettingsModal.tsx');
+  const hub = source('app/src/CompanyHub.tsx');
   const entry = source('app/src/ConnectionsSettings.tsx');
   const center = source('app/src/ConnectionCenterSettings.tsx');
   const legacyEntry = source('app/src/LegacyConnectionsSettings.tsx');
   const connectors = source('app/src/ConnectionConnectorsPanel.tsx');
   const styles = source('app/src/lc-app.css');
 
-  assert.match(settings, /ConnectionsSettings/);
-  assert.match(settings, />Connections</);
+  assert.doesNotMatch(settings, /ConnectionsSettings/);
+  assert.doesNotMatch(settings, />Connections</);
+  assert.match(hub, /ConnectionCenterSettings companyId=\{company\.id\}/);
   assert.match(entry, /ConnectionCenterSettings as ConnectionsSettings/);
 
-  // The new Connection Center owns provider identities and Company assignment.
+  // The Company-owned Connection Center owns provider identities and canonical Company assignment.
   assert.match(center, /Add connection/);
   assert.match(center, /OpenAI API key/);
   assert.match(center, /Anthropic API key/);
-  assert.match(center, /companyId/);
+  assert.match(center, /fixedCompanyId/);
+  assert.match(center, /connection\.companyId !== fixedCompanyId/);
   assert.match(center, /Managed restrictions/);
   assert.match(center, /createApiKeyConnection/);
   assert.match(center, /LegacyConnectionsSettings/);
