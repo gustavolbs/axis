@@ -4,7 +4,13 @@ const CHANNELS = [
   'local-coder:connection-center-connections',
   'local-coder:connection-center-claude-create',
   'local-coder:connection-center-codex-create',
-  'local-coder:connection-center-api-create'
+  'local-coder:connection-center-api-create',
+  'local-coder:connection-center-api-details',
+  'local-coder:connection-center-api-update',
+  'local-coder:connection-center-api-rotate',
+  'local-coder:connection-center-api-enabled',
+  'local-coder:connection-center-api-test',
+  'local-coder:connection-center-api-remove'
 ];
 
 let resourcesPromise;
@@ -23,6 +29,15 @@ function object(value, label) {
   return value;
 }
 
+function optionalHeaders(value) {
+  if (value === undefined) return undefined;
+  const record = object(value, 'API headers');
+  return Object.fromEntries(Object.entries(record).map(([name, headerValue]) => {
+    if (typeof headerValue !== 'string') throw new Error(`API header ${name} must be a string.`);
+    return [name, headerValue];
+  }));
+}
+
 async function resources() {
   if (!resourcesPromise) {
     resourcesPromise = Promise.all([
@@ -32,8 +47,9 @@ async function resources() {
       import('../dist/credential-store.js'),
       import('../dist/company-context.js'),
       import('../dist/company-connection-ownership.js'),
-      import('../dist/api-connection-endpoints.js')
-    ]).then(([claude, codex, connectionsModule, credentialModule, companyModule, ownershipModule, endpointModule]) => {
+      import('../dist/api-connection-endpoints.js'),
+      import('../dist/api-key-connection-lifecycle.js')
+    ]).then(([claude, codex, connectionsModule, credentialModule, companyModule, ownershipModule, endpointModule, lifecycleModule]) => {
       const claudeProfiles = new claude.ClaudeAccountProfileStore();
       const codexProfiles = new codex.CodexAccountProfileStore();
       const credentials = new credentialModule.CredentialManager();
@@ -45,6 +61,7 @@ async function resources() {
         claudeProfiles,
         codexProfiles
       });
+      const apiLifecycle = new lifecycleModule.ApiKeyConnectionLifecycle(credentials, apiEndpoints, connections);
       return {
         claudeProfiles,
         codexProfiles,
@@ -52,6 +69,7 @@ async function resources() {
         companies,
         ownership,
         apiEndpoints,
+        apiLifecycle,
         connections,
         connectionIds: {
           claude: connectionsModule.claudeAccountConnectionId,
@@ -104,7 +122,7 @@ function canonicalConnectionViews(companies, connections) {
 export function installConnectionCenterBridge() {
   // Dedicated channels avoid handler-order coupling with the provider-owned
   // account bridge. Login/status/MCP remain on that bridge; the Center owns
-  // only canonical inventory and Company-aware creation.
+  // canonical inventory and Company-aware lifecycle operations.
   for (const channel of CHANNELS) ipcMain.removeHandler(channel);
 
   ipcMain.handle('local-coder:connection-center-connections', async () => {
@@ -165,6 +183,7 @@ export function installConnectionCenterBridge() {
     const name = requiredString(input.name, 'Connection name');
     const secret = requiredString(input.secret, 'API key');
     const endpoint = optionalString(input.endpoint);
+    const headers = optionalHeaders(input.headers);
     if (credentials.getProfile(id)) throw new Error(`Credential already exists: ${id}`);
     const companyId = selectedCompanyId(input, personalCompanyId);
     const company = ownership.company(companyId);
@@ -193,11 +212,12 @@ export function installConnectionCenterBridge() {
         connectionId,
         providerFamily,
         credentialId: id,
-        endpoint
+        endpoint,
+        headers
       });
     } catch (error) {
-      // Endpoint metadata is part of the connection contract. Do not leave a
-      // newly-created Keychain credential behind if its transport config fails.
+      // Transport metadata is part of the connection contract. Do not leave a
+      // newly-created Keychain credential behind if its validated config fails.
       try { credentials.remove(id); } catch { /* best effort rollback */ }
       throw error;
     }
@@ -205,5 +225,49 @@ export function installConnectionCenterBridge() {
     const connection = connections.view(connectionId);
     if (!connection) throw new Error(`Connection ${connectionId} was not created.`);
     return ownership.canonicalize([connection])[0];
+  });
+
+  ipcMain.handle('local-coder:connection-center-api-details', async (_event, connectionIdValue) => {
+    const { apiLifecycle } = await resources();
+    return apiLifecycle.details(requiredString(connectionIdValue, 'Connection id'));
+  });
+
+  ipcMain.handle('local-coder:connection-center-api-update', async (_event, raw) => {
+    const input = object(raw, 'API connection update');
+    const { apiLifecycle } = await resources();
+    const connectionId = requiredString(input.connectionId, 'Connection id');
+    const patch = {};
+    if (Object.prototype.hasOwnProperty.call(input, 'name')) patch.name = requiredString(input.name, 'Connection name');
+    if (Object.prototype.hasOwnProperty.call(input, 'endpoint')) {
+      patch.endpoint = input.endpoint === null ? null : optionalString(input.endpoint) ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'headers')) patch.headers = optionalHeaders(input.headers) ?? {};
+    return apiLifecycle.edit(connectionId, patch);
+  });
+
+  ipcMain.handle('local-coder:connection-center-api-rotate', async (_event, raw) => {
+    const input = object(raw, 'API key rotation');
+    const { apiLifecycle } = await resources();
+    return apiLifecycle.rotate(
+      requiredString(input.connectionId, 'Connection id'),
+      requiredString(input.secret, 'Replacement API key')
+    );
+  });
+
+  ipcMain.handle('local-coder:connection-center-api-enabled', async (_event, raw) => {
+    const input = object(raw, 'API connection enabled state');
+    if (typeof input.enabled !== 'boolean') throw new Error('Enabled state must be boolean.');
+    const { apiLifecycle } = await resources();
+    return apiLifecycle.setEnabled(requiredString(input.connectionId, 'Connection id'), input.enabled);
+  });
+
+  ipcMain.handle('local-coder:connection-center-api-test', async (_event, connectionIdValue) => {
+    const { apiLifecycle } = await resources();
+    return await apiLifecycle.test(requiredString(connectionIdValue, 'Connection id'));
+  });
+
+  ipcMain.handle('local-coder:connection-center-api-remove', async (_event, connectionIdValue) => {
+    const { apiLifecycle } = await resources();
+    return apiLifecycle.remove(requiredString(connectionIdValue, 'Connection id'));
   });
 }
