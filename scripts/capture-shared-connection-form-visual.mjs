@@ -74,7 +74,7 @@ try {
   const page = await target(); cdp = new Cdp(page.webSocketDebuggerUrl); await cdp.send('Runtime.enable'); await cdp.send('Page.enable');
   await waitFor(cdp, "document.querySelector('.lc-shell-sidebar') !== null", 'Axis shell');
   await openPersonalConnections(cdp);
-  await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.connection-center-settings > header button')].find((item) => item.textContent?.includes('Add connection')); if (!button) throw new Error('Add connection button not found'); button.click(); return true; })()`);
+  await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.connection-center-settings button')].find((item) => item.textContent?.includes('Add connection')); if (!button) throw new Error('Add connection button not found'); button.click(); return true; })()`);
   await waitFor(cdp, "document.querySelector('.connection-create-dialog') !== null", 'shared connection form');
 
   const accountInitial = await evaluate(cdp, `(() => {
