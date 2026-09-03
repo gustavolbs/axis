@@ -188,25 +188,25 @@ Dentro de P1, **P1.5 — Empresas, contas, perfis e isolamento** é o primeiro b
 
 - [x] BASE — Projetos já possuem `organizationId`, política de conexão, privacidade, memória e workspace separados no dispositivo.
 - [x] BASE — Perfis Claude e ChatGPT/Codex usam diretórios de configuração separados e não copiam credenciais OAuth para o Axis.
-- [ ] AUSENTE — Adotar um modelo canônico e visível `empresa → conexões/recursos → projetos → sessões`; “organização”, “workspace” e “perfil corporativo” não podem representar conceitos conflitantes. **Objetivo Axis**.
-- [ ] AUSENTE — Criar, editar, arquivar, restaurar, ordenar, buscar e identificar empresas por nome, cor, ícone e descrição, tudo persistido localmente. **Objetivo Axis**.
-- [ ] AUSENTE — Manter um contexto Pessoal separado das empresas, sem herança implícita de contas, histórico ou recursos corporativos. **Objetivo Axis**.
-- [ ] AUSENTE — Seletor de empresa sempre visível no chrome, no composer, nas aprovações e nos resultados; trocar de empresa exige uma ação explícita. **Objetivo Axis**.
-- [ ] AUSENTE — Central de conexões capaz de registrar vários Accounts e várias API Keys do mesmo provedor, com nome amigável, empresa proprietária, `authKind`, restrições administradas e estado. **Objetivo Axis**.
-- [ ] AUSENTE — Suportar Ollama, perfil Claude, perfil ChatGPT/Codex, API Key com endpoint oficial/customizado e futuros adaptadores como conexões independentes; nenhum deles é obrigatório para os demais funcionarem. **Objetivo Axis**.
-- [ ] AUSENTE — O mesmo formulário/base de detalhes deve atender Account e API Key, variando somente autenticação e campos específicos do provedor. **Objetivo Axis**.
-- [ ] AUSENTE — Adicionar, nomear, testar, editar endpoint/headers permitidos, rotacionar chave, desabilitar e remover uma conexão por API Key. **Objetivo Axis**.
-- [ ] AUSENTE — Permitir várias API Keys do mesmo provedor na mesma empresa ou em empresas diferentes, sem colisão de nome, credencial, uso ou configuração. **Objetivo Axis**.
+- [x] BASE — Adotar um modelo canônico e visível `empresa → conexões/recursos → projetos → sessões`; “organização”, “workspace” e “perfil corporativo” não podem representar conceitos conflitantes. **Objetivo Axis**.
+- [x] BASE — Criar, editar, arquivar, restaurar, ordenar, buscar e identificar empresas por nome, cor, ícone e descrição, tudo persistido localmente. **Objetivo Axis**.
+- [x] BASE — Manter um contexto Pessoal separado das empresas, sem herança implícita de contas, histórico ou recursos corporativos. **Objetivo Axis**.
+- [x] BASE — Seletor de empresa sempre visível no chrome, no composer, nas aprovações e nos resultados; trocar de empresa exige uma ação explícita. **Objetivo Axis**.
+- [x] BASE — Central de conexões capaz de registrar vários Accounts e várias API Keys do mesmo provedor, com nome amigável, empresa proprietária, `authKind`, restrições administradas e estado. **Objetivo Axis**.
+- [x] BASE — Suportar Ollama, perfil Claude, perfil ChatGPT/Codex, API Key com endpoint oficial/customizado e futuros adaptadores como conexões independentes; nenhum deles é obrigatório para os demais funcionarem. **Objetivo Axis**.
+- [x] BASE — O mesmo formulário/base de detalhes deve atender Account e API Key, variando somente autenticação e campos específicos do provedor. **Objetivo Axis**.
+- [x] BASE — Adicionar, nomear, testar, editar endpoint/headers permitidos, rotacionar chave, desabilitar e remover uma conexão por API Key. **Objetivo Axis**.
+- [x] BASE — Permitir várias API Keys do mesmo provedor na mesma empresa ou em empresas diferentes, sem colisão de nome, credencial, uso ou configuração. **Objetivo Axis**.
 - [ ] AUSENTE — Descobrir/atualizar o catálogo de modelos pela API Key quando o provedor permitir e oferecer catálogo configurável quando não houver discovery. **Objetivo Axis**.
 - [ ] AUSENTE — Armazenar por modelo de uma conexão API Key context window, preços conhecidos, multimodalidade, tool calling, structured output e limites específicos. **Objetivo Axis**.
 - [ ] AUSENTE — Central de destinos capaz de registrar o desktop atual e um ou mais Local Workers Windows, mostrando host, versão, health, modelos e modo de execução suportado. **Objetivo Axis**.
-- [ ] AUSENTE — Vincular cada instância de conexão a exatamente uma empresa; reutilizar a mesma identidade em outra empresa exige criar um vínculo explícito e separado. **Objetivo Axis**.
-- [ ] AUSENTE — Testar, autenticar/reautenticar ou validar/rotacionar chave, desconectar, desabilitar e remover conexão sem afetar os outros Accounts/API Keys do mesmo provedor. **Ambos**.
+- [x] BASE — Vincular cada instância de conexão a exatamente uma empresa; reutilizar a mesma identidade em outra empresa exige criar um vínculo explícito e separado. **Objetivo Axis**.
+- [x] BASE — Testar, autenticar/reautenticar ou validar/rotacionar chave, desconectar, desabilitar e remover conexão sem afetar os outros Accounts/API Keys do mesmo provedor. **Ambos**.
 - [ ] AUSENTE — Mostrar inventário por conexão e modelo: `authKind`, limites, MCPs disponíveis/bloqueados, skills/instruções, plugins, agents, capabilities, origem das restrições, última verificação e erros. **Objetivo Axis**.
 - [ ] AUSENTE — Permitir defaults por empresa e projeto para conexão, modelo, destino de execução, esforço, modo de interação e estratégia de fallback. **Objetivo Axis**.
 - [ ] AUSENTE — Fallback entre conexões somente dentro da allowlist da mesma empresa, com confirmação quando mudar Account/API Key, identidade, política ou custo. **Objetivo Axis**.
 - [ ] AUSENTE — Rate limit, quota, falha e circuit breaker são calculados por conexão/credential reference, não apenas por provedor. **Objetivo Axis**.
-- [ ] AUSENTE — API Keys ficam no Keychain/cofre do SO; credenciais de Account ficam no runtime oficial; arquivos locais guardam somente referências e metadados não secretos. **Objetivo Axis**.
+- [x] BASE — API Keys ficam no Keychain/cofre do SO; credenciais de Account ficam no runtime oficial; arquivos locais guardam somente referências e metadados não secretos. **Objetivo Axis**.
 - [ ] AUSENTE — Fixar empresa, projeto, conexão, modelo, destino, roots e conjunto efetivo de recursos na criação da sessão; nada disso pode mudar silenciosamente. **Objetivo Axis**.
 - [ ] AUSENTE — Definir precedência verificável: regras de segurança do app → empresa → projeto → sessão; conteúdo pessoal ou de outra empresa nunca participa da herança. **Objetivo Axis**.
 - [ ] AUSENTE — Inspector “Contexto efetivo” mostrando conexão/`authKind`, modelo, destino, instruções, padrões, skills, plugins, MCPs disponíveis/bloqueados, agents, hooks, memória, variáveis, roots e políticas, com origem de cada item. **Objetivo Axis**.
@@ -215,7 +215,15 @@ Dentro de P1, **P1.5 — Empresas, contas, perfis e isolamento** é o primeiro b
 - [ ] AUSENTE — Perfil de browser/cookies, processos, worktrees, anexos, memória e índices isolados por empresa e depois por projeto. **Objetivo Axis**.
 - [ ] AUSENTE — Bloquear por construção acesso cruzado a pastas, segredos, Accounts, API Keys, MCPs, cookies, processos, worktrees e históricos de outra empresa. **Objetivo Axis**.
 - [ ] AUSENTE — Um mesmo caminho físico não pode ser associado a empresas conflitantes sem migração ou compartilhamento local explícito, limitado e registrado. **Objetivo Axis**.
-- [ ] AUSENTE — Dashboard agregado mostra tarefas de várias empresas com badge e filtros, mas abrir ou agir sobre uma tarefa fixa imediatamente o contexto daquela empresa. **Objetivo Axis**.
+- [ ] AUSENTE — Mover Companies para uma superfície de contexto de primeira classe fora de Settings, listando Personal + Companies na sidebar primária. **Objetivo Axis**.
+- [ ] AUSENTE — Ao selecionar uma Company, abrir uma sidebar secundária Company-scoped com Overview, Projects, Connections, MCPs, Skills e Settings; cada seção usa somente o contexto canônico daquela Company. **Objetivo Axis**.
+- [ ] AUSENTE — Administrar Sources/connections dentro da Company proprietária; configuração de fonte não pertence ao Work Hub global. **Objetivo Axis**.
+- [ ] AUSENTE — Manter um único **Work Hub global e de primeira classe**, sem Work Hubs duplicados por Company, agregando Personal + todas as Companies em Inbox, My Work, Today, Calendar e Sources. **Objetivo Axis**.
+- [ ] AUSENTE — Usar `All` como escopo padrão do Work Hub e oferecer filtros explícitos por Company/Personal, mantendo Company identity visível em todos os itens. **Objetivo Axis**.
+- [ ] AUSENTE — Preservar provenance/ownership no Work Hub, no mínimo `companyId`, `connectionId` e `sourceId`, para que agregação nunca apague isolamento. **Objetivo Axis**.
+- [ ] AUSENTE — Tratar Work Hub `Sources` como superfície agregada de visibilidade/health; edição e administração continuam na Company proprietária. **Objetivo Axis**.
+- [ ] AUSENTE — Permitir que Company Overview mostre resumo scoped e abra o Work Hub global já filtrado para aquela Company. **Objetivo Axis**.
+- [ ] AUSENTE — Manter no Axis Settings global somente configurações app-wide; configurações específicas de Company pertencem ao Company Hub. **Objetivo Axis**.
 - [ ] AUSENTE — Busca global pode pesquisar várias empresas somente quando o usuário pedir; resultados nunca misturam trechos no contexto de uma sessão. **Objetivo Axis**.
 - [ ] AUSENTE — Mover/copiar projeto, conversa, skill ou padrão entre empresas exige preview do que será copiado, remoção de segredos e confirmação do destino. **Objetivo Axis**.
 - [ ] AUSENTE — Exportar a ficha de isolamento da sessão: empresa, projeto, conexão, paths, MCPs, regras, rede e arquivos persistidos. **Objetivo Axis**.
@@ -336,7 +344,7 @@ P1 só termina quando os testes E2E comprovarem o fluxo com Ollama, Local Worker
 - [ ] AUSENTE — Importar/espelhar MCPs de vários perfis Claude, ChatGPT/Codex e APIs sem mesclar credenciais, nomes ou políticas de empresas diferentes. **Objetivo Axis**.
 - [ ] AUSENTE — Catálogo central agrupado por empresa com busca, status, descrição, origem, conexão/`authKind`, permissões e ações reconnect/reconfigurar. **Objetivo Axis**.
 - [ ] AUSENTE — Mostrar claramente quando uma tool enviará dados para um SaaS ou MCP remoto, incluindo empresa, conexão, host e campos relevantes. **Objetivo Axis**.
-- [ ] AUSENTE — Work Hub multiempresa com filtros e badges de origem, sem transformar conteúdo de uma empresa em contexto de outra. **Objetivo Axis**.
+- [ ] AUSENTE — Work Hub global multiempresa com `All` por padrão, filtros Company/Personal e badges de origem, sem transformar conteúdo de uma empresa em contexto de outra nem criar Work Hubs duplicados por Company. **Objetivo Axis**.
 - [ ] AUSENTE — Trace local por tool com empresa, MCP, origem/ownership, conexão/`authKind`, modelo, destino de execução, duração, bytes, resultado e erro. **Ambos**.
 - [ ] AUSENTE — Defesa contra instrução maliciosa em tool result/resource e proibição de elevação de privilégio. **Ambos**.
 
