@@ -400,3 +400,223 @@ button {
 .connection-management svg {
   flex: 0 0 auto;
 }
+
+/* --------------------------------------------------------------------------
+   Company Hub clarity pass.
+   Keep the interaction model intact, but remove repeated explanatory chrome,
+   replace stacked bordered cards with quiet rows, and reserve color for
+   provider identity, primary actions, and status.
+   ----------------------------------------------------------------------- */
+
+.company-hub-content > .company-connections-page {
+  display: grid;
+  width: min(1040px, 100%);
+  gap: 30px;
+}
+
+.company-hub-content .connection-center-settings[data-embedded='true'] > .connection-section-heading {
+  align-items: center;
+  justify-content: flex-end;
+  margin: 0 0 6px;
+}
+
+.company-hub-content .connection-center-settings[data-embedded='true'] > .connection-section-heading > div,
+.company-hub-content .connection-section-heading p,
+.company-hub-content .connection-center-settings[data-embedded='true'] .connection-note,
+.company-hub-content .connection-center-settings[data-embedded='true'] .connection-management {
+  display: none;
+}
+
+.company-hub-content .connection-center-settings[data-embedded='true'] .connection-section {
+  margin-top: 24px;
+}
+
+.company-hub-content .connection-center-settings[data-embedded='true'] .connection-runtime-section {
+  margin-top: 0;
+}
+
+.company-hub-content .connection-section-heading {
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.company-hub-content .connection-section-heading h2 {
+  color: var(--lc-text-soft);
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.company-connections-page .settings-save-button {
+  border-color: color-mix(in srgb, var(--lc-accent) 28%, var(--lc-border-soft));
+  background: var(--lc-accent-soft);
+  color: var(--lc-accent);
+}
+
+.company-connections-page .settings-save-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--lc-accent) 48%, var(--lc-border));
+  background: color-mix(in srgb, var(--lc-accent-soft) 76%, var(--lc-hover));
+  color: var(--lc-accent-hover);
+}
+
+.company-connections-page .connections-runtime-grid {
+  gap: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--lc-border-soft);
+  border-bottom: 1px solid var(--lc-border-soft);
+}
+
+.company-connections-page .connections-runtime {
+  min-height: 56px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.company-connections-page .connections-runtime + .connections-runtime {
+  border-left: 1px solid var(--lc-border-soft);
+}
+
+.company-connections-page .connections-runtime:hover {
+  background: color-mix(in srgb, var(--lc-hover) 58%, transparent);
+}
+
+.company-connections-page .connections-runtime:first-child .connections-runtime-icon {
+  background: var(--lc-accent-soft);
+  color: var(--lc-accent);
+}
+
+.company-connections-page .connections-runtime:last-child .connections-runtime-icon {
+  background: var(--lc-blue-soft);
+  color: var(--lc-blue);
+}
+
+.company-connections-page .connection-runtime-state,
+.company-connections-page .connection-state {
+  width: max-content;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--lc-warning-soft);
+  color: var(--lc-warning);
+  line-height: 1.2;
+}
+
+.company-connections-page .connection-runtime-state.ready,
+.company-connections-page .connection-state.ready {
+  background: var(--lc-positive-soft);
+  color: var(--lc-positive);
+}
+
+.company-connections-page .connection-center-inventory {
+  margin-top: 28px;
+}
+
+.company-connections-page .connection-center-inventory .connection-count {
+  background: var(--lc-blue-soft);
+  color: var(--lc-blue);
+}
+
+.company-connections-page .connection-center-search {
+  width: 100%;
+  max-width: none;
+  height: 36px;
+  margin-bottom: 4px;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--lc-surface-2) 52%, transparent);
+}
+
+.company-connections-page .connection-center-search:focus-within {
+  border-color: color-mix(in srgb, var(--lc-accent) 45%, var(--lc-border-soft));
+  background: var(--lc-surface-2);
+}
+
+.company-connections-page .connection-list {
+  gap: 0;
+  border-top: 1px solid var(--lc-border-soft);
+}
+
+.company-connections-page .connection-card {
+  border: 0;
+  border-bottom: 1px solid var(--lc-border-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+.company-connections-page .connection-card:hover {
+  border-color: var(--lc-border-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--lc-hover) 54%, transparent);
+}
+
+.company-connections-page .connection-card-main {
+  min-height: 60px;
+  padding: 9px 8px;
+}
+
+.company-connections-page .connection-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--lc-blue-soft);
+  color: var(--lc-blue);
+}
+
+.company-connections-page .connection-title-row strong {
+  color: var(--lc-text);
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.company-connections-page .connection-title-row > span {
+  background: var(--lc-blue-soft);
+  color: var(--lc-blue);
+}
+
+.company-connections-page .connection-copy > small {
+  margin-top: 2px;
+  color: var(--lc-muted);
+}
+
+.company-connections-page .connection-actions .btn-secondary {
+  border-color: transparent;
+  background: transparent;
+  color: var(--lc-muted);
+}
+
+.company-connections-page .connection-actions .btn-secondary:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--lc-hover);
+  color: var(--lc-text);
+}
+
+.company-connections-page .company-source-settings {
+  margin-top: 0;
+  padding-top: 28px;
+  border-top: 1px solid var(--lc-border-soft);
+}
+
+.company-connections-page .company-source-settings .connection-icon {
+  background: var(--lc-positive-soft);
+  color: var(--lc-positive);
+}
+
+.company-connections-page .company-source-settings .connection-state:not(.ready) {
+  background: var(--lc-blue-soft);
+  color: var(--lc-blue);
+}
+
+.company-connections-page .company-source-settings .btn-secondary.danger {
+  color: var(--lc-faint);
+}
+
+.company-connections-page .company-source-settings .btn-secondary.danger:hover:not(:disabled) {
+  background: var(--lc-negative-soft);
+  color: var(--lc-negative);
+}
+
+@media (max-width: 900px) {
+  .company-connections-page .connections-runtime + .connections-runtime {
+    border-top: 1px solid var(--lc-border-soft);
+    border-left: 0;
+  }
+}
