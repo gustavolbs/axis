@@ -31,7 +31,8 @@ test('Settings exposes a first-class provider Connections center', () => {
   const settings = source('app/src/SettingsModal.tsx');
   const entry = source('app/src/ConnectionsSettings.tsx');
   const center = source('app/src/ConnectionCenterSettings.tsx');
-  const legacy = source('app/src/LegacyConnectionsSettings.tsx');
+  const legacyEntry = source('app/src/LegacyConnectionsSettings.tsx');
+  const connectors = source('app/src/ConnectionConnectorsPanel.tsx');
   const styles = source('app/src/lc-app.css');
 
   assert.match(settings, /ConnectionsSettings/);
@@ -47,16 +48,16 @@ test('Settings exposes a first-class provider Connections center', () => {
   assert.match(center, /createApiKeyConnection/);
   assert.match(center, /LegacyConnectionsSettings/);
 
-  // Provider-specific login and MCP controls remain delegated to the existing
-  // official-runtime surface that the center composes under Connectors.
-  assert.match(legacy, /Enterprise SSO/);
-  assert.match(legacy, /Device login/);
-  assert.match(legacy, /Search connectors/);
-  assert.match(legacy, /Add custom connector/);
-  assert.match(legacy, /Account-isolated and cached/);
-  assert.match(legacy, /nested-settings-dialog connection-create-dialog/);
+  // The legacy entry is now only a compatibility alias. The embedded connector
+  // panel owns MCP discovery/auth/removal without nesting a second Settings page.
+  assert.match(legacyEntry, /ConnectionConnectorsPanel as ConnectionsSettings/);
+  assert.match(connectors, /Search connectors/);
+  assert.match(connectors, /Add custom connector/);
+  assert.match(connectors, /Company-owned account tools/);
+  assert.match(connectors, /Provider-managed connectors remain read-only/);
+  assert.match(connectors, /nested-settings-dialog connection-create-dialog connector-create-dialog/);
+  assert.doesNotMatch(connectors, /<h1>Connections<\/h1>|connections-surface-tabs|<style>/);
   assert.doesNotMatch(center, /<style>/);
-  assert.doesNotMatch(legacy, /<style>/);
 
   for (const selector of [
     '.connections-settings-page',
