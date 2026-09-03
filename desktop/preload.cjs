@@ -43,7 +43,14 @@ const bridge = {
   removeWorkHubSource: (sourceId) => ipcRenderer.invoke('local-coder:work-hub-source-remove', String(sourceId)),
   markWorkHubMessageRead: (sourceId, externalId) => ipcRenderer.invoke('local-coder:work-hub-message-read', String(sourceId), String(externalId)),
   dismissWorkHubMessage: (sourceId, externalId) => ipcRenderer.invoke('local-coder:work-hub-message-dismiss', String(sourceId), String(externalId)),
-  refreshWorkHub: (sourceId) => ipcRenderer.invoke('local-coder:work-hub-refresh', sourceId === undefined ? undefined : String(sourceId)),
+  // A source-less refresh used to let the renderer auto-sync every configured
+  // provider as soon as Work Hub mounted. In a desktop app those provider CLIs
+  // are responsible child processes, so their macOS privacy prompts are
+  // attributed to Axis. Keep startup/read-all behavior passive: only an
+  // explicit source-specific Sync is allowed to launch a provider CLI.
+  refreshWorkHub: (sourceId) => sourceId === undefined
+    ? ipcRenderer.invoke('local-coder:work-hub-snapshot')
+    : ipcRenderer.invoke('local-coder:work-hub-refresh', String(sourceId)),
 
   onRuntimeEvent: (listener) => {
     const wrapped = (_event, event) => listener(event);
