@@ -22,6 +22,8 @@ interface DiffFile {
   removals: number;
 }
 
+let reviewSequence = 0;
+
 function cleanPath(value: string): string | undefined {
   const clean = value.trim().split('\t')[0]?.trim();
   if (!clean || clean === '/dev/null') return undefined;
@@ -172,6 +174,13 @@ function renderFile(file: DiffFile, open: boolean): HTMLDetailsElement {
   return details;
 }
 
+function scopeLabel(scope: string | undefined): string {
+  if (scope === 'working') return 'Unstaged';
+  if (scope === 'staged') return 'Staged';
+  if (scope === 'branch') return 'Branch';
+  return 'Last turn';
+}
+
 function enhanceDiff(details: HTMLDetailsElement): void {
   if (details.dataset.diffReview === 'structured') return;
   const summary = details.querySelector(':scope > summary');
@@ -183,8 +192,12 @@ function enhanceDiff(details: HTMLDetailsElement): void {
   const files = parseUnifiedDiff(raw);
   if (files.length === 0) return;
 
-  summary.textContent = 'Review changes · Last turn';
-  details.dataset.diffScope = 'last-turn';
+  const reviewId = `axis-diff-review-${reviewSequence += 1}`;
+  for (const file of files) file.id = `${reviewId}-${file.id}`;
+
+  const sourceScope = details.dataset.gitScope;
+  summary.textContent = `Review changes · ${scopeLabel(sourceScope)}`;
+  details.dataset.diffScope = sourceScope ?? 'last-turn';
 
   const review = document.createElement('div');
   review.className = 'diff-review-pane';
