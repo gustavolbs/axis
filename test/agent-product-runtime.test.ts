@@ -644,10 +644,11 @@ test('product cancellation reaches provider and generic tool; process cancellati
 test('product composition uses the common connection adapter factory, preserving API Key/Account architecture and Codex fail-closed policy', () => {
   const source = fs.readFileSync('src/agent-product-runtime.ts', 'utf8');
   const adapterComposition = fs.readFileSync('src/agent-provider-adapters/resolved-connection.ts', 'utf8');
+  const codexBlocker = fs.readFileSync('src/agent-provider-adapters/chatgpt-account.ts', 'utf8');
   assert.match(source, /createAgentProviderAdapterForConnection\(\{/);
   assert.doesNotMatch(source, /authKind\s*===/);
-  assert.match(adapterComposition, /case 'api-key'/);
-  assert.match(adapterComposition, /case 'claude-account'/);
-  assert.match(adapterComposition, /case 'chatgpt-account'/);
-  assert.match(adapterComposition, /no proven all-tools-disabled mode/);
+  assert.match(adapterComposition, /input\.connection\.auth === 'api-key'/);
+  assert.match(adapterComposition, /input\.connection\.auth === 'claude-account'/);
+  assert.match(adapterComposition, /input\.connection\.auth === 'chatgpt-account'/);
+  assert.match(codexBlocker, /no proven all-tools-disabled mode/);
 });
