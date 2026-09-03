@@ -1,5 +1,6 @@
 import type {
   AxisTool,
+  ToolDefinition,
   ToolExecutionContext,
   ToolExecutionOutput
 } from '../../agent-runtime/index.js';
@@ -103,7 +104,7 @@ function metadata(
 }
 
 class BrowserNavigateTool implements AxisTool {
-  readonly definition;
+  readonly definition: ToolDefinition;
 
   constructor(
     private readonly sessions: BrowserSessionManager,
@@ -129,7 +130,7 @@ class BrowserNavigateTool implements AxisTool {
       mutationRisk: 'none',
       retryOnFailure: 'safe',
       timeoutMs
-    } as const);
+    });
   }
 
   async execute(context: ToolExecutionContext): Promise<ToolExecutionOutput> {
@@ -145,7 +146,7 @@ class BrowserNavigateTool implements AxisTool {
 }
 
 class BrowserReadTool implements AxisTool {
-  readonly definition;
+  readonly definition: ToolDefinition;
 
   constructor(
     private readonly sessions: BrowserSessionManager,
@@ -170,7 +171,7 @@ class BrowserReadTool implements AxisTool {
       mutationRisk: 'none',
       retryOnFailure: 'safe',
       timeoutMs
-    } as const);
+    });
   }
 
   async execute(context: ToolExecutionContext): Promise<ToolExecutionOutput> {
@@ -237,7 +238,7 @@ function interactionRequest(args: Readonly<Record<string, unknown>>): BrowserInt
 }
 
 class BrowserInteractTool implements AxisTool {
-  readonly definition;
+  readonly definition: ToolDefinition;
 
   constructor(
     private readonly sessions: BrowserSessionManager,
@@ -266,7 +267,7 @@ class BrowserInteractTool implements AxisTool {
       mutationRisk: 'possible',
       retryOnFailure: 'after-confirmation',
       timeoutMs
-    } as const);
+    });
   }
 
   async execute(context: ToolExecutionContext): Promise<ToolExecutionOutput> {
@@ -288,7 +289,7 @@ class BrowserInteractTool implements AxisTool {
     return {
       output: result,
       mutationStatus: result.mutationStatus,
-      retry: result.mutationStatus === 'rolled-back' ? 'after-confirmation' : 'after-confirmation',
+      retry: 'after-confirmation',
       metadata: metadata(this.sessions, browser.id, browser.scope.contextKey, {
         url: result.url,
         action: result.action
