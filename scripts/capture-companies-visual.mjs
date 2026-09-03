@@ -48,7 +48,11 @@ Object.assign(childEnv, {
   LOCAL_CODER_PROFILE_NAME: 'Visual Smoke',
   LOCAL_CODER_PROJECTS_PATH: path.join(fixtureDir, 'projects.json'),
   LOCAL_CODER_CREDENTIALS_PATH: path.join(fixtureDir, 'credentials.json'),
-  LOCAL_CODER_RUN_STORE_PATH: path.join(fixtureDir, 'runs.json')
+  LOCAL_CODER_RUN_STORE_PATH: path.join(fixtureDir, 'runs.json'),
+  // DesktopAppRuntime intentionally requires an explicit worker target even when
+  // the worker is offline. This unroutable localhost fixture exercises the real
+  // desktop startup/offline monitor path without talking to external services.
+  LOCAL_CODER_REMOTE_WORKER_URL: 'http://127.0.0.1:65534'
 });
 
 const child = spawn(electronPath, [`--remote-debugging-port=${debugPort}`, 'desktop/main.mjs'], {
