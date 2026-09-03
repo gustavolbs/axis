@@ -257,22 +257,18 @@ export class McpHost {
     descriptor: McpToolDescriptor,
     context: ToolExecutionContext
   ): Promise<McpCallToolResult> {
-    const operation = linkedTimeoutSignal(
-      context.signal,
-      positiveTimeout(server.timeoutMs, this.defaultTimeoutMs)
-    );
     try {
-      const client = await this.clientFor(server, context.session, operation.signal);
+      // AxisTool execution already receives the AgentRuntime-owned cancellation/timeout
+      // signal. Do not create a competing timer here or a timeout race could be
+      // misclassified by the canonical runtime as a generic tool failure.
+      const client = await this.clientFor(server, context.session, context.signal);
       return await client.callTool(descriptor.name, context.call.arguments, {
-        signal: operation.signal,
+        signal: context.signal,
         onProgress: (progress) => reportMcpProgress(context, progress)
       });
     } catch (error) {
-      if (operation.signal.aborted) throw error;
-      this.evict(server, context.session);
+      if (!context.signal.aborted) this.evict(server, context.session);
       throw error;
-    } finally {
-      operation.dispose();
     }
   }
 
