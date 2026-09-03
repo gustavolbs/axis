@@ -5,13 +5,15 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ## [0.20.0] - 2026-09-03
 
 ### Added
-- Added provider-neutral Axis browser tools for explicit HTTP(S) navigation, session-scoped page reads, bounded text extraction and link discovery, with separate `axis.browser.navigate`, `axis.browser.read` and `axis.browser.interact` capability boundaries.
-- Added an explicit browser backend/session contract plus a built-in read-only fetch backend, so future Electron/CDP or Local Worker browser implementations can connect through `ToolRegistry` without runtime or provider-adapter changes.
-- Added browser-runtime coverage for navigation/read, navigation failures, timeout, cancellation, external and mutation permissions, provider independence, Company/session isolation and explicit no-fallback behavior.
+- Added provider-neutral Axis browser tools for explicit navigation, page reads, isolated session state, bounded DOM/form inspection, developer diagnostics, opaque screenshot references and explicit DOM interaction, each behind its own capability/permission boundary where appropriate.
+- Added an explicit browser backend/session contract plus a built-in read-only fetch backend with HTTP(S) navigation, redirect handling, text/HTML/link extraction, bounded search, static DOM/forms inspection and observable session state, so future Electron/CDP or Local Worker implementations can connect through `ToolRegistry` without runtime or provider-adapter changes.
+- Added a reusable browser navigation policy with host allow/block rules, default protection against loopback/private/link-local/metadata targets and redirect re-authorization, allowing Company/Project composition to narrow browser reach without provider-specific code.
+- Added browser-runtime coverage for reads/navigation, host/redirect policy, prompt-injection provenance, DOM/forms, state, developer/screenshot boundaries, navigation failures, timeout, cancellation, permissions, provider independence, Company/session isolation and explicit no-fallback behavior.
 
 ### Security
-- Browser state is isolated by immutable Company + Project + Axis session + execution-target context; provider/account identity cannot broaden or merge browser scope.
-- External navigation and DOM interaction require separate canonical permissions, HTTP(S) URLs reject embedded credentials, reads are bounded, and unsupported interaction never falls back to another browser backend or Computer Use.
+- Browser state is isolated by immutable Company + Project + Axis session + execution-target context, with a Company + Project + target storage partition key prepared for future persistent profiles; provider/account identity cannot broaden or merge browser scope and state tools do not expose cookie/localStorage values.
+- External browser content is marked as untrusted data with a `treat-as-data` instruction policy and defensive prompt-injection signals; the detector is advisory and does not elevate web content into instructions.
+- External navigation, developer diagnostics, screenshots and DOM interaction use explicit canonical permissions. Redirect destinations are re-checked against policy, HTTP(S) URLs reject embedded credentials, reads are bounded, and unsupported interaction/CDP/screenshot operations never fall back to another browser backend, shell, screen capture or Computer Use.
 
 ## [0.19.0] - 2026-09-03
 
