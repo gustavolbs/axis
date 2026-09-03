@@ -43,6 +43,8 @@ test('Project Git review is read-only and cannot bypass the active Company Proje
   assert.match(projectGitSource, /git\(workspace, diffArgs\)/);
   assert.match(projectGitSource, /\['diff', '--cached'/);
   assert.match(projectGitSource, /\['diff', '--no-ext-diff'/);
+  assert.match(projectGitSource, /scope === 'branch'/);
+  assert.match(projectGitSource, /origin\/main/);
   assert.match(projectGitSource, /GIT_OPTIONAL_LOCKS: '0'/);
   assert.match(projectGitSource, /const configuredWorkspace = project\.workspace\.trim\(\)/);
   assert.doesNotMatch(projectGitSource, /request\.body|cwdInput|workspaceInput/);
@@ -52,6 +54,7 @@ test('Project Git review is read-only and cannot bypass the active Company Proje
   assert.match(companyRuntime, /readProjectGitReview/);
   assert.match(projectGitReview, />Unstaged<\/button>/);
   assert.match(projectGitReview, />Staged<\/button>/);
+  assert.match(projectGitReview, />Branch<\/button>/);
   assert.match(projectGitReview, /Git state from this Project folder only/);
 });
 
@@ -88,10 +91,13 @@ test('unified diff parser separates files, hunks, line numbers and add/remove co
   assert.equal(files[1]?.removals, 1);
 });
 
-test('desktop installs structured diff review without adding another stylesheet', () => {
+test('desktop installs scope-aware structured diff review without adding another stylesheet', () => {
   assert.match(main, /installDiffReviewEnhancements\(\)/);
   assert.match(diffReview, /File changes review/);
-  assert.match(diffReview, /Review changes · Last turn/);
+  assert.match(diffReview, /return 'Last turn'/);
+  assert.match(diffReview, /return 'Unstaged'/);
+  assert.match(diffReview, /return 'Staged'/);
+  assert.match(diffReview, /return 'Branch'/);
   assert.match(diffReview, /Raw unified diff/);
   assert.match(diffReview, /scrollIntoView/);
   assert.match(diffReview, /validation-ok/);
