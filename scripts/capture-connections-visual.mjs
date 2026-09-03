@@ -67,7 +67,8 @@ let cdp;
 try {
   const page = await target(); cdp = new Cdp(page.webSocketDebuggerUrl); await cdp.send('Runtime.enable'); await cdp.send('Page.enable');
   await waitFor(cdp, "document.querySelector('.lc-shell-sidebar') !== null", 'Axis shell');
-  await evaluate(cdp, `document.querySelector('.lc-shell-primary-nav button[data-company-id=${JSON.stringify(acme.id)}]')?.click(); true`);
+  await waitFor(cdp, `document.querySelector('.lc-shell-primary-nav button[data-company-id=${JSON.stringify(acme.id)}]') !== null`, 'Acme context navigation');
+  await evaluate(cdp, `(() => { const button = document.querySelector('.lc-shell-primary-nav button[data-company-id=${JSON.stringify(acme.id)}]'); if (!button) throw new Error('Acme context not found'); button.click(); return true; })()`);
   await waitFor(cdp, `document.querySelector('.company-hub[data-company-id=${JSON.stringify(acme.id)}]') !== null`, 'Acme Company Hub');
   await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.company-hub-rail > button')].find((item) => item.textContent?.trim() === 'Connections'); if (!button) throw new Error('Connections section missing'); button.click(); return true; })()`);
   await waitFor(cdp, `document.querySelector('.connection-center-settings[data-company-scope=${JSON.stringify(acme.id)}]') !== null`, 'Acme Connection Center');
