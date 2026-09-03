@@ -87,8 +87,9 @@ A lacuna arquitetural é objetiva:
 - O diff atual é um `<pre>` dentro da resposta. Não há review pane, seleção de escopo Git, comentários inline, stage/unstage/revert, editor de arquivo ou terminal integrado (`app/src/AgentSurfaceV2.tsx`).
 - A seção Scheduled exibida no projeto é apenas apresentação; não existe scheduler de produto (`app/src/ProjectDetail.tsx`).
 - O Axis gerencia alguns MCPs por perfis de conta, mas ainda não possui um host MCP universal com tools, resources, prompts, UI, elicitação, aprovações e escopo por empresa.
+- A **Repo Intelligence** atual já persiste fatos de arquitetura, convenções, invariantes, procedimentos, regressões, episódios e falhas com evidência, Git SHA, fingerprints, freshness e recuperação limitada; porém sua autoridade ainda está acoplada ao `local_engineer`/worker (`src/repo-intelligence.ts`, `docs/REPO_INTELLIGENCE.md`). Ela ainda não é uma memória canônica do projeto, compartilhada de forma provider-agnostic entre Claude, Codex, API Keys, Ollama, desktop e Local Worker.
 
-Portanto, a proposta exige três fundações inseparáveis: um **runtime agêntico único para múltiplas IAs**, um **modelo de contexto multiempresa** e uma **matriz de capabilities/MCPs por conta, modelo e destino de execução**.
+Portanto, a proposta exige quatro fundações inseparáveis: um **runtime agêntico único para múltiplas IAs**, um **modelo de contexto multiempresa**, uma **matriz de capabilities/MCPs por conta, modelo e destino de execução** e uma **Project Memory nativa do Axis**, pertencente ao projeto e reutilizável por qualquer conexão autorizada da mesma empresa.
 
 ---
 
@@ -359,6 +360,23 @@ P1 só termina quando os testes E2E comprovarem o fluxo com Ollama, Local Worker
 - [ ] AUSENTE — Rules declarativas para comandos e ferramentas, separadas de hooks executáveis. **Codex**; permissions rules no **Claude**.
 - [ ] AUSENTE — Memória automática pessoal, por empresa e por projeto/repo, editável, deletável, com fonte, freshness e isolamento. **Ambos**.
 - [ ] PARCIAL — Integrar a Repo Intelligence atual ao contexto visível da sessão e permitir inspecionar/esquecer fatos. **Ambos**.
+- [ ] AUSENTE — Promover `Repo Intelligence` de capability do `local_engineer`/worker para **Project Memory** canônica do Axis, provider-agnostic e disponível a qualquer conexão/modelo autorizado no projeto. **Objetivo Axis**.
+- [ ] AUSENTE — A identidade da Project Memory deve pertencer explicitamente a `companyId + projectId + repo/workspace identity`; conta, modelo, `authKind`, sessão, desktop e Local Worker são consumidores/produtores, nunca proprietários da memória. **Objetivo Axis**.
+- [ ] AUSENTE — Separar **conhecimento durável** (`architecture`, `convention`, `invariant`, `regression`, `procedure`, `decision`, `gotcha`) de **memória episódica/handoff** (`goal`, branch/worktree, investigação, arquivos ativos/alterados, decisões, tentativas falhas, validações, questões abertas e próximo passo). **Objetivo Axis**.
+- [ ] AUSENTE — Preservar no Project Memory o modelo de evidência já existente: fatos duráveis têm `sourcePaths`, fingerprints, Git SHA observado/validado, confidence, freshness/stale e timestamps; fonte/testes/requisitos atuais sempre vencem memória. **Objetivo Axis**.
+- [ ] AUSENTE — Capturar memória automaticamente a partir do lifecycle do runtime Axis — prompt, tool calls, reads, edits, commands, Git, testes, review, erros, compactação e session end — sem depender de a IA “lembrar de lembrar”. **Objetivo Axis**.
+- [ ] AUSENTE — Consolidar somente fatos reutilizáveis; aprendizagem de arquitetura/convenção/invariante/procedimento exige evidência no repositório e resultado validado, impedindo especulação de uma IA de virar verdade compartilhada. **Objetivo Axis**.
+- [ ] AUSENTE — Recuperar memória por tarefa com capsule limitado e ranqueado por tipo, tags, paths, relevância lexical, confidence, freshness, recency e proximidade Git; nunca despejar toda a memória no prompt. **Objetivo Axis**.
+- [ ] AUSENTE — Suportar baseline de Project Memory sem chamada adicional a LLM; consolidação semântica e embeddings são upgrades opcionais e podem usar modelo local/barato quando houver ganho mensurável. **Objetivo Axis**.
+- [ ] AUSENTE — Claude Account, ChatGPT/Codex Account, Claude/OpenAI por API Key, Ollama e Local Worker devem ler e aprender na **mesma memória do projeto** quando pertencem à mesma empresa, sem importar a memória privada de cada provedor como autoridade. **Objetivo Axis**.
+- [ ] AUSENTE — Ao trocar Claude → Codex → Ollama → outra conexão no mesmo projeto, gerar/consumir handoff estruturado automaticamente para continuar a tarefa sem reanalisar do zero o que já foi investigado, decidido, tentado e validado. **Objetivo Axis**.
+- [ ] AUSENTE — Handoffs devem ter autoria/origem, session/run id, branch/worktree, timestamp e política de consumo; receber um handoff não concede permissões nem torna observações anteriores mais autoritativas que o checkout atual. **Objetivo Axis**.
+- [ ] AUSENTE — Duas sessões/worktrees concorrentes podem compartilhar conhecimento durável, mas episódios/handoffs e mutações permanecem identificados por sessão/worktree; writes de memória usam lock/transação/atomicidade para não perder aprendizado concorrente. **Objetivo Axis**.
+- [ ] AUSENTE — UI de Project Memory para buscar, inspecionar fonte, freshness, origem/modelo, editar, corrigir, pin/unpin, revalidar, esquecer e resetar memória de um projeto sem apagar conversas ou credenciais. **Objetivo Axis**.
+- [ ] AUSENTE — Isolamento de memória é por empresa/projeto mesmo quando duas empresas apontam para o mesmo Git origin ou caminho equivalente; nenhuma busca automática pode atravessar esse boundary. **Objetivo Axis**.
+- [ ] AUSENTE — Expor opcionalmente a Project Memory do Axis por **MCP stdio/on-demand** para Claude Code, Codex CLI, Cursor e outros clientes externos acessarem a mesma memória sem Docker, porta fixa ou daemon obrigatório. **Objetivo Axis**.
+- [ ] AUSENTE — Integrações externas de memória podem importar/exportar fatos e handoffs de forma revisável, mas nenhuma solução externa vira source of truth obrigatório; `ai-memory` é referência arquitetural e possível adapter opcional, não dependência central do Axis. **Objetivo Axis**.
+- [ ] AUSENTE — O produto principal não pode exigir Docker nem servidor de memória permanentemente residente; qualquer bridge externa deve preferir processo filho/stdio sob demanda ou sidecar explicitamente opcional e gerenciado. **Objetivo Axis**.
 - [ ] AUSENTE — Importar configuração/memória de outro agente de forma revisável e sem copiar credenciais. **Codex**.
 - [ ] AUSENTE — Record & Replay de um fluxo de UI para gerar uma skill reutilizável. **Codex**.
 
@@ -373,6 +391,10 @@ P1 só termina quando os testes E2E comprovarem o fluxo com Ollama, Local Worker
 - [ ] Um subagente em outro modelo não consegue invocar um MCP que existe apenas no modelo do agente principal.
 - [ ] Arquivos Markdown, HTML, PDF, imagem e planilha abrem em preview e aceitam feedback localizado.
 - [ ] Computer Use só opera apps autorizados para a empresa ativa, é visível, interrompível e não consegue furar sandbox/regras corporativas.
+- [ ] Uma tarefa iniciada por Claude pode ser continuada por Codex, API Key ou Ollama no mesmo projeto recebendo automaticamente conhecimento relevante e um handoff estruturado, sem repetir toda a exploração já concluída.
+- [ ] Arquitetura/convenções/invariantes aprendidos por uma conexão autorizada ficam disponíveis às outras conexões do mesmo projeto, enquanto memória de outra empresa permanece inacessível mesmo para o mesmo Git origin.
+- [ ] Uma alteração no código que invalida a evidência de um fato torna a memória stale/revalidável antes de reutilização; source e testes atuais sempre prevalecem.
+- [ ] Um cliente externo MCP-capable pode consultar a Project Memory do projeto por bridge local on-demand sem exigir Docker ou daemon permanente, quando essa integração estiver habilitada pelo usuário.
 
 ---
 
@@ -480,15 +502,15 @@ P1 só termina quando os testes E2E comprovarem o fluxo com Ollama, Local Worker
 
 ## Marco 1 — Fundação multiempresa e harness unificado (P1.5 + P1.1–P1.4)
 
-Primeiro consolidar empresa, conexão, projeto, sessão e recurso como escopos imutáveis. Depois construir o protocolo de eventos e tools para Ollama, Accounts e API Keys, executor local sandboxed, filesystem/patch/shell/process tools, approvals e transcript. Manter o pipeline atual atrás de feature flag somente como fallback até os E2Es do novo runtime passarem.
+Primeiro consolidar empresa, conexão, projeto, sessão e recurso como escopos imutáveis. Depois construir o protocolo de eventos e tools para Ollama, Accounts e API Keys, executor local sandboxed, filesystem/patch/shell/process tools, approvals e transcript. Os eventos desse runtime já devem nascer como fonte canônica para a futura Project Memory, evitando criar depois bridges específicas por provider. Manter o pipeline atual atrás de feature flag somente como fallback até os E2Es do novo runtime passarem.
 
 ## Marco 2 — Git e sessões seguras (P1.5–P1.6)
 
-Completar testes de isolamento entre empresas/contas, implementar worktrees, review pane e ações Git locais. Este marco libera o uso cotidiano real.
+Completar testes de isolamento entre empresas/contas, implementar worktrees, review pane e ações Git locais. Este marco libera o uso cotidiano real e fixa as identidades de repo/worktree necessárias para memória e handoff seguros.
 
-## Marco 3 — Ambiente de desenvolvimento (P2)
+## Marco 3 — Ambiente de desenvolvimento e Project Memory (P2)
 
-Adicionar terminal/editor/browser/preview, rich files, subagentes, host MCP universal e sistema de skills/plugins/hooks por empresa. Depois deste marco, Ollama e contas externas passam a compartilhar o mesmo “corpo” operacional.
+Adicionar terminal/editor/browser/preview, rich files, subagentes, host MCP universal e sistema de skills/plugins/hooks por empresa. Em paralelo, promover a Repo Intelligence existente para Project Memory provider-agnostic, adicionar handoffs entre conexões e disponibilizar uma bridge MCP stdio opcional para clientes externos. Depois deste marco, Ollama e contas externas passam a compartilhar o mesmo “corpo” operacional **e a mesma familiaridade acumulada do projeto**, sem depender da memória privada de um provider.
 
 ## Marco 4 — Automação e multimodalidade locais (P3)
 
@@ -509,6 +531,10 @@ Completar busca/organização, atalhos, notificações, acessibilidade, diagnós
 7. **Conexões diretas e atribuíveis.** Toda saída de dados vai diretamente do desktop ou Local Worker autorizado à conexão escolhida e registra empresa, `connectionId`, `authKind`, modelo, destino, finalidade e política aplicável.
 8. **Paridade entre métodos de autenticação.** Account e API Key diferem apenas na obtenção/renovação da credencial; catálogo, bindings, tools e superfícies do produto usam a mesma abstração de conexão.
 9. **Compatibilidade sem dependência exclusiva.** Importar capacidades de `AGENTS.md`, `CLAUDE.md`, skills, MCPs e perfis conhecidos é parte da centralização; nenhuma função essencial do Axis pode existir apenas dentro de um CLI concorrente.
+10. **Project Memory pertence ao Axis/projeto, não ao provider.** Claude, Codex, API Keys, Ollama, desktop e Local Worker consomem e produzem conhecimento sob a mesma identidade de empresa/projeto; trocar de IA não deve zerar familiaridade nem exigir reanálise integral.
+11. **Conhecimento durável e handoff são camadas diferentes.** Arquitetura, convenções, invariantes, decisões e procedimentos têm lifecycle de evidência/freshness; estado de tarefa, tentativas, branch, validações e próximo passo são episódicos e transferíveis entre sessões/conexões.
+12. **Memória é evidence-backed e retrieval-bounded.** Source, testes e requisitos atuais sempre vencem; fatos stale são revalidados; cada turno recebe somente um capsule relevante, nunca o store inteiro. A operação básica deve funcionar sem embeddings ou chamadas extras a LLM.
+13. **Interoperabilidade não cria dependência central.** O Axis pode expor Project Memory por MCP stdio e integrar/importar/exportar com projetos como `ai-memory`, mas a experiência principal não exige Docker, daemon de memória permanente nem servidor externo; o source of truth continua local e controlado pelo Axis.
 
 # Fontes oficiais usadas para o inventário
 
@@ -542,6 +568,11 @@ Completar busca/organização, atalhos, notificações, acessibilidade, diagnós
 - [Desktop extensions e MCP local](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop)
 - [Projects](https://support.claude.com/en/articles/9517075-what-are-projects)
 - [Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them)
+
+## Referências arquiteturais adicionais para memória compartilhada
+
+- [`docs/REPO_INTELLIGENCE.md`](./REPO_INTELLIGENCE.md) — implementação atual do Axis para memória de repositório evidence-backed, freshness e familiaridade.
+- [`akitaonrails/ai-memory`](https://github.com/akitaonrails/ai-memory) — referência para memória cross-agent, lifecycle capture, handoff estruturado, source of truth legível e interoperabilidade MCP; deve ser tratada como inspiração/integração opcional, não dependência do core.
 
 ## Manutenção deste inventário
 
