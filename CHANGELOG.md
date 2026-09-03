@@ -2,6 +2,16 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.21.1] - 2026-09-03
+
+### Added
+- Added a source-backed Codex app-server v2 isolation review, validated against upstream Codex 0.153.0, that records the native `item/tool/call` dynamic-tool handshake, cancellation path, and the exact protocol capability still required before ChatGPT/Codex Account can enter `AgentRuntime` safely.
+- Added regression coverage that pins the current Codex protocol evidence instead of relying only on a generic fail-closed error string.
+
+### Security
+- ChatGPT/Codex Account remains fail-closed for the canonical runtime. App-server v2 can intercept client dynamic tools, but it does not expose a proven exact model-visible tool allowlist or dynamic-tools-only mode; provider-managed command, file/`apply_patch`, MCP, permission and other core tool flows are assembled independently from `dynamicTools`.
+- Axis does not treat `codex exec`, read-only sandboxing, `approvalPolicy=never`, `shell_tool=false`, experimental `environments=[]`, a neutral cwd, provider approvals, or post-hoc mutation parsing as substitutes for pre-execution canonical `ToolCall` interception. No API-key, Account, provider, model, or Company fallback was added.
+
 ## [0.21.0] - 2026-09-03
 
 ### Added
