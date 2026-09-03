@@ -232,10 +232,12 @@ function AgentRuntimeLifecycleController() {
 
   async function submitDecision(resolution: AgentDecisionResolution) {
     if (!job) return;
+    const value = resolution.optionId ?? resolution.text;
+    if (!value?.trim()) return;
     const response = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/decision`, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
-      body: JSON.stringify({ selections: { [resolution.requestId]: resolution.optionId } })
+      body: JSON.stringify({ selections: { [resolution.requestId]: value } })
     });
     const payload = await response.json() as { job?: LifecycleJob; error?: string };
     if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
