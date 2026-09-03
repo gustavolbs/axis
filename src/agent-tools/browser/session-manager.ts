@@ -109,12 +109,15 @@ export class BrowserSessionManager {
     };
   }
 
-  private wrapSession(scope: BrowserSessionScope, backendSession: BrowserBackendSession): BrowserSession {
+  private createFacade(scope: BrowserSessionScope, backendSession: BrowserBackendSession): BrowserSession {
+    const manager = this;
     const optional = {
       ...(backendSession.inspect
         ? {
-            inspect: async (request: Parameters<NonNullable<BrowserBackendSession['inspect']>>[0], context: BrowserOperationContext) =>
-              await backendSession.inspect!(request, this.backendContext(scope, context))
+            inspect: async (
+              request: Parameters<NonNullable<BrowserBackendSession['inspect']>>[0],
+              context: BrowserOperationContext
+            ) => await backendSession.inspect!(request, manager.backendContext(scope, context))
           }
         : {}),
       ...(backendSession.developerRead
@@ -122,7 +125,7 @@ export class BrowserSessionManager {
             developerRead: async (
               request: Parameters<NonNullable<BrowserBackendSession['developerRead']>>[0],
               context: BrowserOperationContext
-            ) => await backendSession.developerRead!(request, this.backendContext(scope, context))
+            ) => await backendSession.developerRead!(request, manager.backendContext(scope, context))
           }
         : {}),
       ...(backendSession.screenshot
@@ -130,7 +133,7 @@ export class BrowserSessionManager {
             screenshot: async (
               request: Parameters<NonNullable<BrowserBackendSession['screenshot']>>[0],
               context: BrowserOperationContext
-            ) => await backendSession.screenshot!(request, this.backendContext(scope, context))
+            ) => await backendSession.screenshot!(request, manager.backendContext(scope, context))
           }
         : {}),
       ...(backendSession.interact
@@ -138,7 +141,7 @@ export class BrowserSessionManager {
             interact: async (
               request: Parameters<NonNullable<BrowserBackendSession['interact']>>[0],
               context: BrowserOperationContext
-            ) => await backendSession.interact!(request, this.backendContext(scope, context))
+            ) => await backendSession.interact!(request, manager.backendContext(scope, context))
           }
         : {})
     };
@@ -147,27 +150,23 @@ export class BrowserSessionManager {
       id: backendSession.id,
       scope,
       async navigate(request, context) {
-        const authorization = await thisManager.authorizeNavigation(scope, request.url, 'explicit');
+        const authorization = await manager.authorizeNavigation(scope, request.url, 'explicit');
         return await backendSession.navigate(
           { ...request, url: authorization.normalizedUrl },
-          thisManager.backendContext(scope, context)
+          manager.backendContext(scope, context)
         );
       },
       async read(request, context) {
-        return await backendSession.read(request, thisManager.backendContext(scope, context));
+        return await backendSession.read(request, manager.backendContext(scope, context));
       },
       async state(context) {
-        return await backendSession.state(thisManager.backendContext(scope, context));
+        return await backendSession.state(manager.backendContext(scope, context));
       },
       ...optional,
       async close() {
         await backendSession.close?.();
       }
     });
-
-    // Keep the methods above provider-neutral while retaining access to this manager.
-    // eslint is not used in this repository; declaration placement keeps the facade compact.
-    var thisManager: BrowserSessionManager;
   }
 
   async getOrCreate(
@@ -190,14 +189,10 @@ export class BrowserSessionManager {
       metadata: { backendId: this.backend.id, storagePartitionKey: scope.storagePartitionKey }
     });
     let pending!: Promise<BrowserSession>;
-    const manager = this;
     pending = this.backend.openSession(scope, this.backendContext(scope, context)).then(async (opened) => {
       try {
         assertBackendSessionScope(scope, opened);
-        const wrapped = manager.wrapSession(scope, opened);
-        // Bind the closure used by the facade without exposing manager internals to the backend.
-        Object.defineProperty(wrapped, '__axisBrowserManager', { value: manager, enumerable: false });
-        return manager.bindManager(wrapped, opened, scope);
+        return this.createFacade(scope, opened);
       } catch (error) {
         await opened.close?.().catch(() => undefined);
         throw error;
@@ -209,53 +204,6 @@ export class BrowserSessionManager {
     });
     this.sessions.set(scope.sessionId, { scope, session: pending });
     return await pending;
-  }
-
-  private bindManager(
-    facade: BrowserSession,
-    backendSession: BrowserBackendSession,
-    scope: BrowserSessionScope
-  ): BrowserSession {
-    const manager = this;
-    const optional = {
-      ...(backendSession.inspect
-        ? { inspect: async (request: Parameters<NonNullable<BrowserBackendSession['inspect']>>[0], context: BrowserOperationContext) =>
-            await backendSession.inspect!(request, manager.backendContext(scope, context)) }
-        : {}),
-      ...(backendSession.developerRead
-        ? { developerRead: async (request: Parameters<NonNullable<BrowserBackendSession['developerRead']>>[0], context: BrowserOperationContext) =>
-            await backendSession.developerRead!(request, manager.backendContext(scope, context)) }
-        : {}),
-      ...(backendSession.screenshot
-        ? { screenshot: async (request: Parameters<NonNullable<BrowserBackendSession['screenshot']>>[0], context: BrowserOperationContext) =>
-            await backendSession.screenshot!(request, manager.backendContext(scope, context)) }
-        : {}),
-      ...(backendSession.interact
-        ? { interact: async (request: Parameters<NonNullable<BrowserBackendSession['interact']>>[0], context: BrowserOperationContext) =>
-            await backendSession.interact!(request, manager.backendContext(scope, context)) }
-        : {})
-    };
-    return Object.freeze({
-      id: facade.id,
-      scope,
-      async navigate(request, context) {
-        const authorization = await manager.authorizeNavigation(scope, request.url, 'explicit');
-        return await backendSession.navigate(
-          { ...request, url: authorization.normalizedUrl },
-          manager.backendContext(scope, context)
-        );
-      },
-      async read(request, context) {
-        return await backendSession.read(request, manager.backendContext(scope, context));
-      },
-      async state(context) {
-        return await backendSession.state(manager.backendContext(scope, context));
-      },
-      ...optional,
-      async close() {
-        await backendSession.close?.();
-      }
-    });
   }
 
   async closeSession(axisSession: AgentSessionContext): Promise<void> {
