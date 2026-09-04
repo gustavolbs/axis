@@ -28,11 +28,23 @@ test('Project overview reuses the New Chat composer presentation instead of main
   assert.match(source, /Math\.min\(element\.scrollHeight, Math\.min\(320, window\.innerHeight \* 0\.4\)\)/);
 });
 
+test('Project model control uses the inline New Chat model popover and never opens a Connections modal', () => {
+  assert.match(source, /\/catalog`\)/);
+  assert.match(source, /className="lc-agent-popover model-popover"/);
+  assert.match(source, /className="model-provider-label">Provider or account/);
+  assert.match(source, /className="popover-back"/);
+  assert.match(source, /aria-haspopup="menu"/);
+  assert.doesNotMatch(source, /ProjectConnectionsPanel/);
+  assert.doesNotMatch(source, /connectionsOpen|setConnectionsOpen/);
+  assert.doesNotMatch(source, /Project model and connections|Model & connections/);
+  assert.doesNotMatch(source, /aria-haspopup="dialog"/);
+});
+
 test('Project overview wires existing controls instead of inventing a scheduler', () => {
   assert.match(source, /pickDirectory\(props\.project\.workspace \|\| undefined\)/);
   assert.match(source, /method: 'PATCH', body: \{ workspace: selected \}/);
   assert.match(source, /body: \{ instructions \}/);
-  assert.match(source, /setConnectionsOpen\(true\)/);
+  assert.match(source, /modelSelection/);
   assert.match(source, /method: 'PATCH', body: \{ name \}/);
   assert.match(source, /\/archive`, \{[\s\S]*method: 'POST', body: \{ archived: true \}/);
   assert.match(source, /method: 'DELETE'/);
@@ -40,20 +52,19 @@ test('Project overview wires existing controls instead of inventing a scheduler'
   assert.doesNotMatch(source, /<h2>Scheduled<\/h2>/);
 });
 
-test('Connection administration no longer occupies the narrow Project rail', () => {
+test('Connection administration does not occupy the Project overview rail or composer', () => {
   const aside = source.match(/<aside className="project-detail-panel">([\s\S]*?)<\/aside>/)?.[1] ?? '';
   assert.match(aside, /<h2>Instructions<\/h2>/);
   assert.match(aside, /<h2>Context<\/h2>/);
-  assert.doesNotMatch(aside, /ProjectConnectionsPanel/);
+  assert.doesNotMatch(aside, /ProjectConnectionsPanel|Connections/);
   assert.doesNotMatch(aside, /Search context/);
-  assert.match(source, /aria-label="Project model and connections"/);
-  assert.match(source, /<ProjectConnectionsPanel project=\{props\.project\}/);
 });
 
 test('Project actions and instruction cancellation are functional', () => {
-  for (const label of ['Rename…', 'Model & connections', 'Archive', 'Delete…']) {
+  for (const label of ['Rename…', 'Archive', 'Delete…']) {
     assert.ok(source.includes(`>${label}<`), `missing Project action: ${label}`);
   }
+  assert.ok(!source.includes('>Model & connections<'), 'Project menu must not expose the removed Connections modal');
   assert.match(source, /function cancelInstructions\(\)[\s\S]*setInstructions\(props\.project\.instructions \?\? ''\)/);
   assert.match(source, /setGoal\(''\)/);
 });
