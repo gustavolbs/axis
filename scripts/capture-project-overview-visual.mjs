@@ -166,18 +166,19 @@ try {
       railHeadings: [...document.querySelectorAll('.project-detail-panel h2')].map((item) => item.textContent?.trim()),
       connectionPanelInRail: Boolean(rail?.querySelector('.project-connection-policy')),
       hasFolderControl: Boolean(document.querySelector('.project-detail-panel [aria-label="Choose project folder"]')),
-      hasModelControl: Boolean(document.querySelector('.project-detail-model')),
+      hasSharedComposer: Boolean(document.querySelector('.lc-agent-composer .lc-agent-prompt-input')),
+      hasModelControl: Boolean(document.querySelector('.lc-agent-composer .model-effort-trigger')),
       hasGitReview: Boolean(document.querySelector('.project-git-review')),
       overflow: project ? project.scrollWidth - project.clientWidth : 999
     };
   })()`);
   if (overview?.title !== 'Project Atlas' || overview.pinPressed !== 'true' || overview.hasFavoriteControl) fail('Project header state mismatch', overview);
   if (JSON.stringify(overview.railHeadings) !== JSON.stringify(['Instructions', 'Context'])) fail('Project rail hierarchy mismatch', overview);
-  if (overview.connectionPanelInRail || !overview.hasFolderControl || !overview.hasModelControl || !overview.hasGitReview || overview.overflow > 1) fail('Project overview state mismatch', overview);
+  if (overview.connectionPanelInRail || !overview.hasFolderControl || !overview.hasSharedComposer || !overview.hasModelControl || !overview.hasGitReview || overview.overflow > 1) fail('Project overview state mismatch', overview);
   console.log(`project-overview ${JSON.stringify(overview)}`);
   await screenshot(cdp, 'project-overview-dark');
 
-  await evaluate(cdp, `document.querySelector('.project-detail-model')?.click(); true`);
+  await evaluate(cdp, `document.querySelector('.lc-agent-composer .model-effort-trigger')?.click(); true`);
   await waitFor(cdp, `document.querySelector('[aria-label="Project model and connections"] .project-connection-policy') !== null`, 'Project model and connections dialog');
   const connectionDialog = await evaluate(cdp, `(() => {
     const dialog = document.querySelector('[aria-label="Project model and connections"]');
