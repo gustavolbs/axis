@@ -6,6 +6,8 @@ on:
       - fix/project-chat-connection-scope
     paths:
       - scripts/apply-project-chat-scope-fix.mjs
+      - scripts/complete-project-chat-scope-fix.mjs
+      - scripts/finalize-project-model-scope-fix.mjs
       - .github/workflows/apply-project-chat-scope-fix.yml
 
 permissions:
@@ -22,17 +24,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: node scripts/apply-project-chat-scope-fix.mjs
+      - name: Apply scoped Project model fixes
+        run: |
+          node scripts/apply-project-chat-scope-fix.mjs
+          node scripts/complete-project-chat-scope-fix.mjs
+          node scripts/finalize-project-model-scope-fix.mjs
       - name: Install dependencies
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: npm install
-      - run: npm run check
+      - name: Build and test
+        run: npm run check
       - name: Commit validated fix
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm scripts/apply-project-chat-scope-fix.mjs .github/workflows/apply-project-chat-scope-fix.yml
-          git add app/src/AgentSurfaceV2.tsx src/agent-product-runtime.ts test/chat-provider-selector-ui-contract.test.ts test/project-chat-selection-scope-contract.test.ts
+          git rm scripts/apply-project-chat-scope-fix.mjs scripts/complete-project-chat-scope-fix.mjs scripts/finalize-project-model-scope-fix.mjs .github/workflows/apply-project-chat-scope-fix.yml
+          git add app/src/AgentSurfaceV2.tsx app/src/ProjectDetail.tsx app/src/ProjectConnectionsPanel.tsx src/agent-product-runtime.ts test/chat-provider-selector-ui-contract.test.ts test/desktop-ui-contract.test.ts test/personal-cloud-chat.test.ts test/project-overview-surface.test.ts test/project-chat-selection-scope-contract.test.ts test/project-model-scope-contract.test.ts
           git commit -m "fix: scope project model selection by interaction mode"
           git push origin HEAD:fix/project-chat-connection-scope
