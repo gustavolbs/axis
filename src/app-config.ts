@@ -23,6 +23,11 @@ export interface AppSettingsFile {
    * credential-isolation invariants. Unknown ids are pruned on read.
    */
   archivedProjectIds?: string[];
+  /**
+   * Starred projects are presentation/navigation metadata. Keeping the flag in
+   * app settings avoids weakening the ProjectStore identity/credential schema.
+   */
+  starredProjectIds?: string[];
   model?: string;
   updatedAt?: string;
 }
@@ -33,6 +38,12 @@ export function appHomePath(): string {
 
 export function appSettingsPath(): string {
   return process.env.LOCAL_CODER_SETTINGS_PATH?.trim() || path.join(appHomePath(), 'settings.json');
+}
+
+function stringIds(value: unknown): string[] | undefined {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+    : undefined;
 }
 
 function parseSettings(raw: string, source: string): AppSettingsFile | undefined {
@@ -58,9 +69,8 @@ function parseSettings(raw: string, source: string): AppSettingsFile | undefined
     activeCompanyId: typeof value.activeCompanyId === 'string' ? value.activeCompanyId.trim() : undefined,
     ollamaBaseUrl: typeof value.ollamaBaseUrl === 'string' ? value.ollamaBaseUrl.trim() : undefined,
     workerHealthPath: typeof value.workerHealthPath === 'string' ? value.workerHealthPath.trim() : undefined,
-    archivedProjectIds: Array.isArray(value.archivedProjectIds)
-      ? value.archivedProjectIds.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
-      : undefined,
+    archivedProjectIds: stringIds(value.archivedProjectIds),
+    starredProjectIds: stringIds(value.starredProjectIds),
     model: typeof value.model === 'string' ? value.model.trim() : undefined,
     updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : undefined
   };
@@ -83,6 +93,7 @@ export function writeAppSettings(settings: AppSettingsFile): void {
     ollamaBaseUrl: settings.ollamaBaseUrl?.trim() || undefined,
     workerHealthPath: settings.workerHealthPath?.trim() || undefined,
     archivedProjectIds: settings.archivedProjectIds?.length ? [...new Set(settings.archivedProjectIds)] : undefined,
+    starredProjectIds: settings.starredProjectIds?.length ? [...new Set(settings.starredProjectIds)] : undefined,
     model: settings.model?.trim() || undefined,
     updatedAt: new Date().toISOString()
   };
