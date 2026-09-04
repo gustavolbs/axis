@@ -2,7 +2,7 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
-## [0.23.2] - 2026-09-03
+## [0.23.3] - 2026-09-03
 
 ### Changed
 - Rebuilt the Project overview around the current Claude Projects information hierarchy: project composer and recent chats stay primary, while Instructions and Project knowledge form the compact right-side context rail.
@@ -11,6 +11,13 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ### Fixed
 - Wired previously decorative Project overview controls: pin persistence, rename, archive, delete confirmation, instruction editing, project-folder knowledge selection, model/Connection configuration, Chat/Cowork selection, send, and recent-chat navigation now perform their corresponding actions.
 - Removed nonfunctional Scheduled and Git review placeholders from the Project landing page so the overview no longer exposes unfinished controls or lets the Connection policy overflow and corrupt the layout.
+
+## [0.23.2] - 2026-09-03
+
+### Changed
+- Re-audited `docs/CODEX_CLAUDE_DESKTOP_PARITY.md` against merged PRs #75–#88 so the unified AgentRuntime, filesystem, process, Git, MCP, browser, Project Memory and runtime-security work is no longer mislabeled as absent.
+- Replaced the stale pre-AgentRuntime diagnosis and implementation order with the real P1 Gate state: stabilization first, then product worktree orchestration, durable restart checkpoints, a real Local Worker execution target, the accepted Codex Account blocker/live evidence, and only then the remaining P2–P4 roadmap.
+- Clarified checklist semantics with explicit BASE, PARCIAL, BLOCKER and intentional architectural-decision states while keeping live-provider, UI and product-orchestration gaps open rather than overclaiming completion.
 
 ## [0.23.1] - 2026-09-03
 
