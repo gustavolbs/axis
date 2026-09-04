@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { ArrowUp, ChevronDown, Folder, MoreHorizontal, Pencil, Pin, Plus, Search } from 'lucide-react';
+import { ArrowUp, ChevronDown, Folder, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search } from 'lucide-react';
 
 import type { AdminProject, ModelSelection } from './app-types.js';
 import { ProjectConnectionsPanel } from './ProjectConnectionsPanel.js';
@@ -12,6 +12,8 @@ export interface ProjectConversation {
   title?: string;
   input: { goal: string; projectId?: string; interactionMode?: 'chat' | 'cowork' };
 }
+
+const PINNED_PROJECTS_KEY = 'local-coder.pinned-projects';
 
 async function api<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const response = await fetch(url, {
@@ -48,6 +50,15 @@ function inheritedChatSelection(project: AdminProject): ModelSelection | undefin
   return undefined;
 }
 
+function projectInitiallyPinned(projectId: string): boolean {
+  try {
+    const value = JSON.parse(localStorage.getItem(PINNED_PROJECTS_KEY) ?? '[]') as unknown;
+    return Array.isArray(value) && value.includes(projectId);
+  } catch {
+    return false;
+  }
+}
+
 export function ProjectDetail(props: {
   project: AdminProject;
   conversations: ProjectConversation[];
@@ -62,6 +73,7 @@ export function ProjectDetail(props: {
   const [instructions, setInstructions] = useState(props.project.instructions ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [pinned, setPinned] = useState(() => projectInitiallyPinned(props.project.id));
   const conversations = useMemo(() => props.conversations
     .filter((job) => job.input.projectId === props.project.id)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [props.conversations, props.project.id]);
@@ -73,6 +85,20 @@ export function ProjectDetail(props: {
     : props.project.defaultModel.mode === 'explicit'
       ? props.project.defaultModel.providerId
       : props.project.defaultModel.mode === 'local-first' ? 'Local-first' : 'Auto';
+
+  function togglePin() {
+    const nextPinned = !pinned;
+    setPinned(nextPinned);
+    let ids: string[] = [];
+    try {
+      const value = JSON.parse(localStorage.getItem(PINNED_PROJECTS_KEY) ?? '[]') as unknown;
+      ids = Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+    } catch { /* reset malformed local preference */ }
+    const next = new Set(ids);
+    if (nextPinned) next.add(props.project.id); else next.delete(props.project.id);
+    localStorage.setItem(PINNED_PROJECTS_KEY, JSON.stringify([...next]));
+    window.dispatchEvent(new CustomEvent('local-coder:pins-changed'));
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -128,7 +154,7 @@ export function ProjectDetail(props: {
     <button className="project-detail-breadcrumb" onClick={props.onBack}>Projects <span>/</span> <strong>{companyLabel}</strong> <span>/</span> <strong>{props.project.name}</strong></button>
     <header className="project-detail-header">
       <h1><Folder size={29} />{props.project.name}</h1>
-      <div><button aria-label="Pin project"><Pin size={17} /></button><button aria-label="More project options"><MoreHorizontal size={19} /></button></div>
+      <div><button aria-label={pinned ? 'Unpin project' : 'Pin project'} aria-pressed={pinned} title={pinned ? 'Unpin project' : 'Pin project'} onClick={togglePin}>{pinned ? <PinOff size={17} /> : <Pin size={17} />}</button><button aria-label="More project options"><MoreHorizontal size={19} /></button></div>
     </header>
 
     <div className="project-detail-layout">
