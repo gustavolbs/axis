@@ -127,6 +127,9 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SOURCE_QUERY_DAYS_PAST = 3;
 const SOURCE_QUERY_DAYS_FUTURE = 14;
 const CONNECTOR_CACHE_MS = 5 * 60_000;
+const CALENDAR_CACHE_TIME_CONTRACT = 2;
+const CALENDAR_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const CALENDAR_OFFSET_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
 
 const CONNECTOR_HINTS: Record<WorkHubSourceKind, RegExp> = {
   calendar: /calendar|outlook|microsoft\s*365|agenda/i,
@@ -409,6 +412,19 @@ function bool(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function localDateKey(value: Date): string {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
+function calendarTimestamp(value: unknown, allDay: boolean): string | undefined {
+  const clean = string(value);
+  if (!clean) return undefined;
+  if (allDay) return CALENDAR_DATE_ONLY.test(clean) ? clean : undefined;
+  if (!CALENDAR_OFFSET_DATE_TIME.test(clean)) return undefined;
+  const parsed = Date.parse(clean);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+}
+
 function messageExternalId(value: string): string {
   const clean = value.trim();
   if (!clean || clean.length > 512 || /[\0\r\n]/.test(clean)) throw new Error('Work Hub message id is invalid.');
@@ -459,12 +475,13 @@ function collectorPrompt(source: WorkHubSource, systems: string[] = []): string 
   const date = (offsetDays: number) => {
     const value = new Date();
     value.setDate(value.getDate() + offsetDays);
-    return value.toISOString().slice(0, 10);
+    return localDateKey(value);
   };
   if (source.kind === 'calendar' && systems.some((system) => /microsoft\s*365/i.test(system))) {
     return [
       `Usando o MCP do Teams, diga quais são minhas reuniões entre ${date(-SOURCE_QUERY_DAYS_PAST)} e ${date(SOURCE_QUERY_DAYS_FUTURE)}. Não altere nada.`,
-      'Responda apenas JSON, sem Markdown ou explicações, no formato {"events":[{"externalId":"id estável","system":"Outlook","title":"...","start":"ISO-8601","end":"ISO-8601","allDay":false,"calendar":"...","location":"...","meetingUrl":"...","organizer":"...","status":"...","url":"..."}]}.'
+      'Para eventos com horário, preserve exatamente o instante retornado pelo calendário. start e end DEVEM ser RFC3339/ISO-8601 com fuso explícito (Z ou ±HH:MM). Nunca remova, substitua ou converta o offset do evento para outro fuso. Se o MCP não fornecer um timestamp com offset explícito, omita esse evento em vez de adivinhar. Para eventos de dia inteiro use YYYY-MM-DD.',
+      'Responda apenas JSON, sem Markdown ou explicações, no formato {"events":[{"externalId":"id estável","system":"Outlook","title":"...","start":"RFC3339 com Z ou ±HH:MM","end":"RFC3339 com Z ou ±HH:MM","allDay":false,"calendar":"...","location":"...","meetingUrl":"...","organizer":"...","status":"...","url":"..."}]}.'
     ].join('\n');
   }
   if (source.kind === 'tickets' && systems.some((system) => /jira/i.test(system))) {
@@ -486,7 +503,8 @@ function collectorPrompt(source: WorkHubSource, systems: string[] = []): string 
   if (source.kind === 'calendar') {
     return [...common,
       `Read calendar events from ${date(-SOURCE_QUERY_DAYS_PAST)} through ${date(SOURCE_QUERY_DAYS_FUTURE)} inclusive across the relevant calendar services visible to this account. Do not read outside that date range. If more than one connected calendar service is relevant, combine the results.`,
-      'Return {"events":[{"externalId":"stable remote id","system":"Google Calendar or Outlook or other actual source","title":"...","start":"ISO-8601","end":"ISO-8601","allDay":false,"calendar":"...","location":"...","meetingUrl":"...","organizer":"...","status":"...","url":"..."}]}.'
+      'For timed events, copy the canonical start/end instant from the calendar MCP without converting time zones. start and end MUST be RFC3339/ISO-8601 timestamps with an explicit Z or ±HH:MM offset. Never strip, replace, reinterpret, or normalize away the source offset. Work Hub will convert that absolute instant to the device local time only when rendering. If the MCP does not provide an offset-qualified timestamp, omit that event rather than guessing. For all-day events use YYYY-MM-DD.',
+      'Return {"events":[{"externalId":"stable remote id","system":"Google Calendar or Outlook or other actual source","title":"...","start":"RFC3339 with Z or ±HH:MM","end":"RFC3339 with Z or ±HH:MM","allDay":false,"calendar":"...","location":"...","meetingUrl":"...","organizer":"...","status":"...","url":"..."}]}.'
     ].join('\n');
   }
   if (source.kind === 'tickets') {
@@ -552,7 +570,7 @@ export class WorkHubService {
         : restored ?? { sourceId: source.id, status: 'idle', itemCount: 0 });
       const cacheRestored = this.restoreCache(source);
       if (!cacheRestored && this.states.get(source.id)?.status === 'ready') {
-        this.states.set(source.id, { ...this.states.get(source.id)!, status: 'idle', itemCount: 0 });
+        this.states.set(source.id, { ...this.states.get(source.id)!, status: 'idle', lastSyncedAt: undefined, itemCount: 0 });
       }
     }
     this.persistStates();
@@ -806,19 +824,24 @@ export class WorkHubService {
       collectedAt
     });
     if (source.kind === 'calendar') {
-      return array(value.events).flatMap((item): NormalizedCalendarEvent[] => {
+      const rawEvents = array(value.events);
+      const events = rawEvents.flatMap((item): NormalizedCalendarEvent[] => {
         const externalId = string(item.externalId) ?? string(item.id);
         const title = string(item.title) ?? string(item.summary);
-        const start = string(item.start);
-        const end = string(item.end);
+        const allDay = bool(item.allDay) ?? false;
+        const start = calendarTimestamp(item.start, allDay);
+        const end = calendarTimestamp(item.end, allDay);
         if (!externalId || !title || !start || !end) return [];
         return [{
-          ...base(externalId, string(item.system)), kind: 'calendar', title, start, end,
-          allDay: bool(item.allDay) ?? false,
+          ...base(externalId, string(item.system)), kind: 'calendar', title, start, end, allDay,
           calendar: string(item.calendar), location: string(item.location), meetingUrl: string(item.meetingUrl),
           organizer: string(item.organizer), status: string(item.status), url: string(item.url)
         }];
       });
+      if (rawEvents.length > 0 && events.length === 0) {
+        throw new Error('Calendar sync returned events without usable timezone-aware timestamps. Timed events must include an explicit Z or ±HH:MM offset; sync again after checking the calendar connector.');
+      }
+      return events;
     }
     if (source.kind === 'tickets') {
       return array(value.tickets).flatMap((item): NormalizedTicket[] => {
@@ -857,7 +880,8 @@ export class WorkHubService {
     const file = this.sources.cacheFile(source.id);
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     const temp = `${file}.tmp-${process.pid}-${Date.now()}`;
-    fs.writeFileSync(temp, `${JSON.stringify({ version: 1, sourceId: source.id, syncedAt, items }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    const calendarTimeContract = source.kind === 'calendar' ? CALENDAR_CACHE_TIME_CONTRACT : undefined;
+    fs.writeFileSync(temp, `${JSON.stringify({ version: 1, sourceId: source.id, syncedAt, calendarTimeContract, items }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     try {
       fs.renameSync(temp, file);
       try { fs.chmodSync(file, 0o600); } catch { /* best effort */ }
@@ -869,8 +893,15 @@ export class WorkHubService {
 
   private restoreCache(source: WorkHubSource): boolean {
     try {
-      const parsed = JSON.parse(fs.readFileSync(this.sources.cacheFile(source.id), 'utf8')) as { version?: number; sourceId?: string; syncedAt?: string; items?: WorkHubItem[] };
+      const parsed = JSON.parse(fs.readFileSync(this.sources.cacheFile(source.id), 'utf8')) as {
+        version?: number;
+        sourceId?: string;
+        syncedAt?: string;
+        calendarTimeContract?: number;
+        items?: WorkHubItem[];
+      };
       if (parsed.version !== 1 || parsed.sourceId !== source.id || !Array.isArray(parsed.items)) return false;
+      if (source.kind === 'calendar' && parsed.calendarTimeContract !== CALENDAR_CACHE_TIME_CONTRACT) return false;
       this.items.set(source.id, parsed.items);
       const current = this.states.get(source.id);
       this.states.set(source.id, current?.status === 'error'
