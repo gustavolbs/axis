@@ -31,12 +31,12 @@ test('Project Chat reads bounded repository evidence only through the owning Pro
 });
 
 test('Project surface keeps Company and Chat/Cowork identity visible', () => {
-  assert.match(projectDetail, /const companyId = props\.project\.companyId \|\| props\.project\.organizationId \|\| 'personal'/);
-  assert.match(projectDetail, /data-company-id=\{companyId\}/);
-  assert.match(projectDetail, /const companyLabel = props\.project\.companyName \?\? props\.project\.organizationName \?\? props\.project\.companyId/);
+  assert.match(projectDetail, /data-company-id=\{props\.project\.companyId\}/);
+  assert.match(projectDetail, /const companyLabel = props\.project\.companyName \?\? props\.project\.companyId/);
   assert.match(projectDetail, /job\.input\.interactionMode === 'cowork' \? 'Cowork' : 'Chat'/);
-  assert.match(projectDetail, /Chat reads bounded project context\. Cowork may inspect, edit and validate this folder within the Project boundary\./);
-  assert.doesNotMatch(projectDetail, /<ProjectGitReview project=\{props\.project\}/);
+  assert.match(projectDetail, /Chat can read bounded repository context from this folder\. Cowork can inspect, edit and validate it\./);
+  assert.match(projectDetail, /<ProjectGitReview project=\{props\.project\}/);
+  assert.doesNotMatch(projectDetail, /project\.organizationName \?\? project\.organizationId/);
 });
 
 test('Project Git review is read-only and cannot bypass the active Company Project boundary', () => {

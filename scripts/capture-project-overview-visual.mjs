@@ -15,14 +15,14 @@ const debugPort = 9343;
 
 fs.mkdirSync(outputDir, { recursive: true });
 fs.mkdirSync(workspace, { recursive: true });
-fs.writeFileSync(path.join(workspace, 'README.md'), '# Atlas\n\nVisual fixture for the Project overview.\n');
+fs.writeFileSync(path.join(workspace, 'README.md'), '# Atlas\n\nProject overview visual fixture.\n');
 
 new ProjectStore(projectsFile).create({
   id: 'visual-project',
   name: 'Project Atlas',
-  description: 'Claude Cowork parity visual fixture',
+  description: 'Project overview visual fixture',
   workspace,
-  instructions: 'Keep answers concise, verify repository evidence, and preserve the existing design system.',
+  instructions: 'Keep answers concise and verify repository evidence.',
   organizationId: 'personal',
   organizationName: 'Personal',
   defaultRoutingPolicy: 'local-first',
@@ -70,7 +70,7 @@ async function target() {
       const targets = await response.json();
       const page = targets.find((item) => item.type === 'page' && String(item.url).includes('app-dist/index.html'));
       if (page?.webSocketDebuggerUrl) return page;
-    } catch { /* renderer still starting */ }
+    } catch { /* renderer is still starting */ }
     await sleep(250);
   }
   throw new Error(`Electron renderer did not expose a CDP target.\n${logs}`);
@@ -146,55 +146,54 @@ try {
     localStorage.setItem('local-coder.surface', 'project');
     localStorage.setItem('local-coder.project', 'visual-project');
     localStorage.setItem('local-coder.company', 'personal');
-    localStorage.setItem('local-coder.starred-projects', JSON.stringify(['visual-project']));
-    localStorage.setItem('local-coder.project-schedules.v1', JSON.stringify([{
-      id: 'weekly-review', projectId: 'visual-project', companyId: 'personal',
-      name: 'Weekly project review', prompt: 'Review current project state and summarize risks.',
-      frequency: 'weekly', time: '09:00', weekday: 1, enabled: true,
-      createdAt: '2026-09-03T12:00:00.000Z', updatedAt: '2026-09-03T12:00:00.000Z',
-      nextRunAt: '2030-09-09T12:00:00.000Z'
-    }]));
+    localStorage.setItem('local-coder.pinned-projects', JSON.stringify(['visual-project']));
     location.reload();
     return true;
   })()`);
 
   await waitFor(cdp, `document.querySelector('.project-detail-page') !== null`, 'Project overview');
-  await evaluate(cdp, `document.documentElement.dataset.lcTheme = 'dark'; true`);
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await evaluate(cdp, `document.documentElement.dataset.lcTheme = 'dark'; true`);
   await sleep(250);
 
   const overview = await evaluate(cdp, `(() => {
-    const page = document.querySelector('.project-detail-page');
+    const project = document.querySelector('.project-detail-page');
     const rail = document.querySelector('.project-detail-panel');
-    const sections = [...document.querySelectorAll('.project-detail-panel section')];
-    const section = (name) => sections.find((item) => item.querySelector('h2')?.textContent?.trim() === name);
     return {
       title: document.querySelector('.project-detail-header h1')?.textContent?.trim(),
-      railHeadings: sections.map((item) => item.querySelector('h2')?.textContent?.trim()),
-      hasScheduledTask: section('Scheduled')?.textContent?.includes('Weekly project review'),
-      hasContext: section('Context')?.textContent?.includes('atlas-workspace'),
-      hasMemory: section('Memory')?.textContent?.includes('Enabled for this project'),
-      hasConnectionsInRail: Boolean(rail?.querySelector('[aria-label="Project model and connections"]')),
-      starPressed: document.querySelector('[aria-label="Remove project from favorites"]')?.getAttribute('aria-pressed'),
-      overflow: page ? page.scrollWidth - page.clientWidth : 999
+      pinPressed: document.querySelector('[aria-label="Unpin project"]')?.getAttribute('aria-pressed'),
+      hasFavoriteControl: Boolean(document.querySelector('[aria-label*="favorite" i], [aria-label*="star" i]')),
+      railHeadings: [...document.querySelectorAll('.project-detail-panel h2')].map((item) => item.textContent?.trim()),
+      connectionPanelInRail: Boolean(rail?.querySelector('.project-connection-policy')),
+      hasFolderControl: Boolean(document.querySelector('.project-detail-panel [aria-label="Choose project folder"]')),
+      hasModelControl: Boolean(document.querySelector('.project-detail-model')),
+      hasGitReview: Boolean(document.querySelector('.project-git-review')),
+      overflow: project ? project.scrollWidth - project.clientWidth : 999
     };
   })()`);
-  if (overview?.title !== 'Project Atlas') fail('Project title mismatch', overview);
-  if (JSON.stringify(overview?.railHeadings) !== JSON.stringify(['Instructions', 'Scheduled', 'Context', 'Memory'])) fail('Project rail hierarchy mismatch', overview);
-  if (!overview.hasScheduledTask || !overview.hasContext || !overview.hasMemory || overview.hasConnectionsInRail || overview.starPressed !== 'true' || overview.overflow > 1) fail('Project overview state mismatch', overview);
+  if (overview?.title !== 'Project Atlas' || overview.pinPressed !== 'true' || overview.hasFavoriteControl) fail('Project header state mismatch', overview);
+  if (JSON.stringify(overview.railHeadings) !== JSON.stringify(['Instructions', 'Context'])) fail('Project rail hierarchy mismatch', overview);
+  if (overview.connectionPanelInRail || !overview.hasFolderControl || !overview.hasModelControl || !overview.hasGitReview || overview.overflow > 1) fail('Project overview state mismatch', overview);
   console.log(`project-overview ${JSON.stringify(overview)}`);
   await screenshot(cdp, 'project-overview-dark');
 
-  await evaluate(cdp, `(() => { const button = document.querySelector('[aria-label="Add scheduled task"]'); button?.click(); return true; })()`);
-  await waitFor(cdp, `document.querySelector('.lc-shell-project-modal input[placeholder="Weekly project review"]') !== null`, 'Scheduled task dialog');
-  const modal = await evaluate(cdp, `(() => {
-    const dialog = document.querySelector('.lc-shell-project-modal');
+  await evaluate(cdp, `document.querySelector('.project-detail-model')?.click(); true`);
+  await waitFor(cdp, `document.querySelector('[aria-label="Project model and connections"] .project-connection-policy') !== null`, 'Project model and connections dialog');
+  const connectionDialog = await evaluate(cdp, `(() => {
+    const dialog = document.querySelector('[aria-label="Project model and connections"]');
     const box = dialog?.getBoundingClientRect();
-    return { title: dialog?.querySelector('h2')?.textContent?.trim(), left: box?.left, right: box?.right, width: innerWidth };
+    return { left: box?.left, right: box?.right, top: box?.top, bottom: box?.bottom, width: innerWidth, height: innerHeight };
   })()`);
-  if (modal?.title !== 'Schedule a task' || modal.left < 0 || modal.right > modal.width) fail('Scheduled task modal is out of bounds', modal);
-  await screenshot(cdp, 'project-schedule-dialog-dark');
-  await evaluate(cdp, `document.querySelector('.lc-shell-project-modal [aria-label="Close"]')?.click(); true`);
+  if (connectionDialog.left < 0 || connectionDialog.right > connectionDialog.width || connectionDialog.top < 0 || connectionDialog.bottom > connectionDialog.height) fail('Connections dialog is out of bounds', connectionDialog);
+  await screenshot(cdp, 'project-connections-dialog-dark');
+  await evaluate(cdp, `document.querySelector('[aria-label="Project model and connections"] [aria-label="Close"]')?.click(); true`);
+
+  await evaluate(cdp, `document.querySelector('[aria-label="More project options"]')?.click(); true`);
+  await waitFor(cdp, `document.querySelector('.lc-shell-row-menu') !== null`, 'Project actions menu');
+  const actions = await evaluate(cdp, `[...document.querySelectorAll('.lc-shell-row-menu [role="menuitem"]')].map((item) => item.textContent?.replace(/\\s+/g, ' ').trim())`);
+  if (!actions.some((item) => item?.startsWith('Rename')) || !actions.some((item) => item?.startsWith('Model & connections')) || !actions.some((item) => item?.startsWith('Archive')) || !actions.some((item) => item?.startsWith('Delete'))) fail('Project actions menu is incomplete', actions);
+  await screenshot(cdp, 'project-actions-menu-dark');
+  await evaluate(cdp, `document.querySelector('[aria-label="More project options"]')?.click(); true`);
 
   await evaluate(cdp, `document.documentElement.dataset.lcTheme = 'light'; true`);
   await sleep(180);
@@ -204,17 +203,17 @@ try {
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 820, height: 900, deviceScaleFactor: 1, mobile: false });
   await sleep(250);
   const narrow = await evaluate(cdp, `(() => {
-    const page = document.querySelector('.project-detail-page');
+    const project = document.querySelector('.project-detail-page');
     const layout = document.querySelector('.project-detail-layout');
     const rail = document.querySelector('.project-detail-panel');
     const layoutBox = layout?.getBoundingClientRect();
     const railBox = rail?.getBoundingClientRect();
     return {
-      overflow: page ? page.scrollWidth - page.clientWidth : 999,
+      overflow: project ? project.scrollWidth - project.clientWidth : 999,
       railBelowMain: Boolean(layoutBox && railBox && railBox.top > layoutBox.top + 150)
     };
   })()`);
-  if (narrow?.overflow > 1 || !narrow?.railBelowMain) fail('Narrow Project overview layout is invalid', narrow);
+  if (narrow.overflow > 1 || !narrow.railBelowMain) fail('Narrow Project overview layout is invalid', narrow);
   console.log(`project-overview-narrow ${JSON.stringify(narrow)}`);
   await screenshot(cdp, 'project-overview-narrow-dark');
 } finally {

@@ -14,9 +14,11 @@ const workHub = read('app/src/GlobalWorkHubLauncher.tsx');
 
 test('primary context navigation consumes the canonical snapshot that contains Personal', () => {
   assert.match(appRoot, /api<\{ context: \{ companies: CompanyDefinition\[\] \} \}>\('\/api\/companies\/context'\)/);
-  assert.match(appRoot, /const nextCompanies = context\.companies/);
-  assert.doesNotMatch(appRoot, /api<\{ companies: CompanyDefinition\[\] \}>\('\/api\/companies\?archived=all'\)/);
+  assert.match(appRoot, /setCompanies\(context\.companies\)/);
+  assert.match(appRoot, /api<\{ scope: ActiveCompanyScope \}>\('\/api\/companies\/active'\)/);
+  assert.match(appRoot, /activeCompanies\.map/);
   assert.match(appRoot, /company\.id === 'personal'/);
+  assert.doesNotMatch(appRoot, /axis-company-scope/);
 });
 
 test('Personal Connections shows owned cloud identities plus shared local execution', () => {
