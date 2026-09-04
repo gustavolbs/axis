@@ -267,6 +267,27 @@ button {
   color: var(--lc-blue);
 }
 
+/* lc-app.css intentionally neutralizes generic status pills with !important.
+   Auth badges are semantic identity markers, so restore their tones with a
+   more-specific important rule: API key = blue, Account = amber, Local = green. */
+.status-pill.model-auth-badge.live {
+  border-color: color-mix(in srgb, var(--lc-blue) 40%, transparent) !important;
+  background: var(--lc-blue-soft) !important;
+  color: var(--lc-blue) !important;
+}
+
+.status-pill.model-auth-badge.warn {
+  border-color: color-mix(in srgb, var(--lc-warning) 40%, transparent) !important;
+  background: var(--lc-warning-soft) !important;
+  color: var(--lc-warning) !important;
+}
+
+.status-pill.model-auth-badge.good {
+  border-color: color-mix(in srgb, var(--lc-positive) 40%, transparent) !important;
+  background: var(--lc-positive-soft) !important;
+  color: var(--lc-positive) !important;
+}
+
 /* --------------------------------------------------------------------------
    CSP-safe shell metadata and active Company scope.
    These controls are rendered by portals from main.tsx and therefore cannot
