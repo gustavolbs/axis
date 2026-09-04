@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
   Archive,
   ArrowUp,
   ChevronDown,
   Folder,
+  FolderGit2,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -11,7 +12,8 @@ import {
   Plus,
   Settings2,
   Trash2,
-  X
+  X,
+  Zap
 } from 'lucide-react';
 
 import type { AdminProject, ModelSelection } from './app-types.js';
@@ -96,11 +98,14 @@ export function ProjectDetail(props: {
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [projectName, setProjectName] = useState(props.project.name);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   const conversations = useMemo(() => props.conversations
     .filter((job) => job.input.projectId === props.project.id)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [props.conversations, props.project.id]);
 
   useEffect(() => {
+    setGoal('');
+    setMode('chat');
     setInstructions(props.project.instructions ?? '');
     setProjectName(props.project.name);
     setPinned(projectInitiallyPinned(props.project.id));
@@ -110,6 +115,13 @@ export function ProjectDetail(props: {
     setDeleteOpen(false);
     setError(undefined);
   }, [props.project.id]);
+
+  useEffect(() => {
+    const element = promptRef.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(element.scrollHeight, Math.min(320, window.innerHeight * 0.4))}px`;
+  }, [goal]);
 
   const chatSelection = inheritedChatSelection(props.project);
   const companyLabel = props.project.companyName ?? props.project.companyId;
@@ -128,8 +140,7 @@ export function ProjectDetail(props: {
     window.dispatchEvent(new CustomEvent('local-coder:pins-changed'));
   }
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
+  async function submitGoal() {
     if (!goal.trim() || busy) return;
     if (mode === 'cowork' && !props.project.workspace) {
       setError('Choose a folder for this project before starting Cowork.');
@@ -156,6 +167,17 @@ export function ProjectDetail(props: {
     } finally {
       setBusy(false);
     }
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    void submitGoal();
+  }
+
+  function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    void submitGoal();
   }
 
   function cancelInstructions() {
@@ -280,13 +302,38 @@ export function ProjectDetail(props: {
 
     <div className="project-detail-layout">
       <main>
-        <form className="project-detail-composer" onSubmit={(event) => void submit(event)}>
-          <textarea value={goal} onChange={(event) => setGoal(event.target.value)} placeholder={mode === 'chat' ? `Ask about ${props.project.name}…` : `Ask Cowork to change ${props.project.name}…`} aria-label="Project prompt" />
-          <div className="project-detail-composer-bar">
-            <button className="project-detail-plus" type="button" aria-label="Choose project folder" title="Choose project folder" onClick={() => void chooseProjectFolder()}><Plus size={18} /></button>
-            <div className="project-detail-mode" aria-label="Project mode"><button type="button" className={mode === 'chat' ? 'active' : ''} aria-pressed={mode === 'chat'} onClick={() => setMode('chat')}>Chat</button><button type="button" className={mode === 'cowork' ? 'active' : ''} aria-pressed={mode === 'cowork'} onClick={() => setMode('cowork')}>Cowork</button></div>
-            <button className="project-detail-model" type="button" title={`${companyLabel} · ${modelLabel}`} onClick={() => setConnectionsOpen(true)}>{modelLabel} <ChevronDown size={13} /></button>
-            <button className="project-detail-send" disabled={!goal.trim() || busy} aria-label="Send"><ArrowUp size={17} /></button>
+        <form className="lc-agent-composer-wrap" onSubmit={submit}>
+          <div className="lc-agent-composer">
+            <div className="composer-context-chips">
+              <span><FolderGit2 size={13} />{props.project.name}</span>
+            </div>
+            <textarea
+              ref={promptRef}
+              className="lc-agent-prompt-input"
+              value={goal}
+              onChange={(event) => setGoal(event.target.value)}
+              onKeyDown={onComposerKeyDown}
+              rows={1}
+              placeholder={mode === 'chat' ? `Ask about ${props.project.name}…` : `Ask Cowork to change ${props.project.name}…`}
+              aria-label="Project prompt"
+            />
+            <div className="composer-toolbar">
+              <div className="composer-toolbar-left">
+                <button className="composer-icon-button" type="button" aria-label="Choose project folder" title="Choose project folder" onClick={() => void chooseProjectFolder()}><Plus size={19} strokeWidth={1.7} /></button>
+                <div className="composer-mode-switch" role="radiogroup" aria-label="Project mode">
+                  <button type="button" role="radio" aria-checked={mode === 'chat'} className={mode === 'chat' ? 'selected' : ''} onClick={() => setMode('chat')}>Chat</button>
+                  <button type="button" role="radio" aria-checked={mode === 'cowork'} className={mode === 'cowork' ? 'selected' : ''} onClick={() => setMode('cowork')}>Cowork</button>
+                </div>
+              </div>
+              <div className="composer-toolbar-right">
+                <div className="composer-menu-anchor model-menu-anchor">
+                  <button className="model-effort-trigger" type="button" title={`${companyLabel} · ${modelLabel}`} onClick={() => setConnectionsOpen(true)} aria-haspopup="dialog">
+                    <Zap size={13} strokeWidth={1.7} /><span>{modelLabel}</span><ChevronDown size={13} strokeWidth={1.6} />
+                  </button>
+                </div>
+                <button className="lc-agent-send-button" type="submit" disabled={!goal.trim() || busy} aria-label="Send task"><ArrowUp size={18} strokeWidth={2} /></button>
+              </div>
+            </div>
           </div>
         </form>
         {error ? <div className="lc-shell-inline-error project-detail-error" role="status">{error}</div> : null}
