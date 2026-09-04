@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Check, ChevronDown, Folder, FolderPlus, MoreHorizontal, Pin, Search, X } from 'lucide-react';
+import { Check, ChevronDown, Folder, FolderPlus, MoreHorizontal, Search, Star, X } from 'lucide-react';
 
 import type { AdminProject, CompanyDefinition } from './app-types.js';
 import { FolderField } from './FolderField.js';
 import { UiSelect, type UiSelectOption } from './UiSelect.js';
+
+const STARRED_PROJECTS_KEY = 'local-coder.starred-projects';
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } });
@@ -21,6 +23,15 @@ function canonicalProject(project: AdminProject): AdminProject {
   };
 }
 
+function storedStarredIds(): Set<string> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STARRED_PROJECTS_KEY) ?? '[]') as unknown;
+    return new Set(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
 function relative(value: string): string {
   const hours = Math.floor((Date.now() - new Date(value).getTime()) / 3_600_000);
   if (hours < 1) return 'now';
@@ -34,6 +45,7 @@ type SortMode = 'updated' | 'name';
 export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: AdminProject) => void }) {
   const [projects, setProjects] = useState<AdminProject[]>([]);
   const [companies, setCompanies] = useState<CompanyDefinition[]>([]);
+  const [starredIds, setStarredIds] = useState<Set<string>>(storedStarredIds);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortMode>('updated');
   const [sortOpen, setSortOpen] = useState(false);
@@ -45,8 +57,6 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
   const [error, setError] = useState<string>();
 
   async function load() {
-    // Reconcile the legacy project/account metadata first so the company picker
-    // always refers to canonical company identities instead of inventing slugs.
     await api('/api/companies/context');
     const [{ projects: nextProjects }, { companies: nextCompanies }] = await Promise.all([
       api<{ projects: AdminProject[] }>('/api/projects'),
@@ -57,12 +67,21 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
   }
 
   useEffect(() => { void load().catch((next) => setError(next instanceof Error ? next.message : String(next))); }, []);
+  useEffect(() => {
+    const refresh = () => setStarredIds(storedStarredIds());
+    window.addEventListener('local-coder:starred-projects-changed', refresh);
+    return () => window.removeEventListener('local-coder:starred-projects-changed', refresh);
+  }, []);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const filtered = projects.filter((project) => !needle || project.name.toLowerCase().includes(needle) || (project.description ?? '').toLowerCase().includes(needle));
-    return [...filtered].sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : b.updatedAt.localeCompare(a.updatedAt));
-  }, [projects, query, sort]);
+    const filtered = projects.filter((project) => !project.archived && (!needle || project.name.toLowerCase().includes(needle) || (project.description ?? '').toLowerCase().includes(needle)));
+    return [...filtered].sort((a, b) => {
+      const favoriteDelta = Number(starredIds.has(b.id)) - Number(starredIds.has(a.id));
+      if (favoriteDelta) return favoriteDelta;
+      return sort === 'name' ? a.name.localeCompare(b.name) : b.updatedAt.localeCompare(a.updatedAt);
+    });
+  }, [projects, query, sort, starredIds]);
 
   const companyOptions = useMemo<UiSelectOption[]>(() => {
     const currentCompanyId = editing?.companyId;
@@ -114,9 +133,6 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
     setError(undefined);
     try {
       const isEdit = Boolean(editing);
-      // companyId/companyName are the product contract. organization* remains a
-      // write-through compatibility alias until ProjectStore's legacy file
-      // schema is migrated by a later storage-focused change.
       const companyFields = {
         companyId,
         companyName,
@@ -177,7 +193,7 @@ export function ProjectGallery({ onOpenProject }: { onOpenProject: (project: Adm
     <div className="lc-shell-project-grid">
       {visible.map((project) => <article className="lc-shell-project-card" key={project.id}>
         <button className="lc-shell-project-card-main" onClick={() => onOpenProject(project)}>
-          <span className="lc-shell-project-card-title"><Folder size={16} /><strong>{project.name}</strong><Pin size={12} className="lc-shell-project-pin" /></span>
+          <span className="lc-shell-project-card-title"><Folder size={16} /><strong>{project.name}</strong>{starredIds.has(project.id) ? <Star size={12} fill="currentColor" className="lc-shell-project-pin" aria-label="Favorite" /> : null}</span>
           {project.description ? <span className="lc-shell-project-card-description">{project.description}</span> : null}
           <span className="lc-shell-project-card-time">{project.companyName ?? project.companyId} · {relative(project.updatedAt)}</span>
         </button>
