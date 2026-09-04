@@ -2,6 +2,20 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.24.1] - 2026-09-03
+
+### Changed
+- Reworked the Chat model selector into `Connections` and `Models`: connections show the configured name (or provider fallback) with explicit authentication badges, while models show normalized names/versions and concise task-fit descriptions.
+
+### Fixed
+- Fixed OpenAI API-key Chat structured responses so the strict `axis_agent_turn` schema satisfies Structured Outputs for every required property, including nullable optional fields and JSON-encoded tool arguments.
+- Restored normal Chat for ChatGPT Personal Account in Company Personal, including Personal Projects, through the inference-only direct account transport instead of the canonical AgentRuntime tool loop.
+- Propagated cancellation to Claude Account and ChatGPT/Codex Account transports so Stop reaches the provider process.
+- Reconciled Anthropic API-key structured output with the provider-neutral strict response envelope and retained regression coverage for account routing, provider/model presentation, schema strictness, and cancellation.
+
+### Security
+- The direct ChatGPT Personal Account compatibility path is limited to normal Chat in Company Personal. Cowork and non-Personal ChatGPT/Codex AgentRuntime flows remain fail-closed until provider-native executable tools can be intercepted safely before execution.
+
 ## [0.24.0] - 2026-09-03
 
 ### Added
