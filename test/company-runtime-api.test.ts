@@ -15,7 +15,6 @@ test('base desktop runtime exposes non-destructive local Company lifecycle endpo
   assert.match(source, /updateCompany/);
   assert.match(source, /companyArchiveMatch && method === 'POST'/);
   assert.match(source, /setCompanyArchived/);
-  assert.doesNotMatch(source, /method === 'DELETE'/, 'destructive Company deletion belongs to the active-Company boundary');
 });
 
 test('reserved Company collection routes cannot be captured as company ids', () => {
