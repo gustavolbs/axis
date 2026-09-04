@@ -2,6 +2,19 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.23.5] - 2026-09-03
+
+### Changed
+- Normalized Chat provider and model presentation across API Keys and subscription Accounts: connection type is explicit in the primary label, OpenAI API models use readable names such as `GPT 5.6 Luna`, Claude API models use names such as `Fable 5.1`, Account defaults use `Default model`, and Claude rolling aliases use `Fable 5.1 · latest alias`-style labels.
+
+### Fixed
+- Fixed OpenAI API-key AgentRuntime turns failing strict Structured Outputs validation by making every declared `axis_agent_turn` field required on the wire, representing semantically optional fields as nullable, closing object schemas, and JSON-encoding arbitrary tool arguments before decoding them back into canonical Axis tool calls.
+- Restored project-less Personal ChatGPT Account normal Chat through the selected Account inference transport instead of routing that conversation into the accepted Codex AgentRuntime blocker.
+- Reconciled the Anthropic API-key structured-output compatibility layer with the new strict closed agent envelope so Claude accepts both the current JSON-string tool-argument schema and the legacy open-object shape without regressing canonical argument decoding.
+
+### Security
+- ChatGPT/Codex Account remains fail-closed for canonical Project/Cowork AgentRuntime tool cycles. The direct compatibility path is restricted to Personal project-less normal Chat with no Axis roots, resources, permissions, or capability negotiation; it does not claim that provider-native Codex tools are globally disabled.
+
 ## [0.23.4] - 2026-09-03
 
 ### Fixed
