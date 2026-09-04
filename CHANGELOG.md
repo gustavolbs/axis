@@ -2,17 +2,29 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.23.3] - 2026-09-03
+
+### Added
+- Added an Archived search field using the same compact search control as Projects, filtering archived chats and projects by title/name, workspace, Company, and original chat goal while preserving pagination and restore/delete actions.
+- Added an Anthropic-only wire adaptation that closes every object schema as required by Claude structured outputs while JSON-encoding open tool arguments and restoring them to canonical objects before Axis tool dispatch, preserving provider-neutral runtime semantics and arbitrary tool arguments.
+- Added regression coverage that verifies the Anthropic agent schema contains no open object schemas and that tool arguments round-trip back into the canonical Axis contract.
+
+### Changed
+- Archived search results reuse the existing Axis empty-state treatment when no items match instead of introducing a one-off search result surface.
+
+### Fixed
+- Fixed Anthropic API-key AgentRuntime turns failing with HTTP 400 on Claude Haiku 4.5 and other structured-output models because the canonical open `toolCalls[].arguments` object was sent directly as `additionalProperties: true`.
+
 ## [0.23.2] - 2026-09-03
 
 ### Changed
-- Normalized Chat provider/model presentation across API Key and Account connections so connection type is explicit in the primary catalog label and equivalent model families use consistent human-readable names such as `GPT 5.6 Luna`, `Fable 5.1`, `Default model`, and `Fable 5.1 · latest alias`.
+- Re-audited `docs/CODEX_CLAUDE_DESKTOP_PARITY.md` against merged PRs #75–#88 so the unified AgentRuntime, filesystem, process, Git, MCP, browser, Project Memory and runtime-security work is no longer mislabeled as absent.
+- Replaced the stale pre-AgentRuntime diagnosis and implementation order with the real P1 Gate state: stabilization first, then product worktree orchestration, durable restart checkpoints, a real Local Worker execution target, the accepted Codex Account blocker/live evidence, and only then the remaining P2–P4 roadmap.
+- Clarified checklist semantics with explicit BASE, PARCIAL, BLOCKER and intentional architectural-decision states while keeping live-provider, UI and product-orchestration gaps open rather than overclaiming completion.
+- Work Hub Sources now reuses the established Work Hub list, source icon, semantic status, Company provenance, retry, and contained error patterns instead of maintaining an unstyled parallel row treatment.
 
 ### Fixed
-- Fixed the strict `axis_agent_turn` Structured Outputs schema used by OpenAI API Key Chat: every declared object property is now required with nullable wire values where Axis semantics are optional, and arbitrary per-tool arguments travel as closed JSON text before being decoded back into canonical Axis `ToolCall` objects.
-- Restored project-less Personal ChatGPT Account conversations through the existing direct provider conversation transport instead of routing normal Chat into the accepted Codex `AgentRuntime` blocker.
-
-### Security
-- ChatGPT/Codex Account remains fail-closed for canonical Project/Cowork `AgentRuntime` tool cycles. The direct compatibility path is restricted to Personal normal Chat with an inference-only context, no Axis roots, no resources, no permissions, and no capability negotiation.
+- Restored the Work Hub Sources visual hierarchy after the multi-company refactor left the renderer on class names with no matching shared styles, fixing collapsed metadata, uncontained sync-error strips, and inconsistent source status/action alignment.
 
 ## [0.23.1] - 2026-09-03
 
@@ -102,7 +114,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added a provider-neutral Agent Runtime activity timeline that projects the frozen lifecycle protocol into running/provider progress, tool progress, read, mutation, command, validation, error, cancellation, pause and completion states without provider-specific UI semantics.
 - Added canonical approval and decision surfaces for permission requests and `AgentDecisionRequest`, including accessible native progress controls, attachment metadata rendering and keyboard-operable responses.
 - Added reusable runtime evidence panes prepared for filesystem, process, Git, MCP and browser integration, plus isolated canonical lifecycle fixtures for integration and visual verification without inventing new backend contracts.
-- Added real-Electron visual smoke coverage for light/dark themes, narrow layout, keyboard focus, pane navigation, progress, decision/approval resolution and failure states.
+- Added Agent Runtime UI contract tests and real-Electron visual smoke coverage for light/dark themes, narrow layout, keyboard focus, pane navigation, progress, decision/approval resolution and failure states.
 - Added Company-bound native `AgentProviderAdapter` composition for OpenAI API Key, Anthropic API Key, Ollama, and Claude Account connections without changing the canonical `AgentRuntime` or Axis tool contracts.
 - Added a provider-neutral structured Account protocol that translates canonical messages, attachment metadata, summarized reasoning, tool definitions/calls/results, decision requests, stop reasons, progress, errors, cancellation, and exact model identity at the provider boundary.
 - Added adapter tests covering API Key and Account authentication in the same runtime, OpenAI and Anthropic provider families, capability negotiation, canonical tool-call roundtrips, hidden-tool rejection, cancellation, provider errors, exact no-fallback model selection, Ollama local scope, Company ownership preservation, and the explicit fail-closed ChatGPT/Codex Account blocker.
@@ -151,7 +163,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added the canonical provider-agnostic agent runtime boundary for model/tool/result loops, immutable multi-company session context, tool registration, execution targets, permission gates, effective capability negotiation, progress, cancellation, timeout, lifecycle events, retry eligibility and mutation status.
 - Added a common provider adapter protocol plus a structured-output compatibility adapter so existing Account and API-key `InferenceProvider` connections can participate in the same runtime without provider-specific tool implementations.
 - Added architecture tests covering provider/auth/tool independence, Company isolation, capability refusal, provider-independent lifecycle observation, cancellation, timeout/mutation safety and exact no-fallback provider/model/execution-target selection.
-- Added a Parallel Development Handoff that freezes the runtime contracts and assigns independent ownership boundaries for filesystem, process, Git, Project Memory, MCP, browser, provider-adapter and UI workstreams.
+- Added the Parallel Development Handoff that freezes the runtime contracts and assigns independent ownership boundaries for filesystem, process, Git, Project Memory, MCP, browser, provider-adapter and UI workstreams.
 
 ### Security
 - Agent sessions now have a fail-closed canonical scope contract: Company-owned Projects, connections, roots and resources must match the immutable session Company, and missing execution targets or unavailable capabilities fail explicitly instead of selecting a broader or alternate context.
