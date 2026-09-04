@@ -48,6 +48,16 @@ if (execIndex >= 0) {
     process.stdout.write('sk-proj-example-secret-token-1234567890\n');
     process.stderr.write('Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n');
     process.exit(0);
+  } else if (prompt === 'USAGE_LIMIT') {
+    process.stderr.write([
+      'Reading additional input from stdin...',
+      'OpenAI Codex v0.153.1 -------- workdir: /Users/example/.local-coder/runtime-cwd model: gpt-5.6-sol provider: openai approval: never sandbox: read-only reasoning effort: none session id: fake-session',
+      '# SYSTEM INSTRUCTIONS',
+      'private prompt material that must not reach the user-facing error',
+      "ERROR: You've hit your usage limit. Upgrade to Pro, visit settings to purchase more credits or try again at Sep 7th, 2026 6:00 AM.",
+      "ERROR: You've hit your usage limit. Upgrade to Pro, visit settings to purchase more credits or try again at Sep 7th, 2026 6:00 AM."
+    ].join('\n'));
+    process.exit(1);
   } else if (prompt.includes('Work Hub collector') || prompt.includes('Work Hub synchronization task')) {
     if (prompt.includes('calendar events')) {
       process.stdout.write(JSON.stringify({ events: [{ externalId: 'evt-1', system: 'Outlook', title: 'Planning', start: '2026-09-02T12:00:00Z', end: '2026-09-02T13:00:00Z', allDay: false, calendar: profileName }] }));
