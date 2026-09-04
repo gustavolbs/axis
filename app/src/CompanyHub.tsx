@@ -1,19 +1,25 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import {
-  Building2,
+  CheckCircle2,
+  CircleAlert,
   FolderKanban,
   KeyRound,
   LayoutDashboard,
   Network,
+  Plus,
+  Search,
   Settings2,
   Sparkles,
-  UserRound
+  UserRound,
+  X
 } from 'lucide-react';
 
 import type { AdminProject, CompanyDefinition } from './app-types.js';
+import { CompanyIcon } from './CompanyIcon.js';
 import { ConnectionCenterSettings } from './ConnectionCenterSettings.js';
 import { CompanySourcesSettings } from './CompanySourcesSettings.js';
 import type { McpConnectorView, ProviderConnectionView } from './native.js';
+import { UiSelect, type UiSelectOption } from './UiSelect.js';
 
 export type CompanyHubSection = 'overview' | 'projects' | 'connections' | 'mcps' | 'skills' | 'settings';
 
@@ -23,6 +29,7 @@ interface CompanyHubProps {
   section: CompanyHubSection;
   onSectionChange: (section: CompanyHubSection) => void;
   onOpenProject: (project: AdminProject) => void;
+  onAddProject: () => void;
   onOpenWorkHub: (companyId: string) => void;
   onCompanyChanged: () => void;
 }
@@ -69,17 +76,35 @@ function CompanyPageHeader({ title, description, action }: {
   </header>;
 }
 
+function McpStatus({ status }: { status: McpConnectorView['status'] }) {
+  if (status === 'connected') return <span className="company-mcp-status connected"><CheckCircle2 size={14} />Connected</span>;
+  if (status === 'needs-auth') return <span className="company-mcp-status warning"><CircleAlert size={14} />Needs auth</span>;
+  if (status === 'error') return <span className="company-mcp-status warning"><CircleAlert size={14} />Error</span>;
+  return <span className="company-mcp-status muted"><CircleAlert size={14} />{status === 'disabled' ? 'Disabled' : 'Unknown'}</span>;
+}
+
+function mcpMark(name: string): string {
+  return name.trim().charAt(0).toUpperCase() || 'M';
+}
+
 export function CompanyHub({
   company,
   projects,
   section,
   onSectionChange,
   onOpenProject,
+  onAddProject,
   onOpenWorkHub,
   onCompanyChanged
 }: CompanyHubProps) {
   const [connections, setConnections] = useState<ProviderConnectionView[]>([]);
   const [mcpState, setMcpState] = useState<Record<string, CompanyConnectionSummary>>({});
+  const [mcpQuery, setMcpQuery] = useState('');
+  const [mcpAddOpen, setMcpAddOpen] = useState(false);
+  const [mcpConnectionId, setMcpConnectionId] = useState('');
+  const [mcpName, setMcpName] = useState('');
+  const [mcpUrl, setMcpUrl] = useState('');
+  const [mcpBusy, setMcpBusy] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [name, setName] = useState(company.name);
   const [description, setDescription] = useState(company.description ?? '');
@@ -88,7 +113,7 @@ export function CompanyHub({
   const isPersonal = company.id === 'personal';
 
   const scopedProjects = useMemo(() => projects
-    .filter((project) => project.companyId === company.id && !project.archived)
+    .filter((project) => (project.companyId || project.organizationId || 'personal') === company.id && !project.archived)
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)), [company.id, projects]);
 
   const ownedConnections = useMemo(() => connections
@@ -116,7 +141,7 @@ export function CompanyHub({
 
   async function loadMcps(connection: ProviderConnectionView, refresh = false) {
     if (!connection.accountProfileId || !window.lc) return;
-    setMcpState((current) => ({ ...current, [connection.id]: { connection, loading: true } }));
+    setMcpState((current) => ({ ...current, [connection.id]: { connection, ...current[connection.id], loading: true, error: undefined } }));
     try {
       const result = connection.auth === 'claude-account'
         ? await window.lc.listClaudeAccountMcps(connection.accountProfileId, refresh)
@@ -162,11 +187,61 @@ export function CompanyHub({
   }
 
   const accountConnections = ownedConnections.filter((connection) => connection.auth === 'claude-account' || connection.auth === 'chatgpt-account');
-  const ContextIcon = isPersonal ? UserRound : Building2;
+  const mcpAccountOptions = useMemo<UiSelectOption[]>(() => accountConnections.map((connection) => ({
+    value: connection.id,
+    label: connection.label,
+    description: connection.auth === 'claude-account' ? 'Claude account' : 'ChatGPT / Codex account'
+  })), [accountConnections]);
+
+  useEffect(() => {
+    if (accountConnections.length === 0) setMcpConnectionId('');
+    else if (!accountConnections.some((connection) => connection.id === mcpConnectionId)) setMcpConnectionId(accountConnections[0]!.id);
+  }, [accountConnections, mcpConnectionId]);
+
+  async function addMcp(event: FormEvent) {
+    event.preventDefault();
+    const connection = accountConnections.find((candidate) => candidate.id === mcpConnectionId);
+    if (!connection?.accountProfileId || !window.lc || !mcpName.trim() || !mcpUrl.trim()) return;
+    setMcpBusy('add');
+    setNotice(undefined);
+    try {
+      if (connection.auth === 'claude-account') {
+        await window.lc.addClaudeAccountMcp({ profileId: connection.accountProfileId, name: mcpName.trim(), url: mcpUrl.trim() });
+      } else if (connection.auth === 'chatgpt-account') {
+        await window.lc.addCodexAccountMcp({ profileId: connection.accountProfileId, name: mcpName.trim(), url: mcpUrl.trim() });
+      }
+      await loadMcps(connection, true);
+      setMcpName('');
+      setMcpUrl('');
+      setMcpAddOpen(false);
+      setNotice('MCP added.');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    } finally {
+      setMcpBusy(undefined);
+    }
+  }
+
+  async function reconnectMcp(connection: ProviderConnectionView, connector: McpConnectorView) {
+    if (!connection.accountProfileId || !window.lc) return;
+    setMcpBusy(`reconnect:${connection.id}:${connector.name}`);
+    setNotice(undefined);
+    try {
+      if (connection.auth === 'claude-account') await window.lc.loginClaudeAccountMcp(connection.accountProfileId, connector.name);
+      else if (connection.auth === 'chatgpt-account') await window.lc.loginCodexAccountMcp(connection.accountProfileId, connector.name);
+      await loadMcps(connection, true);
+    } catch (error) {
+      setNotice(errorMessage(error));
+    } finally {
+      setMcpBusy(undefined);
+    }
+  }
+
+  const mcpNeedle = mcpQuery.trim().toLocaleLowerCase();
 
   return <section className="work-hub-shell work-hub-page company-hub" data-company-id={company.id} aria-label={`${company.name} Company Hub`}>
     <aside className="work-hub-rail company-hub-rail" aria-label={`${company.name} navigation`}>
-      <div className="work-hub-rail-title"><ContextIcon size={14} style={{ color: company.color }} /> {company.name}</div>
+      <div className="work-hub-rail-title"><span style={{ color: company.color }}><CompanyIcon icon={company.icon} size={15} /></span>{company.name}</div>
       <SectionButton active={section === 'overview'} icon={<LayoutDashboard size={15} />} onClick={() => onSectionChange('overview')}>Overview</SectionButton>
       <SectionButton active={section === 'projects'} icon={<FolderKanban size={15} />} onClick={() => onSectionChange('projects')}>Projects</SectionButton>
       <SectionButton active={section === 'connections'} icon={<KeyRound size={15} />} onClick={() => onSectionChange('connections')}>Connections</SectionButton>
@@ -189,14 +264,14 @@ export function CompanyHub({
         <section className="company-overview-section">
           <div className="work-hub-section-heading">
             <h3>Recent projects</h3>
-            {scopedProjects.length > 0 ? <button type="button" onClick={() => onSectionChange('projects')}>View all</button> : null}
+            <div className="company-project-heading-actions"><button type="button" onClick={onAddProject}><Plus size={13} />Add project</button>{scopedProjects.length > 0 ? <button type="button" onClick={() => onSectionChange('projects')}>View all</button> : null}</div>
           </div>
           <div className="work-hub-list company-project-list">
             {scopedProjects.slice(0, 5).map((project) => <button type="button" className="work-hub-item" key={project.id} onClick={() => onOpenProject(project)}>
               <FolderKanban size={15} />
               <span className="work-hub-item-copy"><strong>{project.name}</strong><small>{project.workspace || 'Workspace not selected'}</small></span>
             </button>)}
-            {scopedProjects.length === 0 ? <div className="work-hub-empty company-compact-empty"><FolderKanban size={19} /><strong>No projects yet</strong><span>Projects added to this context will appear here.</span></div> : null}
+            {scopedProjects.length === 0 ? <div className="work-hub-empty company-compact-empty"><FolderKanban size={19} /><strong>No projects yet</strong><span>Add a Project to start working in this context.</span><button type="button" className="btn-secondary" onClick={onAddProject}>Add project</button></div> : null}
           </div>
         </section>
 
@@ -213,13 +288,13 @@ export function CompanyHub({
       </> : null}
 
       {section === 'projects' ? <>
-        <CompanyPageHeader title="Projects" description="Open a project to continue working in this context." />
+        <CompanyPageHeader title="Projects" description={`Projects owned by ${company.name}.`} action={<button type="button" className="btn-primary" onClick={onAddProject}><Plus size={14} />Add project</button>} />
         <div className="work-hub-list company-project-grid">
           {scopedProjects.map((project) => <button type="button" className="work-hub-item company-project-card" key={project.id} onClick={() => onOpenProject(project)}>
             <FolderKanban size={17} />
             <span className="work-hub-item-copy"><strong>{project.name}</strong><small>{project.workspace || 'Workspace not selected'}</small></span>
           </button>)}
-          {scopedProjects.length === 0 ? <div className="work-hub-empty large"><FolderKanban size={24} /><strong>No projects yet</strong><span>Projects added to {company.name} will appear here.</span></div> : null}
+          {scopedProjects.length === 0 ? <div className="work-hub-empty large company-action-empty"><FolderKanban size={24} /><strong>No projects yet</strong><span>Add the first Project for {company.name}.</span><button type="button" className="btn-secondary" onClick={onAddProject}>Add project</button></div> : null}
         </div>
       </> : null}
 
@@ -232,21 +307,27 @@ export function CompanyHub({
       </> : null}
 
       {section === 'mcps' ? <>
-        <CompanyPageHeader title="MCPs" description="Tools available through connected accounts." />
+        <CompanyPageHeader title="MCPs" description="Search, connect and manage tools exposed by this context." action={<div className="company-mcp-toolbar"><label className="connector-search"><Search size={14} /><input aria-label="Search MCPs" value={mcpQuery} onChange={(event) => setMcpQuery(event.target.value)} placeholder="Search MCPs" /></label><button type="button" className="btn-primary" disabled={accountConnections.length === 0} onClick={() => setMcpAddOpen(true)}><Plus size={14} />Add MCP</button></div>} />
         <div className="company-mcp-list">
           {accountConnections.map((connection) => {
             const state = mcpState[connection.id];
             const accountType = connection.auth === 'claude-account' ? 'Claude' : 'ChatGPT / Codex';
+            const connectors = (state?.connectors ?? []).filter((connector) => !mcpNeedle || [connector.name, connector.target ?? '', connector.detail ?? '', connector.status].some((value) => value.toLocaleLowerCase().includes(mcpNeedle)));
             return <section className="company-mcp-account" key={connection.id} data-connection-id={connection.id}>
               <header className="company-mcp-account-header">
                 <div><strong>{connection.label}</strong><small>{accountType}</small></div>
-                <button type="button" disabled={state?.loading} onClick={() => void loadMcps(connection, true)}>{state?.loading ? 'Refreshing…' : 'Refresh'}</button>
+                <button type="button" className="btn-secondary" disabled={state?.loading} onClick={() => void loadMcps(connection, true)}>{state?.loading ? 'Refreshing…' : 'Refresh'}</button>
               </header>
               {state?.error ? <div className="work-hub-error"><span>{state.error}</span></div> : null}
-              {state?.connectors?.length ? <div className="work-hub-list company-mcp-connectors">{state.connectors.map((connector) => <div className="work-hub-item" key={connector.name}>
-                <Network size={14} />
-                <span className="work-hub-item-copy"><strong>{connector.name}</strong><small>{connector.status}</small></span>
-              </div>)}</div> : state?.loading ? <div className="company-mcp-empty">Looking for MCPs…</div> : <div className="company-mcp-empty">No MCPs found</div>}
+              {connectors.length ? <div className="work-hub-list company-mcp-connectors">{connectors.map((connector) => {
+                const reconnecting = mcpBusy === `reconnect:${connection.id}:${connector.name}`;
+                return <div className="work-hub-item company-mcp-card" key={connector.name} data-status={connector.status}>
+                  <span className="company-mcp-logo" aria-hidden="true">{mcpMark(connector.name)}</span>
+                  <span className="work-hub-item-copy"><strong>{connector.name}</strong><small>{connector.target || connector.detail || `${connector.transport.toUpperCase()} transport`}</small></span>
+                  <McpStatus status={connector.status} />
+                  {connector.status === 'needs-auth' || connector.status === 'error' ? <button type="button" className="btn-secondary" disabled={reconnecting} onClick={() => void reconnectMcp(connection, connector)}>{reconnecting ? 'Connecting…' : connector.status === 'needs-auth' ? 'Connect' : 'Reconnect'}</button> : null}
+                </div>;
+              })}</div> : state?.loading ? <div className="company-mcp-empty">Looking for MCPs…</div> : state?.connectors?.length && mcpNeedle ? <div className="company-mcp-empty">No MCPs match “{mcpQuery.trim()}”.</div> : <div className="company-mcp-empty">No MCPs found</div>}
             </section>;
           })}
           {accountConnections.length === 0 ? <div className="work-hub-empty large company-action-empty">
@@ -256,6 +337,16 @@ export function CompanyHub({
             <button type="button" className="btn-secondary" onClick={() => onSectionChange('connections')}>Open Connections</button>
           </div> : null}
         </div>
+
+        {mcpAddOpen ? <div className="nested-settings-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setMcpAddOpen(false); }}>
+          <form className="nested-settings-dialog connection-create-dialog company-mcp-add-dialog" onSubmit={(event) => void addMcp(event)}>
+            <header className="lc-shell-modal-title"><div><h2>Add MCP</h2><p>Add a remote MCP server to one of {company.name}'s connected accounts.</p></div><button type="button" onClick={() => setMcpAddOpen(false)} aria-label="Close"><X size={17} /></button></header>
+            <label><span>Account</span><UiSelect ariaLabel="MCP account" value={mcpConnectionId} options={mcpAccountOptions} onChange={setMcpConnectionId} /></label>
+            <label><span>Name</span><input required autoFocus value={mcpName} onChange={(event) => setMcpName(event.target.value)} placeholder="github" /></label>
+            <label><span>Server URL</span><input required type="url" value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} placeholder="https://mcp.example.com" /></label>
+            <div className="nested-settings-dialog-actions"><button type="button" onClick={() => setMcpAddOpen(false)}>Cancel</button><button className="settings-save-button" disabled={mcpBusy === 'add' || !mcpConnectionId || !mcpName.trim() || !mcpUrl.trim()}>{mcpBusy === 'add' ? 'Adding…' : 'Add MCP'}</button></div>
+          </form>
+        </div> : null}
       </> : null}
 
       {section === 'skills' ? <>
