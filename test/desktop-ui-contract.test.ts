@@ -76,11 +76,9 @@ test('only lc-base.css defines tokens, :root and document-level elements', () =>
     assert.doesNotMatch(source, /^\s*(html|body|#root)\s*[,{]/m, `${name} must not declare html/body/#root`);
     assert.doesNotMatch(source, /^\s*--lc-[a-z0-9-]+\s*:/m, `${name} must not define design tokens`);
   }
-  // The four surfaces are specified values, not derived ones.
   assert.match(baseCss, /--lc-bg:\s*#151515/, 'chat canvas');
   assert.match(baseCss, /--lc-sidebar:\s*#111111/, 'sidebar');
   assert.match(baseCss, /--lc-surface:\s*#20201f/, 'composer and decision picker');
-  // The picker shares the composer surface rather than carrying a second token.
   assert.match(fixesCss, /\.decision-picker\s*\{[^}]*background:\s*var\(--lc-surface\)/);
   assert.match(baseCss, /html\[data-lc-theme='light'\]/);
   assert.match(baseCss, /@media \(prefers-color-scheme: light\)/);
@@ -101,17 +99,11 @@ test('the --ref-* token namespace is gone and every token used is defined', () =
 });
 
 test('[hidden] survives author display rules', () => {
-  // An author `display` declaration beats the UA stylesheet's `[hidden]` rule at
-  // any specificity, so `.new-task-button { display: flex }` used to render a
-  // `<button hidden>` as a full-width band across the top of the thread pane.
   assert.match(baseCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
   assert.doesNotMatch(agentSurface, /agent-new-task-proxy/, 'the hidden proxy button must stay deleted');
 });
 
 test('collapsed rail width comes from one token, never a hardcoded pixel pair', () => {
-  // The rail was drawn at a hardcoded 56px while macOS needs 78px to clear the
-  // traffic lights, so the New chat "+" bled into the content area and the
-  // search palette was offset by the wrong amount.
   assert.match(appRoot, /'--lc-sidebar-width':/);
   assert.match(appRoot, /platform === 'darwin' \? 78 : 56/);
   assert.doesNotMatch(css, /grid-template-columns:\s*(56|78)px/);
@@ -121,23 +113,16 @@ test('collapsed rail width comes from one token, never a hardcoded pixel pair', 
 });
 
 test('macOS keeps a reachable expand control when collapsed', () => {
-  // Hiding it left ⌘\ as the only way back, which nobody discovers.
   assert.doesNotMatch(appRoot, /hideMacCollapsedToggle/);
   assert.doesNotMatch(css, /lc-shell-icon-button\s*\{[^}]*display:\s*none/);
-  // The strip is window-level now, so collapsing cannot move or hide it.
   assert.match(appRoot, /aria-label=\{sidebarCollapsed \? 'Expand sidebar' : 'Collapse sidebar'\}/);
 });
 
 test('the window chrome strip holds the toggle and search beside the lights in both states', () => {
-  // A wordmark here rendered on top of the traffic lights, and the reference
-  // app does not have one: the strip is toggle + search only.
   assert.doesNotMatch(appRoot, /lc-shell-product-mark/, 'the wordmark must stay out of the title bar');
   assert.doesNotMatch(css, /lc-shell-product-mark/);
   assert.match(appRoot, /lc-shell-window-chrome[\s\S]{0,600}?aria-label="Search"/);
 
-  // Out of flow, so its position no longer depends on the sidebar width — a
-  // 56px rail cannot hold 76px of lights plus a button, which is why the
-  // collapsed state used to push them underneath.
   const strip = declarationsFor(fixesCss, '.lc-shell-window-chrome');
   assert.match(strip, /position:\s*fixed/);
   assert.match(strip, /top:\s*0/);
@@ -145,13 +130,10 @@ test('the window chrome strip holds the toggle and search beside the lights in b
   assert.doesNotMatch(fixesCss, /\.sidebar-collapsed \.lc-shell-window-chrome/, 'the strip must not move when collapsing');
   assert.match(fixesCss, /\.lc-shell-primary-nav\s*\{[^}]*margin-top:\s*var\(--lc-titlebar-h\)/, 'the sidebar must reserve the strip height');
 
-  // The macOS inset comes from tokens, with a gap so the toggle is not welded
-  // to the green button. Nothing may !important over it.
   assert.match(fixesCss, /\[data-platform='darwin'\] \.lc-shell-window-chrome\s*\{[^}]*padding-left:\s*calc\(var\(--lc-traffic-w\) \+ var\(--lc-traffic-gap\)\)/);
   assert.match(baseCss, /--lc-traffic-gap:\s*\d+px/);
   assert.doesNotMatch(css, /\.lc-shell-window-chrome\s*\{[^}]*padding[^;}]*!important/);
 
-  // Search moved out of the nav; no keyboard badge is rendered in a row.
   assert.doesNotMatch(appRoot, /<kbd>⌘K<\/kbd>/);
   assert.doesNotMatch(css, /lc-shell-primary-nav\s+kbd/);
 });
@@ -169,8 +151,6 @@ test('sidebar rows use the reference scale, not a denser or larger one', () => {
 });
 
 test('there is no Chats surface: conversations live in the sidebar tree', () => {
-  // Company Hub and Work Hub are first-class surfaces, while chat history still
-  // remains a nested sidebar tree rather than becoming a separate Chats route.
   assert.match(appRoot, /type Surface = [^;]*'company'[^;]*'work-hub'/);
   assert.doesNotMatch(appRoot, /type Surface = [^;]*'chats'/);
   assert.doesNotMatch(appRoot, /selectSurface\('chats'\)/);
@@ -188,7 +168,6 @@ test('project conversations nest under the project, behind a disclosure', () => 
   assert.match(appRoot, /aria-expanded=\{expanded\}/);
   assert.match(appRoot, /lc-shell-project-children/);
   assert.match(appRoot, /local-coder\.expanded-projects/);
-  // Expanded state survives a restart.
   assert.match(appRoot, /EXPANDED_KEY/);
   assert.match(fixesCss, /\.lc-shell-project-children\s*\{[^}]*border-left/);
 });
@@ -216,14 +195,11 @@ test('one dot carries unread, read and in-progress, and toggles read state', () 
 test('the footer has no Settings row: the account row opens the same modal', () => {
   assert.doesNotMatch(appRoot, /aria-label="Settings"/);
   assert.match(appRoot, /className="lc-shell-account-row" onClick=\{\(\) => openSettings\(\)\}/);
-  // The shortcut and the native menu item stay.
   assert.match(appRoot, /key === ','/);
   assert.match(desktop, /CommandOrControl\+,/);
 });
 
 test('the account avatar stays visible in the collapsed rail', () => {
-  // Every rule that hides footer button spans must exempt the avatar, otherwise
-  // the collapsed rail loses its account row entirely.
   const hiders = [...css.matchAll(/^([^{}\n]*lc-shell-sidebar-footer[^{}]*span[^{}]*)\{([^}]*)\}/gm)]
     .filter(([, , body]) => /display:\s*none/.test(body));
   assert.ok(hiders.length > 0, 'expected at least one collapsed-footer rule to check');
@@ -234,15 +210,10 @@ test('the account avatar stays visible in the collapsed rail', () => {
 });
 
 test('shell-level state classes are never used as descendants of the shell', () => {
-  // `sidebar-collapsed` and `data-shell` sit on the same element, so
-  // "[data-shell='electron'] .sidebar-collapsed" matched nothing and silently
-  // dropped every macOS collapsed-rail rule.
   assert.doesNotMatch(css, /\[data-(?:shell|platform)=[^\]]*\]\s+\.(?:sidebar-collapsed|auto-sidebar-collapsed|lc-shell-app-shell)/);
 });
 
 test('the error toast lays out its actions instead of squashing them into icon squares', () => {
-  // `.lc-agent-error-banner button { width: 26px }` applied to Retry and
-  // Settings too, so their labels overflowed and collided with the dismiss X.
   assert.match(fixesCss, /error-banner > button:not\(\[aria-label='Dismiss'\]\)\s*\{[^}]*width:\s*auto/);
   assert.match(fixesCss, /error-banner > button:not\(\[aria-label='Dismiss'\]\)\s*\{[^}]*white-space:\s*nowrap/);
   assert.match(agentSurface, /setTimeout\(\(\) => setError\(undefined\), 8_000\)/);
@@ -319,8 +290,6 @@ test('global and native shortcuts cover core Local Coder navigation', () => {
 });
 
 test('the application menu keeps the roles the clipboard shortcuts depend on', () => {
-  // A custom menu without these roles silently disables Cmd+A/C/V/X/Z on macOS:
-  // the accelerators are delivered by the menu, not by the web contents.
   assert.match(desktop, /\{ role: 'editMenu' \}/, 'no Edit menu means no copy, paste or select-all');
   assert.match(desktop, /\{ role: 'windowMenu' \}/);
   assert.match(desktop, /Menu\.setApplicationMenu/);
@@ -335,8 +304,6 @@ test('desktop restores window bounds and avoids white boot flash', () => {
   assert.match(desktop, /backgroundColor:\s*'#151515'/);
   assert.match(desktop, /show:\s*false/);
   assert.match(desktop, /once\('ready-to-show'/);
-  // The window background, the meta colour and --lc-bg must agree or the app
-  // flashes a different colour before the stylesheet lands.
   assert.match(indexHtml, /theme-color" content="#151515"/);
   assert.doesNotMatch(indexHtml, /<style/, "CSP is style-src 'self'; inline <style> would be blocked");
 });
@@ -386,7 +353,6 @@ test('provider-neutral activity uses a compact expandable GPT/Claude-style timel
 test('send affordance is text-driven, and only Cowork needs a folder', () => {
   assert.match(agentSurface, /canSubmit=\{Boolean\(goal\.trim\(\)\)\}/);
   assert.match(agentSurface, /if \(!goal\.trim\(\)\) return/);
-  // Chat is one inference that reads no files, so it sends without a folder.
   assert.match(agentSurface, /if \(!effectiveWorkspace && mode === 'cowork'\)/);
   assert.match(agentSurface, /setExtrasOpen\(true\)/);
 });
@@ -417,7 +383,7 @@ test('model menu is catalog-driven, keeps branded built-ins, and exposes Effort 
   for (const label of ['Ollama', 'Claude', 'GPT']) assert.match(agentSurface, new RegExp(`return '${label}'`));
   assert.match(agentSurface, /label: 'Local-first'/);
   assert.match(agentSurface, /Start on Ollama; ask before bounded cloud escalation/);
-  assert.match(agentSurface, /mode\.reason \?\? 'unavailable'/, 'provider discovery failures must be visible');
+  assert.match(agentSurface, /mode\.reason \?\? 'Unavailable'/, 'provider discovery failures must be visible');
   assert.match(agentSurface, /catalogHasSelection\(next, current\)/, 'catalog refresh must preserve a valid explicit model');
   assert.doesNotMatch(agentSurface, /<strong>Auto<\/strong>/, 'Auto must not appear as a fifth provider mode');
   assert.match(agentSurface, /<strong>Effort<\/strong>/);
@@ -434,23 +400,18 @@ test('model menu is catalog-driven, keeps branded built-ins, and exposes Effort 
 
 test('the empty state is a greeting and nothing else', () => {
   assert.match(agentSurface, /getProfile\(\)/);
-  // The reference app shows no breadcrumb and no explanatory paragraph; those
-  // were most of the content on the screen.
   assert.doesNotMatch(agentSurface, /empty-project-breadcrumb/);
   assert.doesNotMatch(css, /empty-project-breadcrumb/);
   assert.doesNotMatch(agentSurface, /Start a chat in this project/);
   assert.doesNotMatch(agentSurface, /Describe what you want to build/);
-  // The mark is inline with the greeting, not stacked above it.
   assert.match(fixesCss, /\.lc-agent-empty-start h1\s*\{[^}]*display:\s*flex/);
   assert.match(css, /padding-top:\s*var\(--lc-titlebar-h\)/);
 });
 
 test('suggestions sit below the composer, with an icon and a real surface', () => {
-  // Rendered after <Composer/>, not inside the empty state above it.
   const composerAt = agentSurface.indexOf('<Composer');
   const suggestionsAt = agentSurface.indexOf('<Suggestions');
   assert.ok(composerAt > 0 && suggestionsAt > composerAt, 'Suggestions must render after the composer');
-  // EmptyStart no longer receives the callback, so it cannot render them above.
   assert.doesNotMatch(agentSurface, /function EmptyStart\([^)]*onSuggestion/);
 
   const pill = declarationsFor(fixesCss, '.lc-agent-quick-actions button');
@@ -465,10 +426,8 @@ test('Chat and Cowork are distinct modes and Cowork is bound to a folder', () =>
   assert.match(agentSurface, /local-coder\.composer-mode/, 'the choice must survive a restart');
   assert.match(agentSurface, /composer-mode-switch/);
   assert.match(agentSurface, /role="radiogroup"/);
-  // Switching to Cowork without a folder asks for one instead of failing later.
   assert.match(agentSurface, /next === 'cowork' && !selectedProject && !workspace\.trim\(\)/);
   assert.match(agentSurface, /'Project or folder'/);
-  // Chat shows starting points; Cowork says which folder it will act on.
   assert.match(agentSurface, /mode === 'chat' \? <Suggestions/);
   assert.match(agentSurface, /lc-agent-cowork-hint/);
   assert.match(fixesCss, /\.composer-mode-switch button\.selected/);
@@ -527,8 +486,6 @@ test('appearance syncs with Electron nativeTheme and every preview has its own r
   assert.match(settingsModal, /window\.lc\?\.setTheme/);
   assert.match(desktop, /nativeTheme\.on\('updated'/);
   assert.match(preload, /local-coder:theme-changed/);
-  // theme-${mode} is built from a template literal, so these classes are easy to
-  // lose to dead-CSS pruning; System had no rule and rendered a stray diagonal.
   for (const mode of ['light', 'dark', 'system']) {
     assert.match(fixesCss, new RegExp(`\\.theme-preview\\.theme-${mode}\\s*\\{`), `missing preview: ${mode}`);
   }
@@ -549,16 +506,12 @@ test('typography scale, casing and scrollbars stay on the token system', () => {
   assert.match(fixesCss, /\.page-title[\s\S]*?font-family:\s*var\(--lc-font-serif\)/);
   assert.match(fixesCss, /text-transform:\s*none/);
   assert.match(baseCss, /scrollbar-color/);
-  // Page titles are serif 400; the Runs heading used to be Inter 580, which put
-  // it on a different scale from every other route.
   assert.match(fixesCss, /\.page-title\s*\{[^}]*font-weight:\s*400\s*;/);
 });
 
 test('renderer zoom is not forced and the thread owns its scroll', () => {
   assert.doesNotMatch(desktop, /setZoomFactor\(/);
   assert.match(appCss, /\.lc-agent-thread\s*\{[\s\S]*?overflow-y:\s*auto/);
-  // The agent's own right rail is gone with the retired AgentSurface, so the
-  // grid no longer reserves a phantom column for it.
   assert.doesNotMatch(css, /lc-agent-sidebar/);
   assert.equal(fs.existsSync(path.join(root, 'app/src/AgentSurface.tsx')), false, 'the superseded agent surface must stay deleted');
   assert.doesNotMatch(agentSurface, /from '\.\/AdminPanel\.js'/, 'AdminPanel.tsx does not exist; types live in app-types');
