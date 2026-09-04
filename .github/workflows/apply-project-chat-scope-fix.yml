@@ -1,0 +1,36 @@
+name: Apply Project Chat scope fix
+
+on:
+  push:
+    branches:
+      - fix/project-chat-connection-scope
+    paths:
+      - scripts/apply-project-chat-scope-fix.mjs
+      - .github/workflows/apply-project-chat-scope-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/project-chat-connection-scope
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: node scripts/apply-project-chat-scope-fix.mjs
+      - run: npm ci
+      - run: npm run check
+      - name: Commit validated fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm scripts/apply-project-chat-scope-fix.mjs .github/workflows/apply-project-chat-scope-fix.yml
+          git add app/src/AgentSurfaceV2.tsx src/agent-product-runtime.ts test/chat-provider-selector-ui-contract.test.ts test/project-chat-selection-scope-contract.test.ts
+          git commit -m "fix: scope project model selection by interaction mode"
+          git push origin HEAD:fix/project-chat-connection-scope
