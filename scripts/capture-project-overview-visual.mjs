@@ -165,34 +165,47 @@ try {
       hasFavoriteControl: Boolean(document.querySelector('[aria-label*="favorite" i], [aria-label*="star" i]')),
       railHeadings: [...document.querySelectorAll('.project-detail-panel h2')].map((item) => item.textContent?.trim()),
       connectionPanelInRail: Boolean(rail?.querySelector('.project-connection-policy')),
+      hasConnectionsModal: Boolean(document.querySelector('[aria-label="Project model and connections"]')),
       hasFolderControl: Boolean(document.querySelector('.project-detail-panel [aria-label="Choose project folder"]')),
       hasSharedComposer: Boolean(document.querySelector('.lc-agent-composer .lc-agent-prompt-input')),
-      hasModelControl: Boolean(document.querySelector('.lc-agent-composer .model-effort-trigger')),
+      hasModelControl: Boolean(document.querySelector('.lc-agent-composer .model-effort-trigger[aria-haspopup="menu"]')),
       hasGitReview: Boolean(document.querySelector('.project-git-review')),
       overflow: project ? project.scrollWidth - project.clientWidth : 999
     };
   })()`);
   if (overview?.title !== 'Project Atlas' || overview.pinPressed !== 'true' || overview.hasFavoriteControl) fail('Project header state mismatch', overview);
   if (JSON.stringify(overview.railHeadings) !== JSON.stringify(['Instructions', 'Context'])) fail('Project rail hierarchy mismatch', overview);
-  if (overview.connectionPanelInRail || !overview.hasFolderControl || !overview.hasSharedComposer || !overview.hasModelControl || !overview.hasGitReview || overview.overflow > 1) fail('Project overview state mismatch', overview);
+  if (overview.connectionPanelInRail || overview.hasConnectionsModal || !overview.hasFolderControl || !overview.hasSharedComposer || !overview.hasModelControl || !overview.hasGitReview || overview.overflow > 1) fail('Project overview state mismatch', overview);
   console.log(`project-overview ${JSON.stringify(overview)}`);
   await screenshot(cdp, 'project-overview-dark');
 
   await evaluate(cdp, `document.querySelector('.lc-agent-composer .model-effort-trigger')?.click(); true`);
-  await waitFor(cdp, `document.querySelector('[aria-label="Project model and connections"] .project-connection-policy') !== null`, 'Project model and connections dialog');
-  const connectionDialog = await evaluate(cdp, `(() => {
-    const dialog = document.querySelector('[aria-label="Project model and connections"]');
-    const box = dialog?.getBoundingClientRect();
-    return { left: box?.left, right: box?.right, top: box?.top, bottom: box?.bottom, width: innerWidth, height: innerHeight };
+  await waitFor(cdp, `document.querySelector('.lc-agent-composer .model-popover') !== null`, 'Project inline model selector');
+  const modelSelector = await evaluate(cdp, `(() => {
+    const popover = document.querySelector('.lc-agent-composer .model-popover');
+    const box = popover?.getBoundingClientRect();
+    return {
+      role: popover?.getAttribute('role'),
+      providerLabel: document.querySelector('.lc-agent-composer .model-popover .model-provider-label')?.textContent?.trim(),
+      hasConnectionsDialog: Boolean(document.querySelector('[aria-label="Project model and connections"]')),
+      left: box?.left,
+      right: box?.right,
+      top: box?.top,
+      bottom: box?.bottom,
+      width: innerWidth,
+      height: innerHeight
+    };
   })()`);
-  if (connectionDialog.left < 0 || connectionDialog.right > connectionDialog.width || connectionDialog.top < 0 || connectionDialog.bottom > connectionDialog.height) fail('Connections dialog is out of bounds', connectionDialog);
-  await screenshot(cdp, 'project-connections-dialog-dark');
-  await evaluate(cdp, `document.querySelector('[aria-label="Project model and connections"] [aria-label="Close"]')?.click(); true`);
+  if (modelSelector.role !== 'menu' || modelSelector.providerLabel !== 'Provider or account' || modelSelector.hasConnectionsDialog) fail('Project model selector is not the inline New Chat popover', modelSelector);
+  if (modelSelector.left < 0 || modelSelector.right > modelSelector.width || modelSelector.top < 0 || modelSelector.bottom > modelSelector.height) fail('Project model selector is out of bounds', modelSelector);
+  await screenshot(cdp, 'project-model-selector-dark');
+  await evaluate(cdp, `document.querySelector('.lc-agent-composer .model-effort-trigger')?.click(); true`);
+  await waitFor(cdp, `document.querySelector('.lc-agent-composer .model-popover') === null`, 'Project model selector close');
 
   await evaluate(cdp, `document.querySelector('[aria-label="More project options"]')?.click(); true`);
   await waitFor(cdp, `document.querySelector('.lc-shell-row-menu') !== null`, 'Project actions menu');
   const actions = await evaluate(cdp, `[...document.querySelectorAll('.lc-shell-row-menu [role="menuitem"]')].map((item) => item.textContent?.replace(/\\s+/g, ' ').trim())`);
-  if (!actions.some((item) => item?.startsWith('Rename')) || !actions.some((item) => item?.startsWith('Model & connections')) || !actions.some((item) => item?.startsWith('Archive')) || !actions.some((item) => item?.startsWith('Delete'))) fail('Project actions menu is incomplete', actions);
+  if (!actions.some((item) => item?.startsWith('Rename')) || !actions.some((item) => item?.startsWith('Archive')) || !actions.some((item) => item?.startsWith('Delete')) || actions.some((item) => item?.startsWith('Model & connections'))) fail('Project actions menu is incomplete', actions);
   await screenshot(cdp, 'project-actions-menu-dark');
   await evaluate(cdp, `document.querySelector('[aria-label="More project options"]')?.click(); true`);
 
