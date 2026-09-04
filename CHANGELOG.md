@@ -5,6 +5,9 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ## [0.23.2] - 2026-09-03
 
 ### Changed
+- Re-audited `docs/CODEX_CLAUDE_DESKTOP_PARITY.md` against merged PRs #75–#88 so the unified AgentRuntime, filesystem, process, Git, MCP, browser, Project Memory and runtime-security work is no longer mislabeled as absent.
+- Replaced the stale pre-AgentRuntime diagnosis and implementation order with the real P1 Gate state: stabilization first, then product worktree orchestration, durable restart checkpoints, a real Local Worker execution target, the accepted Codex Account blocker/live evidence, and only then the remaining P2–P4 roadmap.
+- Clarified checklist semantics with explicit BASE, PARCIAL, BLOCKER and intentional architectural-decision states while keeping live-provider, UI and product-orchestration gaps open rather than overclaiming completion.
 - Work Hub Sources now reuses the established Work Hub list, source icon, semantic status, Company provenance, retry, and contained error patterns instead of maintaining an unstyled parallel row treatment.
 
 ### Fixed
