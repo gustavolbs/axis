@@ -356,6 +356,33 @@ export class CompanyContextStore {
     return cloneCompany(id, next);
   }
 
+  deleteCompany(idValue: string): CompanyDefinition {
+    const id = cleanCompanyId(idValue, 'Company id');
+    if (!id || id === PERSONAL_COMPANY_ID) throw new Error('Personal cannot be deleted.');
+    const state = this.read();
+    const current = hasOwn(state.companies, id) ? state.companies[id] : undefined;
+    if (!current) throw new Error(`Company not found: ${id}`);
+    const boundConnectionIds = Object.entries(state.connectionBindings)
+      .filter(([, companyId]) => companyId === id)
+      .map(([connectionId]) => connectionId);
+    if (boundConnectionIds.length > 0) {
+      throw new Error(`Company ${current.name} still owns ${boundConnectionIds.length} connection${boundConnectionIds.length === 1 ? '' : 's'}. Remove or move them before deleting this context.`);
+    }
+
+    const deleted = cloneCompany(id, current);
+    delete state.companies[id];
+    const now = new Date().toISOString();
+    Object.entries(state.companies)
+      .filter(([candidateId, company]) => candidateId !== PERSONAL_COMPANY_ID && !company.archivedAt)
+      .sort(([, left], [, right]) => left.order - right.order)
+      .forEach(([candidateId, company], order) => {
+        if (company.order !== order) state.companies[candidateId] = { ...company, order, updatedAt: now };
+      });
+    state.updatedAt = now;
+    this.write(state);
+    return deleted;
+  }
+
   reorderCompanies(ids: string[]): CompanyDefinition[] {
     const state = this.read();
     const active = Object.entries(state.companies)
