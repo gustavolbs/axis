@@ -12,6 +12,13 @@ import type { LocalEngineerResult } from './local-engineer.js';
 import type { EngineeringProgress } from './engineering-progress.js';
 import type { PremiumDecisionRequest, PremiumEngineerResult } from './premium-agent.js';
 import type {
+  AgentDecisionRequest,
+  AgentDecisionResolution,
+  AgentMessage,
+  AgentSessionContext
+} from './agent-runtime/index.js';
+import type { MutationStatus } from './agent-runtime/contracts.js';
+import type {
   ProjectEngineerInput,
   ProjectEscalationChoice,
   ProjectEscalationGuidance,
@@ -84,6 +91,51 @@ export interface ChatTurnOverrides {
   reasoningEffort?: StandaloneReasoningEffort;
 }
 
+/**
+ * Serializable snapshot of the pending session state for durable restart.
+ * Captures enough to restore a paused decision session or detect uncertain mutations.
+ *
+ * Invariants:
+ * - decisionRequest is present only when the session is paused waiting for a decision.
+ * - resolution is present only when the decision has been resolved by the user.
+ * - mutationLedger tracks every tool call with mutation risk across the session.
+ */
+export interface PendingSessionCheckpoint {
+  readonly sessionId: string;
+  readonly companyId: string;
+  readonly projectId?: string;
+  readonly connectionId: string;
+  readonly modelId: string;
+  /** Snapshot of the immutable session context at checkpoint time. */
+  readonly sessionContext: AgentSessionContext;
+  /** Transcript messages at the time of checkpoint. */
+  readonly transcript: readonly AgentMessage[];
+  readonly turnIndex: number;
+  /** Decision request when paused; absent when running or resolved. */
+  readonly decisionRequest?: AgentDecisionRequest;
+  /** Resolution applied by user before checkpoint; undefined means awaiting user. */
+  readonly resolution?: AgentDecisionResolution;
+  /** All tool calls with mutation risk that were executed up to this checkpoint. */
+  readonly mutationLedger: readonly MutationLedgerEntry[];
+  /** Guidance accumulated across the conversation. */
+  readonly guidance?: string;
+  readonly checkpointAt: string;
+}
+
+/**
+ * Tracks one tool call's mutation lifecycle. Persisted so restart can distinguish
+ * committed/rolled-back mutations (safe to skip) from started-unknown mutations
+ * (must not be auto-retried without user confirmation).
+ */
+export interface MutationLedgerEntry {
+  readonly callId: string;
+  readonly toolName: string;
+  readonly mutationStatus: MutationStatus;
+  readonly startedAt: string;
+  readonly resolvedAt?: string;
+  readonly resolvedBy?: 'user' | 'agent' | 'unknown';
+}
+
 export interface StandaloneJobSnapshot {
   id: string;
   status: StandaloneJobStatus;
@@ -105,6 +157,17 @@ export interface StandaloneJobSnapshot {
   error?: string;
   rounds: number;
   events: StandaloneJobEvent[];
+  /**
+   * Durable checkpoint of the pending AgentRuntime session. Restored on app restart
+   * to resume paused decision sessions and to surface uncertain mutations instead of
+   * silently re-running them.
+   */
+  pendingCheckpoint?: PendingSessionCheckpoint;
+  /**
+   * Per-tool-call mutation ledger. Survives restart; used to disambiguate
+   * committed/rolled-back from started-unknown mutations on recovery.
+   */
+  mutationLedger?: MutationLedgerEntry[];
 }
 
 type WaitingInput = {
@@ -204,7 +267,9 @@ function snapshot(job: JobInternal): StandaloneJobSnapshot {
     result: job.result,
     error: job.error,
     rounds: job.rounds,
-    events: [...job.events]
+    events: [...job.events],
+    pendingCheckpoint: job.pendingCheckpoint,
+    mutationLedger: job.mutationLedger ? [...job.mutationLedger] : undefined
   };
 }
 
@@ -244,12 +309,23 @@ export class StandaloneJobManager {
   private readonly lastActivityPublish = new Map<string, { action: string; at: number }>();
 
   constructor(
-    private readonly execution: Pick<
+    private execution: Pick<
       ExecutionBackend,
       'executeEngineer' | 'prepareEscalation' | 'consultEscalation'
     >,
     private readonly stateDir?: string
   ) {}
+
+  /**
+   * Complete the jobs → product execution → AgentRuntime cycle after all objects
+   * exist. Wiring is intentionally explicit so checkpoint calls and job execution
+   * always use this same manager instance.
+   */
+  setExecution(
+    execution: Pick<ExecutionBackend, 'executeEngineer' | 'prepareEscalation' | 'consultEscalation'>
+  ): void {
+    this.execution = execution;
+  }
 
   async restore(): Promise<void> {
     if (!this.stateDir) return;
@@ -299,6 +375,63 @@ export class StandaloneJobManager {
   get(id: string): StandaloneJobSnapshot | undefined {
     const job = this.jobs.get(id);
     return job ? snapshot(job) : undefined;
+  }
+
+  /**
+   * Durable checkpoint of the pending session. Persisted to disk so the
+   * paused decision request can be restored verbatim after a restart and
+   * the mutation ledger is available to distinguish committed from uncertain
+   * mutations on recovery.
+   */
+  setPendingCheckpoint(id: string, checkpoint: PendingSessionCheckpoint | undefined): Promise<void> {
+    const job = this.jobs.get(id);
+    if (!job) return Promise.resolve();
+    job.pendingCheckpoint = checkpoint;
+    job.updatedAt = new Date().toISOString();
+    return this.schedulePersist();
+  }
+
+  getPendingCheckpoint(id: string): PendingSessionCheckpoint | undefined {
+    return this.jobs.get(id)?.pendingCheckpoint;
+  }
+
+  /**
+   * Append or update a mutation ledger entry. Used by AgentProductRuntime to
+   * track the mutation status of each potentially-mutating tool call. Persisted
+   * on every update so a restart can distinguish committed/rolled-back from
+   * started-unknown mutations instead of auto-retrying uncertain ones.
+   */
+  recordMutation(jobId: string, entry: MutationLedgerEntry): void {
+    const job = this.jobs.get(jobId);
+    if (!job) return;
+    if (!job.mutationLedger) job.mutationLedger = [];
+    const existing = job.mutationLedger.findIndex((item) => item.callId === entry.callId);
+    if (existing >= 0) {
+      job.mutationLedger[existing] = entry;
+    } else {
+      job.mutationLedger.push(entry);
+    }
+    job.updatedAt = new Date().toISOString();
+    void this.schedulePersist();
+  }
+
+  getMutationLedger(id: string): readonly MutationLedgerEntry[] {
+    return this.jobs.get(id)?.mutationLedger ?? [];
+  }
+
+  /**
+   * Find persisted jobs whose pending session was paused (waiting for a decision)
+   * or whose mutations are still uncertain. Used by AgentProductRuntime to rebuild
+   * a resume queue after restart.
+   */
+  listRestorablePausedJobs(): readonly StandaloneJobSnapshot[] {
+    return this.list().filter((job) => {
+      if (job.status === 'waiting-decision') return true;
+      if (job.mutationLedger?.some((entry) => entry.mutationStatus === 'started' || entry.mutationStatus === 'unknown')) {
+        return true;
+      }
+      return false;
+    });
   }
 
   create(input: StandaloneJobInput): StandaloneJobSnapshot {

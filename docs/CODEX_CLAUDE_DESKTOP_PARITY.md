@@ -19,15 +19,15 @@ Baseline pesquisado: **2026-09-02**. Estado de implementação re-auditado em **
 - Adapters admitidos não podem executar filesystem/shell/MCP escondido fora do protocolo canônico.
 - Runtime policies são persistentes e monotônicas: Company → Project → sessão só pode reduzir autoridade; deny vence.
 - Há Effective Context canônico e secret-free, security audit primitives e redaction transversal antes de UI/Memory/audit.
+- Checkpoints duráveis de sessão e mutation ledger preservam decisões pendentes no restart e distinguem mutações resolvidas de estado iniciado/indeterminado.
 
 ### Blockers para P1 PASS
 
 1. **P0 — product task worktree orchestration:** compor/reabrir managed worktree por job antes da sessão mutativa e tornar esse checkout o root exato do AgentRuntime.
-2. **P0 — durable runtime checkpoint/restart:** persistir pending approval/tool/mutation/background process para restart sem replay de mutação incerta.
-3. **P0 — real Local Worker execution target:** executar tools pelo `AgentExecutionTarget` real do Worker, em vez de apenas usar configuração/health/model discovery.
-4. **P0 — ChatGPT/Codex Account G2:** continuar fail-closed até todos os provider-managed model-visible tools poderem ser suprimidos ou interceptados antes da execução.
-5. **P1 — live Connection matrix:** provar opt-in duas Accounts, duas API Keys do mesmo provider e Account + API Key com Connections reais, mantendo evidência redigida.
-6. **P1 — live full-loop UI evidence:** dirigir a Runtime UI pelo engineering loop de produto completo, não apenas por fixtures canônicas.
+2. **P0 — real Local Worker execution target:** executar tools pelo `AgentExecutionTarget` real do Worker, em vez de apenas usar configuração/health/model discovery.
+3. **P0 — ChatGPT/Codex Account G2:** continuar fail-closed até todos os provider-managed model-visible tools poderem ser suprimidos ou interceptados antes da execução.
+4. **P1 — live Connection matrix:** provar opt-in duas Accounts, duas API Keys do mesmo provider e Account + API Key com Connections reais, mantendo evidência redigida.
+5. **P1 — live full-loop UI evidence:** dirigir a Runtime UI pelo engineering loop de produto completo, não apenas por fixtures canônicas.
 
 Nenhum item abaixo é marcado como BASE apenas porque existe um tipo, mock ou fixture. Quando a camada de runtime existe mas falta composição/UX/E2E, o status permanece PARCIAL ou BLOCKER.
 
@@ -436,7 +436,7 @@ Antes de ampliar o roadmap, testar o app pós-#88 pelo caminho real e corrigir r
 1. Product task worktree orchestration.
 2. Durable runtime checkpoint/restart.
 3. Real Local Worker `AgentExecutionTarget`.
-4. Manter G2 fail-closed até existir upstream contract seguro; reavaliar quando Codex expuser tool isolation suficiente.
+2. Manter G2 fail-closed até existir upstream contract seguro; reavaliar quando Codex expuser tool isolation suficiente.
 5. Criar live Connection matrix opt-in e live full-loop UI evidence.
 
 O P1 só muda para PASS depois desses pontos e do novo gate.

@@ -47,6 +47,11 @@ import {
 } from './project-memory/index.js';
 import type { ProjectEngineerInput } from './project-engineer-backend.js';
 import { ProjectProviderRuntime } from './project-provider-runtime.js';
+import type {
+  MutationLedgerEntry,
+  PendingSessionCheckpoint,
+  StandaloneJobManager
+} from './standalone-job-manager.js';
 import {
   type ModelSelection,
   type ProjectDefinition
@@ -95,6 +100,12 @@ export interface AgentProductRuntimeOptions {
   readonly securityAuditSink?: RuntimeSecurityAuditSink;
   /** Product/plugin extension point. Tools still pass normal capability/permission/resource gates. */
   readonly extraTools?: readonly AxisTool[];
+  /**
+   * Optional job manager for durable checkpointing. When provided, the runtime will
+   * persist/restore pending session state (decision requests, mutation ledger) so sessions
+   * survive app restarts without replaying uncertain mutations.
+   */
+  readonly jobManager?: StandaloneJobManager;
 }
 
 interface ExactSelection {
@@ -539,6 +550,16 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     }
     pending.resolution = resolution;
     pending.permissionGate.resolve(resolution);
+    const jobManager = this.options.jobManager;
+    if (jobManager) {
+      const checkpoint = jobManager.getPendingCheckpoint(sessionId);
+      if (checkpoint) {
+        void jobManager.setPendingCheckpoint(sessionId, {
+          ...checkpoint,
+          resolution
+        });
+      }
+    }
   }
 
   private emit(rawEvent: AgentLifecycleEvent): void {
@@ -852,6 +873,28 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
         ) {
           permissionGate.remember(safeEvent.request, safeEvent.call);
         }
+        // Track mutations in the durable ledger so restart can distinguish
+        // committed/rolled-back from started-unknown mutations.
+        if (
+          safeEvent.type === 'mutation' ||
+          safeEvent.type === 'command'
+        ) {
+          const jobManager = this.options.jobManager;
+          if (jobManager && input.budgetJobId) {
+            jobManager.recordMutation(input.budgetJobId, {
+              callId: safeEvent.callId,
+              toolName: safeEvent.toolName,
+              mutationStatus: safeEvent.mutationStatus,
+              startedAt: safeEvent.metadata?.startedAt as string ?? new Date().toISOString(),
+              resolvedAt: safeEvent.mutationStatus !== 'started' && safeEvent.mutationStatus !== 'unknown'
+                ? new Date().toISOString()
+                : undefined,
+              resolvedBy: safeEvent.mutationStatus === 'committed' || safeEvent.mutationStatus === 'rolled-back'
+                ? 'agent'
+                : undefined
+            });
+          }
+        }
         this.emit(safeEvent);
       }]
     });
@@ -877,7 +920,11 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     const directPersonalChat = await this.executeDirectPersonalChatGptAccount(productInput, sessionId);
     if (directPersonalChat) return directPersonalChat;
 
+    // Restore from durable checkpoint if available (app restart path).
     let session = this.pending.get(sessionId);
+    if (!session) {
+      session = await this.composeFromCheckpoint(productInput, sessionId);
+    }
     if (!session) session = await this.compose(productInput, sessionId);
 
     const events: AgentLifecycleEvent[] = [];
@@ -906,6 +953,11 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
         session.request = result.decisionRequest;
         session.resolution = undefined;
         this.pending.set(sessionId, session);
+        // Persist durable checkpoint so restart can restore this paused decision session.
+        if (this.options.jobManager) {
+          const checkpoint = this.buildCheckpoint(sessionId, session);
+          await this.options.jobManager.setPendingCheckpoint(sessionId, checkpoint);
+        }
         return asEngineerResult(
           input,
           'needs-guidance',
@@ -916,6 +968,10 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       }
 
       this.pending.delete(sessionId);
+      // Terminal states clear the durable checkpoint - the session is over.
+      if (this.options.jobManager) {
+        await this.options.jobManager.setPendingCheckpoint(sessionId, undefined);
+      }
       if (result.status === 'cancelled') {
         throw new Error(redactRuntimeText(result.error?.message ?? 'AgentRuntime session cancelled.'));
       }
@@ -933,4 +989,102 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       unsubscribe();
     }
   }
+
+  /**
+   * Try to compose a session from a previously persisted checkpoint (post-restart).
+   * Returns undefined if no jobManager is configured, no checkpoint exists, or the
+   * checkpoint cannot be validated against the current Company/Connection/Project
+   * graph. In those cases the caller will fall back to a fresh compose.
+   */
+  private async composeFromCheckpoint(
+    input: ProductEngineerInput,
+    sessionId: string
+  ): Promise<PendingSession | undefined> {
+    const jobManager = this.options.jobManager;
+    const jobId = input.budgetJobId;
+    if (!jobManager || !jobId) return undefined;
+    const checkpoint = jobManager.getPendingCheckpoint(jobId);
+    if (!checkpoint) return undefined;
+
+    // Validate the checkpoint still maps to a current Company/Project/Connection.
+    // A differing connectionId means the user has switched the Connection selection
+    // after restart; the safe behavior is to discard the checkpoint and re-compose.
+    const snapshot = this.options.companyContext();
+    const project = input.projectId ? this.options.projects.getProject(input.projectId) : undefined;
+    const companyId = canonicalCompanyId(snapshot, project, input.companyId);
+    if (checkpoint.companyId !== companyId) return undefined;
+    if (checkpoint.projectId !== input.projectId) return undefined;
+
+    // Re-look up the connection view to confirm it still exists in the same Company.
+    const connection = this.options.connections.view(checkpoint.connectionId);
+    if (!connection) return undefined;
+    if (project) {
+      // Re-assert canonical project connection scope - it may have changed since checkpoint.
+      try {
+        assertProjectConnection(
+          project,
+          input.interactionMode ?? 'cowork',
+          connection,
+          this.options.providers
+        );
+      } catch {
+        return undefined;
+      }
+    }
+
+    // Compose a fresh session, then re-attach the transcript, turnIndex, decisionRequest, resolution
+    // so runtime.run() resumes exactly where the user left off (or where the decision was made).
+    const composed = await this.compose(input, sessionId);
+    const restoredResolution = checkpoint.resolution ?? (
+      checkpoint.decisionRequest && input.userGuidance
+        ? resolutionFromCheckpointGuidance(checkpoint.decisionRequest, input.userGuidance)
+        : undefined
+    );
+    const restored: PendingSession = {
+      ...composed,
+      transcript: checkpoint.transcript,
+      turnIndex: checkpoint.turnIndex,
+      request: checkpoint.decisionRequest ?? composed.request,
+      resolution: restoredResolution
+    };
+    return restored;
+  }
+
+  /**
+   * Build a serializable checkpoint of the current pending session state. The
+   * context is captured as-is so a future restart can validate Company/Project/Connection
+   * still match before resuming.
+   */
+  private buildCheckpoint(sessionId: string, session: PendingSession): PendingSessionCheckpoint {
+    const ledger: MutationLedgerEntry[] =
+      (this.options.jobManager?.getMutationLedger(sessionId) ?? []).map((entry) => ({ ...entry }));
+    return {
+      sessionId,
+      companyId: session.context.companyId,
+      projectId: session.context.project?.id,
+      connectionId: session.context.connection.id,
+      modelId: session.context.modelId,
+      sessionContext: session.context,
+      transcript: session.transcript,
+      turnIndex: session.turnIndex,
+      decisionRequest: session.request,
+      resolution: session.resolution,
+      mutationLedger: ledger,
+      checkpointAt: new Date().toISOString()
+    };
+  }
+}
+
+function resolutionFromCheckpointGuidance(
+  request: AgentDecisionRequest,
+  guidance: string
+): AgentDecisionResolution | undefined {
+  const escaped = request.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`^-\\s+${escaped}:\\s+(.+)$`, 'm').exec(guidance);
+  const value = match?.[1]?.trim();
+  if (!value) return undefined;
+  if (request.options?.some((option) => option.id === value)) {
+    return { requestId: request.id, optionId: value };
+  }
+  return { requestId: request.id, text: value };
 }

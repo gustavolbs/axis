@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { AgentLifecycleEvent } from './agent-runtime/index.js';
 import { AgentProductExecutionBridge } from './agent-product-execution.js';
 import { AgentProductRuntime } from './agent-product-runtime.js';
+import type { ExecutionBackend } from './execution-runtime.js';
 import { readAppSettings, writeAppSettings, type AppSettingsFile } from './app-config.js';
 import {
   CompanyContextStore,
@@ -186,6 +187,12 @@ const CATALOG_CACHE_TTL_MS = 30_000;
 
 export class DesktopAppRuntime {
   private readonly listeners = new Set<AppRuntimeListener>();
+  // Cycle resolution (jobs -> productExecution -> agentRuntime -> jobs):
+  // The fields are declared with definite-assignment assertion and constructed in the
+  // constructor body in the right dependency order.
+  private readonly agentRuntime: AgentProductRuntime;
+  private readonly productExecution: AgentProductExecutionBridge;
+  readonly jobs: StandaloneJobManager;
   private readonly config = { ...loadConfig(), executionMode: 'remote' as const };
   private readonly companyContext = new CompanyContextStore();
   private readonly ollama = new OllamaClient(this.config);
@@ -220,20 +227,42 @@ export class DesktopAppRuntime {
     connections: this.connections
   });
   private readonly usage = new UsageDashboard();
-  private readonly agentRuntime = new AgentProductRuntime({
-    companyContext: () => this.companySnapshot(),
-    projects: this.projects,
-    connections: this.connections,
-    providers: this.personalProviders,
-    executionTargetId: 'desktop'
-  });
-  private readonly productExecution = new AgentProductExecutionBridge(this.agentRuntime);
-  private readonly jobs = new StandaloneJobManager(
-    this.productExecution,
-    path.join(path.dirname(this.config.runStorePath), 'sessions')
-  );
   private workerTimer?: NodeJS.Timeout;
   private readonly catalogCache = new Map<string, { at: number; value: Promise<unknown> }>();
+
+  constructor() {
+    // The runtime needs the jobs manager (for durable checkpoints) and the jobs
+    // manager needs the runtime. Build in dependency order with a placeholder,
+    // then attach the real jobs manager to the runtime via the option injection.
+    const placeholderExecution: Pick<ExecutionBackend, 'executeEngineer' | 'prepareEscalation' | 'consultEscalation'> = {
+      executeEngineer: async () => {
+        throw new Error('AgentProductRuntime not yet wired to the real product execution.');
+      },
+      prepareEscalation: async () => {
+        throw new Error('AgentProductRuntime not yet wired to the real product execution.');
+      },
+      consultEscalation: async () => {
+        throw new Error('AgentProductRuntime not yet wired to the real product execution.');
+      }
+    };
+    const jobs = new StandaloneJobManager(
+      placeholderExecution,
+      path.join(path.dirname(this.config.runStorePath), 'sessions')
+    );
+    const runtime = new AgentProductRuntime({
+      companyContext: () => this.companySnapshot(),
+      projects: this.projects,
+      connections: this.connections,
+      providers: this.personalProviders,
+      executionTargetId: 'desktop',
+      jobManager: jobs
+    });
+    const execution = new AgentProductExecutionBridge(runtime);
+    this.agentRuntime = runtime;
+    this.productExecution = execution;
+    jobs.setExecution(execution);
+    this.jobs = jobs;
+  }
 
   private cachedCatalog<T>(key: string, load: () => Promise<T>): Promise<T> {
     const cached = this.catalogCache.get(key);

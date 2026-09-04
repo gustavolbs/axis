@@ -2,6 +2,14 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.25.0] - 2026-09-04
+
+### Added
+- Durable AgentRuntime checkpoints and mutation ledgers now preserve paused decisions across app restarts and distinguish resolved mutations from uncertain mutations.
+
+### Fixed
+- Product execution and job persistence now share one correctly wired job manager instance.
+
 ## [0.24.2] - 2026-09-04
 
 ### Fixed

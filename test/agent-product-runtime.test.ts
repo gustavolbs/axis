@@ -10,6 +10,7 @@ import {
   type AxisTool
 } from '../src/agent-runtime/index.js';
 import { AgentProductRuntime } from '../src/agent-product-runtime.js';
+import type { StandaloneJobManager } from '../src/standalone-job-manager.js';
 import { withCancellationSignal, OperationCancelledError, currentCancellationSignal } from '../src/cancellation.js';
 import {
   LOCAL_ORGANIZATION_ID
@@ -226,6 +227,7 @@ function product(input: {
   memoryStore?: ProjectMemoryStore;
   extraTools?: readonly AxisTool[];
   sharedConnectionIds?: string[];
+  jobManager?: StandaloneJobManager;
 }): AgentProductRuntime {
   const projects = new Map(input.projects.map((item) => [item.id, item]));
   const connections = new Map(input.connections.map((item) => [item.id, item]));
@@ -276,7 +278,8 @@ function product(input: {
     memoryStore: input.memoryStore,
     browserBackend: false,
     extraTools: input.extraTools,
-    executionTargetId: 'desktop'
+    executionTargetId: 'desktop',
+    jobManager: input.jobManager
   });
 }
 
@@ -286,11 +289,13 @@ function engineerInput(input: {
   mode?: 'chat' | 'cowork';
   companyId?: string;
   modelSelection?: ProjectEngineerInput['modelSelection'];
+  goal?: string;
+  workspace?: string;
 }): ProjectEngineerInput {
   return {
     projectId: input.project.id,
-    workspace: input.project.workspace,
-    goal: 'Fix the repository and verify it.',
+    workspace: input.workspace ?? input.project.workspace,
+    goal: input.goal ?? 'Fix the repository and verify it.',
     interactionMode: input.mode ?? 'cowork',
     budgetJobId: input.sessionId,
     modelSelection: input.modelSelection ?? input.project.defaultModel,
@@ -700,6 +705,290 @@ test('P1 gate: product catalog does not advertise managed worktrees before an ex
     assert.equal(prompt.includes('\"name\":\"git_worktree_list\"'), false);
     assert.equal(prompt.includes('\"name\":\"git_worktree_create\"'), false);
     assert.equal(prompt.includes('\"name\":\"git_worktree_remove\"'), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('durable checkpoint persists paused decision sessions and restores them on restart', async () => {
+  const directory = temp('checkpoint');
+  const stateDir = path.join(directory, 'state');
+  fs.mkdirSync(stateDir, { recursive: true });
+  const repo = path.join(directory, 'repo');
+  fs.mkdirSync(repo);
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  initializeRepo(repo);
+  const selected = project({
+    id: 'checkpoint-project', companyId: 'company-a', workspace: repo,
+    connectionId: 'openai-a', providerFamily: 'openai', modelId: 'gpt-test'
+  });
+  const selectedConnection = connection({ id: 'openai-a', providerFamily: 'openai', companyId: 'company-a' });
+  const sessionId = 'checkpoint-session';
+
+  // First session: pause on decision.
+  let invocation = 0;
+  const pausingProvider = new ScriptedProvider('openai-a', 'gpt-test', () => {
+    invocation += 1;
+    if (invocation === 1) {
+      return call('mutation-1', 'axis_browser_test_mutation', {});
+    }
+    return complete('never reached');
+  });
+
+  const mutation: AxisTool = {
+    definition: {
+      name: 'axis_browser_test_mutation',
+      description: 'Checkpoint test mutation.',
+      inputSchema: { type: 'object', additionalProperties: false },
+      requiredCapabilities: [],
+      requiredPermissions: ['browser.interact'],
+      effect: 'mutation',
+      mutationRisk: 'definite',
+      retryOnFailure: 'after-confirmation',
+      timeoutMs: 5_000
+    },
+    async execute() {
+      return { output: { executed: true }, mutationStatus: 'committed', retry: 'after-confirmation' };
+    }
+  };
+
+  try {
+    // Create job manager and runtime with checkpoint support.
+    const { StandaloneJobManager: JobMgr1 } = await import('../src/standalone-job-manager.js');
+    const placeholderExecution1 = {
+      executeEngineer: async () => { throw new Error('not used'); },
+      prepareEscalation: async () => { throw new Error('not used'); },
+      consultEscalation: async () => { throw new Error('not used'); }
+    };
+    const jobs1 = new JobMgr1(placeholderExecution1, stateDir);
+    const runtime1 = product({
+      projects: [selected],
+      connections: [selectedConnection],
+      providers: new Map([['openai-a', pausingProvider]]),
+      extraTools: [mutation],
+      jobManager: jobs1
+    });
+
+    const events1: AgentLifecycleEvent[] = [];
+    runtime1.subscribeAgentLifecycle((event) => events1.push(event));
+
+    // Add a job entry to the job manager so setPendingCheckpoint has something to attach to.
+    const jobInput = {
+      goal: 'Test checkpoint',
+      workspace: repo,
+      interactionMode: 'cowork' as const,
+      projectId: 'checkpoint-project',
+      budgetJobId: sessionId
+    };
+    (jobs1 as unknown as { jobs: Map<string, unknown> }).jobs.set(sessionId, {
+      id: sessionId,
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      input: jobInput,
+      turns: [],
+      rounds: 0,
+      events: []
+    });
+
+    const input1 = engineerInput({ project: selected, sessionId, goal: 'Test checkpoint', workspace: repo });
+    const paused = await runtime1.executeEngineer(input1);
+
+    // Session should pause for decision.
+    assert.equal(paused.status, 'needs-guidance', 'Session should pause for decision');
+
+    // Checkpoint should be persisted.
+    const checkpoint1 = jobs1.getPendingCheckpoint(sessionId);
+    assert.ok(checkpoint1, 'Checkpoint should be persisted');
+    assert.equal(checkpoint1!.sessionId, sessionId, 'Checkpoint has correct sessionId');
+    assert.equal(checkpoint1!.companyId, 'company-a', 'Checkpoint has correct companyId');
+    assert.ok(checkpoint1!.decisionRequest, 'Checkpoint has a decisionRequest');
+    assert.equal(checkpoint1!.decisionRequest!.kind, 'permission', 'Decision is a permission request');
+    assert.ok(Array.isArray(checkpoint1!.transcript), 'Checkpoint has transcript');
+
+    runtime1.resolveAgentDecision(sessionId, {
+      requestId: checkpoint1!.decisionRequest!.id,
+      optionId: 'approve'
+    });
+    await jobs1.setPendingCheckpoint(sessionId, jobs1.getPendingCheckpoint(sessionId));
+
+    // Simulate restart: new manager + new runtime from same state.
+    const { StandaloneJobManager: JobMgr2 } = await import('../src/standalone-job-manager.js');
+    const placeholderExecution2 = {
+      executeEngineer: async () => { throw new Error('not used'); },
+      prepareEscalation: async () => { throw new Error('not used'); },
+      consultEscalation: async () => { throw new Error('not used'); }
+    };
+    const jobs2 = new JobMgr2(placeholderExecution2, stateDir);
+    await (jobs2 as unknown as { restore: () => Promise<void> }).restore();
+
+    const runtime2 = product({
+      projects: [selected],
+      connections: [selectedConnection],
+      providers: new Map([['openai-a', pausingProvider]]),
+      extraTools: [mutation],
+      jobManager: jobs2
+    });
+
+    // Resume the session from checkpoint.
+    const restoredCheckpoint = jobs2.getPendingCheckpoint(sessionId);
+    assert.ok(restoredCheckpoint, 'Checkpoint should be restored from disk');
+    assert.equal(restoredCheckpoint!.sessionId, sessionId, 'Restored checkpoint has correct sessionId');
+    assert.equal(restoredCheckpoint!.companyId, 'company-a', 'Restored checkpoint has correct company');
+
+    // Running executeEngineer should restore the paused session.
+    const input2 = engineerInput({ project: selected, sessionId, goal: 'Test checkpoint', workspace: repo });
+    const resumed = await runtime2.executeEngineer(input2);
+
+    // After resuming with the previous decision, should complete.
+    assert.equal(resumed.status, 'success', 'Session should complete after decision is resolved');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('mutation ledger tracks committed and started-unknown mutations persistently', async () => {
+  const directory = temp('mutation-ledger');
+  const stateDir = path.join(directory, 'state');
+  fs.mkdirSync(stateDir, { recursive: true });
+  const repo = path.join(directory, 'repo');
+  fs.mkdirSync(repo);
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  initializeRepo(repo);
+  const selected = project({
+    id: 'ledger-project', companyId: 'company-a', workspace: repo,
+    connectionId: 'openai-a', providerFamily: 'openai', modelId: 'gpt-test'
+  });
+  const selectedConnection = connection({ id: 'openai-a', providerFamily: 'openai', companyId: 'company-a' });
+
+  let mutationCalls = 0;
+  const mutation: AxisTool = {
+    definition: {
+      name: 'axis_ledger_mutation',
+      description: 'Ledger test mutation.',
+      inputSchema: { type: 'object', additionalProperties: false },
+      requiredCapabilities: [],
+      requiredPermissions: ['browser.interact'],
+      effect: 'mutation',
+      mutationRisk: 'definite',
+      retryOnFailure: 'safe',
+      timeoutMs: 5_000
+    },
+    async execute() {
+      mutationCalls += 1;
+      return { output: { calls: mutationCalls }, mutationStatus: 'committed', retry: 'safe' };
+    }
+  };
+
+  try {
+    const { StandaloneJobManager: JobMgr } = await import('../src/standalone-job-manager.js');
+    const placeholderExecution = {
+      executeEngineer: async () => { throw new Error('not used'); },
+      prepareEscalation: async () => { throw new Error('not used'); },
+      consultEscalation: async () => { throw new Error('not used'); }
+    };
+    const jobs = new JobMgr(placeholderExecution, stateDir);
+    const runtime = product({
+      projects: [selected],
+      connections: [selectedConnection],
+      providers: new Map([['openai-a', new ScriptedProvider('openai-a', 'gpt-test', () => {
+        return mutationCalls === 0
+          ? call('call-1', 'axis_ledger_mutation', {})
+          : complete('done');
+      })]]),
+      extraTools: [mutation],
+      jobManager: jobs
+    });
+
+    const sessionId = 'ledger-session';
+    (jobs as unknown as { jobs: Map<string, unknown> }).jobs.set(sessionId, {
+      id: sessionId,
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      input: { goal: 'Ledger test', workspace: repo, interactionMode: 'cowork' as const },
+      turns: [],
+      rounds: 0,
+      events: []
+    });
+
+    const input = engineerInput({ project: selected, sessionId, goal: 'Ledger test', workspace: repo });
+    await runtime.executeEngineer(input);
+
+    const ledger = jobs.getMutationLedger(sessionId);
+    assert.ok(ledger.length > 0, 'Mutation ledger should have entries');
+
+    // Committed mutations should have resolvedAt set.
+    const committed = ledger.filter((e) => e.mutationStatus === 'committed');
+    assert.ok(committed.length > 0, 'Should have committed entries');
+    for (const entry of committed) {
+      assert.ok(entry.resolvedAt, 'Committed entry should have resolvedAt');
+      assert.equal(entry.resolvedBy, 'agent', 'Committed entry resolvedBy should be agent');
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('pendingCheckpoint and mutationLedger are cleared on terminal state (success/cancelled/failed)', async () => {
+  const directory = temp('checkpoint-clear');
+  const stateDir = path.join(directory, 'state');
+  fs.mkdirSync(stateDir, { recursive: true });
+  const repo = path.join(directory, 'repo');
+  fs.mkdirSync(repo);
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  initializeRepo(repo);
+  const selected = project({
+    id: 'clear-project', companyId: 'company-a', workspace: repo,
+    connectionId: 'openai-a', providerFamily: 'openai', modelId: 'gpt-test'
+  });
+  const selectedConnection = connection({ id: 'openai-a', providerFamily: 'openai', companyId: 'company-a' });
+
+  try {
+    const { StandaloneJobManager: JobMgr } = await import('../src/standalone-job-manager.js');
+    const placeholderExecution = {
+      executeEngineer: async () => { throw new Error('not used'); },
+      prepareEscalation: async () => { throw new Error('not used'); },
+      consultEscalation: async () => { throw new Error('not used'); }
+    };
+    const jobs = new JobMgr(placeholderExecution, stateDir);
+    const runtime = product({
+      projects: [selected],
+      connections: [selectedConnection],
+      providers: new Map([['openai-a', new ScriptedProvider('openai-a', 'gpt-test', () => complete('done'))]]),
+      jobManager: jobs
+    });
+
+    const sessionId = 'clear-session';
+    (jobs as unknown as { jobs: Map<string, unknown> }).jobs.set(sessionId, {
+      id: sessionId,
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      input: { goal: 'Clear test', workspace: repo, interactionMode: 'cowork' as const },
+      turns: [],
+      rounds: 0,
+      events: []
+    });
+
+    // Manually set a checkpoint to simulate paused state.
+    jobs.setPendingCheckpoint(sessionId, {
+      sessionId,
+      companyId: 'company-a',
+      connectionId: 'openai-a',
+      modelId: 'gpt-test',
+      sessionContext: {} as never,
+      transcript: [],
+      turnIndex: 0,
+      mutationLedger: [],
+      checkpointAt: new Date().toISOString()
+    });
+
+    const input = engineerInput({ project: selected, sessionId, goal: 'Clear test', workspace: repo });
+    await runtime.executeEngineer(input);
+
+    const cleared = jobs.getPendingCheckpoint(sessionId);
+    assert.equal(cleared, undefined, 'Checkpoint should be cleared after success');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

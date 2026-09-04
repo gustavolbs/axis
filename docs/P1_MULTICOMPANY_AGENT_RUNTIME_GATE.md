@@ -30,9 +30,9 @@ A green CI run is required for this branch, but green CI does not change this ga
 | 5 | Connection isolation E2E | PARTIAL | Connection identity is immutable and distinct even for the same provider/auth family; native adapter tests cover Account/API-key architecture and no silent model/connection fallback. CI does not exercise two real Claude/ChatGPT accounts or two real API keys simultaneously because live credentials are intentionally absent. |
 | 6 | Account/API Key same architecture | PARTIAL | Claude Account, OpenAI API Key, Anthropic API Key and Ollama enter through `AgentProviderAdapter`. ChatGPT/Codex Account remains fail-closed under G2; therefore the complete Account/API-key acceptance matrix is not yet satisfied. |
 | 7 | Local/shared inference keeps Company/resource scope | PASS for Ollama/shared-local policy; Local Worker FAIL | Shared Ollama transport stays Company-neutral while each session remains Company-scoped. `AgentProductRuntime`, however, currently constructs `LocalAgentExecutionTarget` for the product path and does not execute tools through a real Local Worker `AgentExecutionTarget`; exact worker-vs-desktop execution is therefore not proven end-to-end. |
-| 8 | Approvals before mutations | PARTIAL | In-process ask → pause, deny → zero execution and approve → exactly one matching mutation are covered through the product path. Pending approval state is held in in-memory maps; restart recovery of an approval is not durable, so the restart acceptance requirement fails. |
+| 8 | Approvals before mutations | PARTIAL | In-process ask → pause, deny → zero execution and approve → exactly one matching mutation are covered through the product path. Pending approval checkpoints and resolutions now persist durably; full restarted product/UI acceptance evidence remains outstanding. |
 | 9 | Project Memory cross-provider, same Project | PARTIAL | Project Memory persists provider-neutral lifecycle handoffs and is partitioned by Company + Project + repository identity; same physical path in another Company is denied by scope. Product tests prove lifecycle handoff retrieval, but the full live Provider X session → process restart → Provider Y product session scenario is not automated with real providers. Raw chain-of-thought is not part of the canonical protocol. |
-| 10 | Crash/restart never duplicates mutations | FAIL | Tool contracts preserve `mutationStatus: unknown` when commit/rollback cannot be proven and avoid unsafe automatic retry. The product runtime does not yet persist the exact pending turn/tool/approval/background-process checkpoint needed to resume after process restart without re-composition/re-execution. |
+| 10 | Crash/restart never duplicates mutations | PARTIAL | Tool contracts preserve `mutationStatus: unknown` when commit/rollback cannot be proven and avoid unsafe automatic retry. Product sessions now persist canonical transcript, authority, pending decision and mutation ledger state; managed-worktree identity and resumable background-process metadata still need end-to-end integration. |
 | 11 | No hidden provider filesystem/shell/MCP | PASS for admitted adapters; ChatGPT/Codex blocked | Generic inference adapters require provider-managed tool execution to be disabled; Claude Account uses the canonical Account protocol; hidden/unrecognized provider tool calls fail closed. ChatGPT/Codex Account stays outside the runtime because its provider-managed tool surface cannot yet be proven suppressible/interceptable. |
 | 12 | Final CI green | PENDING until PR CI | Required commands are `npm run release:validate` and `npm run check`; PR CI runs the full check on Linux and Windows plus Electron build/visual smoke/package validation on macOS. |
 
@@ -81,7 +81,7 @@ Required P1 fix: allocate/recover the task worktree before the mutating agent se
 
 `AgentProductRuntime` and `AgentProductExecutionBridge` keep pending approvals and active turn state in process-local maps. `StandaloneJobManager` persists conversation/job state, but it does not reconstruct the exact canonical pending tool call + permission fingerprint + runtime checkpoint after an app restart.
 
-Required P1 fix: persist a restart-safe checkpoint before mutation, including the immutable session authority, pending canonical tool call/decision identity, mutation state, managed worktree identity and any resumable background-process metadata. Recovery must distinguish `not-started`, `started/unknown`, and `committed` instead of replaying an uncertain mutation.
+Implemented in the product runtime: a restart-safe checkpoint persists immutable session authority, transcript, pending decision/resolution and mutation ledger state; recovery distinguishes resolved entries from `started`/`unknown` entries and does not automatically replay uncertain mutations. Managed-worktree identity and resumable background-process metadata remain required for the full gate.
 
 ## Exact execution-target finding
 
@@ -102,11 +102,10 @@ The macOS CI runs real Electron rendering and visual smoke for the canonical run
 ## Blockers, priority order
 
 1. **P0 — product task worktree orchestration:** create/recover a managed worktree before Cowork mutation and bind the exact checkout root to the session; preserve dirty main checkout and enforce per-job ownership/cleanup.
-2. **P0 — durable runtime checkpoint/restart:** persist pending approval/tool/mutation/background-process state so restart cannot replay an uncertain mutation.
-3. **P0 — real Local Worker execution target:** compose an actual worker `AgentExecutionTarget`; exact target failure must remain fail-closed with no desktop fallback.
-4. **P0 — G2 / ChatGPT-Codex Account:** keep blocked until all model-visible provider tools can be suppressed or intercepted before execution.
-5. **P1 — live Connection matrix harness:** prove two same-provider Accounts, two same-provider API Keys and Account + API Key using real configured Connections without leaking secrets.
-6. **P1 — live product UI evidence:** drive the canonical runtime UI with the actual product lifecycle for the full engineering loop, not only isolated canonical fixtures.
+2. **P0 — real Local Worker execution target:** compose an actual worker `AgentExecutionTarget`; exact target failure must remain fail-closed with no desktop fallback.
+3. **P0 — G2 / ChatGPT-Codex Account:** keep blocked until all model-visible provider tools can be suppressed or intercepted before execution.
+4. **P1 — live Connection matrix harness:** prove two same-provider Accounts, two same-provider API Keys and Account + API Key using real configured Connections without leaking secrets.
+5. **P1 — live product UI evidence:** drive the canonical runtime UI with the actual product lifecycle for the full engineering loop, not only isolated canonical fixtures.
 
 ## What is explicitly not claimed
 
