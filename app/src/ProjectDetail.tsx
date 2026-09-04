@@ -18,7 +18,7 @@ import {
   Zap
 } from 'lucide-react';
 
-import type { AdminProject, ModelSelection } from './app-types.js';
+import type { AdminProject, ModelSelection, ProjectConnectionPolicy } from './app-types.js';
 import { ProjectGitReview } from './ProjectGitReview.js';
 
 export interface ProjectConversation {
@@ -49,6 +49,9 @@ interface CatalogProvider {
 
 interface ProjectCatalog {
   defaultModel: ModelSelection;
+  chatDefaultModel?: ModelSelection;
+  coworkDefaultModel?: ModelSelection;
+  connectionPolicy?: ProjectConnectionPolicy;
   providers: CatalogProvider[];
 }
 
@@ -102,11 +105,21 @@ function providerFallbackLabel(providerId: string): string {
 }
 
 function providerAuthLabel(provider: CatalogProvider): string {
-  if (provider.auth === 'api-key') return 'API key';
-  if (provider.auth === 'claude-account') return 'Claude account';
-  if (provider.auth === 'chatgpt-account') return 'ChatGPT account';
-  if (provider.auth === 'local' || provider.kind === 'local') return 'Local';
-  return 'Provider';
+  if (provider.auth === 'api-key') return 'API KEY';
+  if (provider.auth === 'claude-account' || provider.auth === 'chatgpt-account') return 'ACCOUNT';
+  if (provider.auth === 'local' || provider.kind === 'local') return 'LOCAL';
+  return 'PROVIDER';
+}
+
+function providerAuthBadgeClass(provider: CatalogProvider): string {
+  const variant = provider.auth === 'api-key'
+    ? 'live'
+    : provider.auth === 'local' || provider.kind === 'local'
+      ? 'good'
+      : provider.auth === 'claude-account' || provider.auth === 'chatgpt-account'
+        ? 'warn'
+        : '';
+  return `model-auth-badge status-pill ${variant}`;
 }
 
 function providerDescription(provider: CatalogProvider): string {
@@ -123,22 +136,46 @@ function selectionProviderId(selection: ModelSelection): string | undefined {
   return undefined;
 }
 
-function catalogHasSelection(catalog: ProjectCatalog, selection: ModelSelection): boolean {
+function projectCatalogProviderAllowed(
+  catalog: ProjectCatalog,
+  providerId: string,
+  mode: 'chat' | 'cowork'
+): boolean {
+  const policy = catalog.connectionPolicy;
+  if (!policy) return true;
+  const allowed = mode === 'chat'
+    ? policy.chat.allowedConnectionIds
+    : policy.inference.allowedConnectionIds;
+  return allowed.includes(providerId);
+}
+
+function catalogHasSelection(
+  catalog: ProjectCatalog,
+  selection: ModelSelection,
+  mode: 'chat' | 'cowork'
+): boolean {
   const providerId = selectionProviderId(selection);
-  if (!providerId || selection.mode === 'auto') return false;
+  if (!providerId || selection.mode === 'auto' || !projectCatalogProviderAllowed(catalog, providerId, mode)) return false;
   const provider = catalog.providers.find((item) => item.id === providerId && item.ready);
   return Boolean(provider?.models.some((model) => model.id === selection.modelId && model.available));
 }
 
-function firstCatalogSelection(catalog: ProjectCatalog): ModelSelection {
-  if (catalog.defaultModel.mode !== 'auto' && catalogHasSelection(catalog, catalog.defaultModel)) return catalog.defaultModel;
-  const local = catalog.providers.find((provider) => provider.id === 'ollama' && provider.ready)?.models.find((model) => model.available);
-  if (local) return { mode: 'local-first', modelId: local.id };
+function firstCatalogSelection(catalog: ProjectCatalog, mode: 'chat' | 'cowork'): ModelSelection {
+  const scopedDefault = mode === 'chat' ? catalog.chatDefaultModel : catalog.coworkDefaultModel;
+  const configured = scopedDefault ?? catalog.defaultModel;
+  if (configured.mode !== 'auto' && catalogHasSelection(catalog, configured, mode)) return configured;
+  const local = catalog.providers.find((provider) =>
+    provider.id === 'ollama' && provider.ready && projectCatalogProviderAllowed(catalog, provider.id, mode)
+  )?.models.find((model) => model.available);
+  if (local) return mode === 'chat'
+    ? { mode: 'explicit', providerId: 'ollama', modelId: local.id }
+    : { mode: 'local-first', modelId: local.id };
   for (const provider of catalog.providers) {
+    if (!projectCatalogProviderAllowed(catalog, provider.id, mode)) continue;
     const model = provider.ready ? provider.models.find((candidate) => candidate.available) : undefined;
     if (model) return { mode: 'explicit', providerId: provider.id, modelId: model.id };
   }
-  return catalog.defaultModel;
+  return { mode: 'auto' };
 }
 
 export function ProjectDetail(props: {
@@ -162,7 +199,7 @@ export function ProjectDetail(props: {
   const [projectName, setProjectName] = useState(props.project.name);
   const [catalog, setCatalog] = useState<ProjectCatalog>();
   const [catalogRefreshNonce, setCatalogRefreshNonce] = useState(0);
-  const [modelSelection, setModelSelection] = useState<ModelSelection>(props.project.defaultModel);
+  const [modelSelection, setModelSelection] = useState<ModelSelection>({ mode: 'auto' });
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modelMenuProvider, setModelMenuProvider] = useState<string>();
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -179,7 +216,7 @@ export function ProjectDetail(props: {
     setMenuOpen(false);
     setRenameOpen(false);
     setDeleteOpen(false);
-    setModelSelection(props.project.defaultModel);
+    setModelSelection({ mode: 'auto' });
     setModelMenuOpen(false);
     setModelMenuProvider(undefined);
     setError(undefined);
@@ -194,11 +231,11 @@ export function ProjectDetail(props: {
 
   useEffect(() => {
     let cancelled = false;
-    void api<{ catalog: ProjectCatalog }>('/api/chat/catalog')
+    void api<{ catalog: ProjectCatalog }>(`/api/projects/${encodeURIComponent(props.project.id)}/catalog`)
       .then(({ catalog: next }) => {
         if (cancelled) return;
         setCatalog(next);
-        setModelSelection((current) => catalogHasSelection(next, current) ? current : firstCatalogSelection(next));
+        setModelSelection((current) => catalogHasSelection(next, current, mode) ? current : firstCatalogSelection(next, mode));
       })
       .catch((next) => {
         if (cancelled) return;
@@ -206,7 +243,7 @@ export function ProjectDetail(props: {
         setError(next instanceof Error ? next.message : String(next));
       });
     return () => { cancelled = true; };
-  }, [props.project.id, catalogRefreshNonce]);
+  }, [props.project.id, catalogRefreshNonce, mode]);
 
   useEffect(() => {
     function closeModelMenu(event: PointerEvent) {
@@ -221,14 +258,26 @@ export function ProjectDetail(props: {
 
   const companyLabel = props.project.companyName ?? props.project.companyId;
   const selectedProviderId = selectionProviderId(modelSelection);
-  const selectedProvider = catalog?.providers.find((provider) => provider.id === selectedProviderId);
+  const selectedProvider = catalog?.providers.find((provider) =>
+    provider.id === selectedProviderId && projectCatalogProviderAllowed(catalog, provider.id, mode)
+  );
   const selectedModelId = modelSelection.mode === 'auto' ? undefined : modelSelection.modelId;
   const selectedModel = selectedProvider?.models.find((model) => model.id === selectedModelId);
   const modelLabel = modelSelection.mode === 'local-first'
     ? 'Local-first'
     : selectedProvider?.label ?? (selectedProviderId ? providerFallbackLabel(selectedProviderId) : 'Auto');
   const activeMenuProviderId = modelMenuProvider === 'local-first' ? 'ollama' : modelMenuProvider;
-  const activeMenuProvider = catalog?.providers.find((provider) => provider.id === activeMenuProviderId);
+  const activeMenuProvider = catalog?.providers.find((provider) =>
+    provider.id === activeMenuProviderId && projectCatalogProviderAllowed(catalog, provider.id, mode)
+  );
+
+  function chooseMode(next: 'chat' | 'cowork') {
+    setMode(next);
+    setModelMenuProvider(undefined);
+    if (catalog && !catalogHasSelection(catalog, modelSelection, next)) {
+      setModelSelection(firstCatalogSelection(catalog, next));
+    }
+  }
 
   function togglePin() {
     const nextPinned = !pinned;
@@ -429,8 +478,8 @@ export function ProjectDetail(props: {
               <div className="composer-toolbar-left">
                 <button className="composer-icon-button" type="button" aria-label="Choose project folder" title="Choose project folder" onClick={() => void chooseProjectFolder()}><Plus size={19} strokeWidth={1.7} /></button>
                 <div className="composer-mode-switch" role="radiogroup" aria-label="Project mode">
-                  <button type="button" role="radio" aria-checked={mode === 'chat'} className={mode === 'chat' ? 'selected' : ''} onClick={() => setMode('chat')}>Chat</button>
-                  <button type="button" role="radio" aria-checked={mode === 'cowork'} className={mode === 'cowork' ? 'selected' : ''} onClick={() => setMode('cowork')}>Cowork</button>
+                  <button type="button" role="radio" aria-checked={mode === 'chat'} className={mode === 'chat' ? 'selected' : ''} onClick={() => chooseMode('chat')}>Chat</button>
+                  <button type="button" role="radio" aria-checked={mode === 'cowork'} className={mode === 'cowork' ? 'selected' : ''} onClick={() => chooseMode('cowork')}>Cowork</button>
                 </div>
               </div>
               <div className="composer-toolbar-right">
@@ -470,15 +519,17 @@ export function ProjectDetail(props: {
                       {activeMenuProvider.models.length === 0 ? <div className="model-menu-note">No models are available for this provider.</div> : null}
                     </> : <>
                       <div className="model-provider-label">Provider or account</div>
-                      {(catalog?.providers ?? []).flatMap((provider) => {
+                      {(catalog?.providers ?? [])
+                        .filter((provider) => !catalog || projectCatalogProviderAllowed(catalog, provider.id, mode))
+                        .flatMap((provider) => {
                         const ready = provider.ready && provider.models.some((model) => model.available);
                         const selected = modelSelection.mode === 'explicit' && modelSelection.providerId === provider.id;
                         const rows = [<button key={provider.id} type="button" className={selected ? 'selected' : ''} disabled={!ready} title={!ready ? provider.reason : undefined} onClick={() => setModelMenuProvider(provider.id)}>
-                          <span><strong>{provider.label ?? providerFallbackLabel(provider.id)}<em>{providerAuthLabel(provider)}</em></strong><small>{providerDescription(provider)}{ready ? '' : ` · ${provider.reason ?? 'unavailable'}`}</small></span>
+                          <span><strong>{provider.label ?? providerFallbackLabel(provider.id)}<span className={providerAuthBadgeClass(provider)}>{providerAuthLabel(provider)}</span></strong><small>{providerDescription(provider)}{ready ? '' : ` · ${provider.reason ?? 'unavailable'}`}</small></span>
                           {ready ? <ChevronRight size={16} /> : null}
                         </button>];
                         if (provider.id === 'ollama') rows.push(<button key="local-first" type="button" className={modelSelection.mode === 'local-first' ? 'selected' : ''} disabled={!ready} title={!ready ? provider.reason : undefined} onClick={() => setModelMenuProvider('local-first')}>
-                          <span><strong>Local-first<em>Local</em></strong><small>Start on Ollama; ask before bounded cloud escalation</small></span>
+                          <span><strong>Local-first<span className="model-auth-badge status-pill good">LOCAL</span></strong><small>Start on Ollama; ask before bounded cloud escalation</small></span>
                           {ready ? <ChevronRight size={16} /> : null}
                         </button>);
                         return rows;

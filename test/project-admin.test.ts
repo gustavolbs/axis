@@ -10,9 +10,12 @@ import {
   CredentialProfileStore
 } from '../src/credential-store.js';
 import { PricingStore } from '../src/pricing-store.js';
+import { ClaudeAccountProfileStore } from '../src/claude-account-profiles.js';
+import { CodexAccountProfileStore } from '../src/codex-account-profiles.js';
 import { ProjectAdminService } from '../src/project-admin.js';
 import { ProjectProviderRuntime } from '../src/project-provider-runtime.js';
 import { ProjectStore } from '../src/project-store.js';
+import { ProviderConnectionRuntime } from '../src/provider-connections.js';
 import { ProviderSettingsStore } from '../src/provider-settings.js';
 import type {
   InferenceProvider,
@@ -111,10 +114,19 @@ function fixture() {
   const ledger = new UsageLedger(path.join(root, 'usage'));
   const local = new FakeProvider('ollama', 'local', ['qwen-local']);
   const cloud = new FakeProvider('anthropic', 'cloud', ['claude-cloud']);
+  const connections = new ProviderConnectionRuntime({
+    localProvider: local,
+    credentials,
+    settings,
+    claudeProfiles: new ClaudeAccountProfileStore(path.join(root, 'claude-profiles')),
+    codexProfiles: new CodexAccountProfileStore(path.join(root, 'codex-profiles')),
+    apiProviderFactories: { anthropic: () => cloud }
+  });
   const providerRuntime = new ProjectProviderRuntime({
     localProvider: local,
     credentials,
     settings,
+    connections,
     cloudProviderFactories: { anthropic: () => cloud }
   });
   const admin = new ProjectAdminService({
@@ -124,6 +136,7 @@ function fixture() {
     pricing,
     ledger,
     localProvider: local,
+    connections,
     providerRuntime
   });
   return { root, projects, keychain, environment, credentials, settings, pricing, ledger, local, cloud, admin };

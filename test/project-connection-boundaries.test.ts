@@ -63,7 +63,7 @@ function fakeProvider(apiKey: string, seen: string[]): InferenceProvider {
   };
 }
 
-test('Project connections deny personal and cross-organization accounts', () => {
+test('Project connections allow delegated Personal identities but deny sibling Companies', () => {
   const claude = new ClaudeAccountProfileStore(temp('local-coder-org-claude-'));
   claude.create({ id: 'personal', name: 'Claude Personal' });
   claude.create({ id: 'acme', name: 'Claude Acme', organizationLabel: 'Acme' });
@@ -76,9 +76,9 @@ test('Project connections deny personal and cross-organization accounts', () => 
 
   const acmeId = claudeAccountConnectionId('acme');
   assert.equal(runtime.providerForProject(acmeId, 'acme').id, acmeId);
-  assert.throws(
-    () => runtime.providerForProject(claudeAccountConnectionId('personal'), 'acme'),
-    /belongs to organization personal, not Project organization acme/
+  assert.equal(
+    runtime.providerForProject(claudeAccountConnectionId('personal'), 'acme').id,
+    claudeAccountConnectionId('personal')
   );
   assert.throws(
     () => runtime.providerForProject(claudeAccountConnectionId('other'), 'acme'),

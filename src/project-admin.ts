@@ -1,4 +1,4 @@
-import { apiCredentialConnectionId, LOCAL_ORGANIZATION_ID } from './connection-identity.js';
+import { apiCredentialConnectionId, LOCAL_ORGANIZATION_ID, PERSONAL_ORGANIZATION_ID } from './connection-identity.js';
 import {
   CredentialManager,
   type CredentialProfile
@@ -383,10 +383,21 @@ export class ProjectAdminService {
     const policy = effectiveProjectConnectionPolicy(project);
     const registry = this.providerRuntime.buildRegistry(project);
     const providers: ProjectCatalogProvider[] = [];
-    const allConnectionIds = unique([
-      ...policy.chat.allowedConnectionIds,
-      ...policy.inference.allowedConnectionIds
-    ]);
+    const chatConnectionIds = this.providerRuntime.projectConnectionIds(project, 'chat');
+    const coworkConnectionIds = this.providerRuntime.projectConnectionIds(project, 'cowork');
+    const allConnectionIds = unique([...chatConnectionIds, ...coworkConnectionIds]);
+    policy.chat.allowedConnectionIds = [...chatConnectionIds];
+    policy.inference.allowedConnectionIds = [...coworkConnectionIds];
+    if (policy.chat.defaultConnectionId && !chatConnectionIds.includes(policy.chat.defaultConnectionId)) {
+      policy.chat.defaultConnectionId = undefined;
+      policy.chat.defaultModelId = undefined;
+    }
+    if (
+      policy.inference.preferredConnectionId &&
+      !coworkConnectionIds.includes(policy.inference.preferredConnectionId)
+    ) {
+      policy.inference.preferredConnectionId = undefined;
+    }
 
     for (const providerId of allConnectionIds) {
       const connection = this.connections.view(providerId);
@@ -494,38 +505,29 @@ export class ProjectAdminService {
       ...policy.inference.allowedConnectionIds
     ]);
     for (const connectionId of connectionIds) {
-      if (connectionId === 'ollama' || connectionId === this.localProvider?.id) {
-        if (!privacy.allowedProviderIds.includes('ollama')) {
-          throw new Error(`Project ${projectId} binds local connection ${connectionId}, but Ollama is not allowed.`);
-        }
-        continue;
-      }
       const connection = this.connections.view(connectionId);
-      if (!connection) {
-        // A custom provider may still use its legacy provider id as its exact connection id.
-        if (!privacy.allowedProviderIds.includes(connectionId)) {
-          throw new Error(`Project ${projectId} references unknown connection ${connectionId}.`);
+      if (connection) {
+        const legacyException = connection.auth === 'api-key' &&
+          Boolean(connection.credentialId && legacyCredentialIds.has(connection.credentialId));
+        if (
+          connection.organizationId !== LOCAL_ORGANIZATION_ID &&
+          connection.organizationId !== PERSONAL_ORGANIZATION_ID &&
+          connection.organizationId !== organizationId &&
+          !legacyException
+        ) {
+          throw new Error(
+            `Connection ${connection.label} belongs to organization ${connection.organizationId}, not Project ${projectId} organization ${organizationId}.`
+          );
         }
         continue;
       }
-      if (!privacy.allowedProviderIds.includes(connection.providerFamily)) {
-        throw new Error(
-          `Project ${projectId} binds ${connection.label}, but provider family ${connection.providerFamily} is not allowed.`
-        );
+      if (connectionId === 'ollama' || connectionId === this.localProvider?.id) continue;
+      // Legacy/custom provider ids retain the old explicit Project privacy contract.
+      if (!privacy.allowedProviderIds.includes(connectionId)) {
+        throw new Error(`Project ${projectId} references unknown connection ${connectionId}.`);
       }
-      if (connection.providerFamily !== 'ollama' && !privacy.cloudAllowed) {
-        throw new Error(`Project ${projectId} binds cloud connection ${connection.label} while cloud inference is disabled.`);
-      }
-      const legacyException = connection.auth === 'api-key' &&
-        Boolean(connection.credentialId && legacyCredentialIds.has(connection.credentialId));
-      if (
-        connection.organizationId !== LOCAL_ORGANIZATION_ID &&
-        connection.organizationId !== organizationId &&
-        !legacyException
-      ) {
-        throw new Error(
-          `Connection ${connection.label} belongs to organization ${connection.organizationId}, not Project ${projectId} organization ${organizationId}.`
-        );
+      if (!privacy.cloudAllowed) {
+        throw new Error(`Project ${projectId} binds legacy cloud provider ${connectionId} while cloud inference is disabled.`);
       }
     }
 
@@ -604,7 +606,7 @@ export class ProjectAdminService {
     registered: boolean
   ): string {
     if (!enabled) return 'provider-disabled';
-    if (kind === 'cloud' && !project.privacy.cloudAllowed) return 'cloud-disabled';
+    if (kind === 'cloud' && !this.connections.view(providerId) && !project.privacy.cloudAllowed) return 'cloud-disabled';
     if (kind === 'cloud' && !this.connections.view(providerId) && !(BUILT_IN_CLOUD_PROVIDER_IDS as readonly string[]).includes(providerId)) {
       return 'provider-not-supported';
     }

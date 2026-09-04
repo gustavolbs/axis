@@ -199,27 +199,55 @@ export class ProjectProviderRuntime {
     }
   }
 
+  /**
+   * First-class inference Connections are inherited from the Project Context.
+   * Persisted Project allowlists remain compatibility data only; they must not
+   * hide Context-owned or delegated Personal Connections.
+   */
+  projectConnectionIds(project: ProjectDefinition, mode?: 'chat' | 'cowork'): string[] {
+    const legacyCredentialIds = new Set(Object.values(project.credentialProfileIds ?? {}));
+    const contextual = this.connections
+      .viewsForOrganization(project.organizationId, legacyCredentialIds)
+      .map((view) => view.id);
+    const policy = effectiveProjectConnectionPolicy(project);
+    const legacyAllowed = mode === 'chat'
+      ? policy.chat.allowedConnectionIds
+      : mode === 'cowork'
+        ? policy.inference.allowedConnectionIds
+        : unique([
+            ...policy.chat.allowedConnectionIds,
+            ...policy.inference.allowedConnectionIds
+          ]);
+    const legacyCustom = legacyAllowed.filter((connectionId) =>
+      connectionId !== 'ollama' &&
+      connectionId !== this.localProvider?.id &&
+      !this.connections.handles(connectionId)
+    );
+    return unique([
+      ...(this.localProvider ? [this.localProvider.id] : []),
+      ...contextual,
+      ...legacyCustom
+    ]);
+  }
+
   buildRegistry(project: ProjectDefinition): ProviderRegistry {
     const profiles = this.credentials.list();
     assertProjectCredentialIsolation(project, profiles);
     const providers: InferenceProvider[] = [];
     const legacyCredentialIds = new Set(Object.values(project.credentialProfileIds ?? {}));
-    const policy = effectiveProjectConnectionPolicy(project);
-    const connectionIds = unique([
-      ...policy.inference.allowedConnectionIds,
-      ...policy.chat.allowedConnectionIds
-    ]);
+    const connectionIds = this.projectConnectionIds(project);
 
     for (const connectionId of connectionIds) {
-      this.assertConnectionFamilyAllowed(project, connectionId);
       if (connectionId === (this.localProvider?.id ?? 'ollama') || connectionId === 'ollama') {
-        if (!this.localProvider || !project.privacy.allowedProviderIds.includes('ollama')) continue;
+        if (!this.localProvider) continue;
         if (this.settings.get(this.localProvider.id)?.enabled === false) continue;
         providers.push(this.governed(this.localProvider));
         continue;
       }
 
       if (this.connections.handles(connectionId)) {
+        const view = this.connections.view(connectionId);
+        if (!view?.available) continue;
         providers.push(this.connections.providerForProject(connectionId, project.organizationId, legacyCredentialIds));
         continue;
       }
@@ -373,24 +401,14 @@ export class ProjectProviderRuntime {
 
   async projectChatSelection(project: ProjectDefinition): Promise<ModelSelection> {
     const policy = effectiveProjectConnectionPolicy(project);
-    const connectionId = policy.chat.defaultConnectionId;
-    if (!connectionId) throw new Error(`Project ${project.id} has no default Chat connection.`);
-    if (!policy.chat.allowedConnectionIds.includes(connectionId)) {
-      throw new Error(`Project ${project.id} default Chat connection is outside its Chat allowlist.`);
-    }
-    this.assertConnectionFamilyAllowed(project, connectionId);
-    const legacyCredentialIds = new Set(Object.values(project.credentialProfileIds ?? {}));
-    let provider: InferenceProvider;
-    if (connectionId === (this.localProvider?.id ?? 'ollama') || connectionId === 'ollama') {
-      if (!this.localProvider) throw new Error('Local inference is not configured.');
-      provider = this.governed(this.localProvider);
-    } else if (this.connections.handles(connectionId)) {
-      provider = this.connections.providerForProject(connectionId, project.organizationId, legacyCredentialIds);
-    } else {
-      const registry = this.buildRegistry(project);
-      if (!registry.has(connectionId)) throw new Error(`Project Chat connection is unavailable: ${connectionId}`);
-      provider = registry.get(connectionId);
-    }
+    const registry = this.buildRegistry(project);
+    const allowed = this.projectConnectionIds(project, 'chat');
+    const connectionId = unique([
+      policy.chat.defaultConnectionId,
+      ...allowed
+    ]).find((candidate) => Boolean(candidate) && registry.has(candidate!));
+    if (!connectionId) throw new Error(`Project ${project.id} has no available Chat connection.`);
+    const provider = registry.get(connectionId);
     const settings = this.settings.get(this.settingsKey(connectionId)) ?? defaultSettings();
     const models = await provider.listModels();
     const inheritedModel = project.defaultModel.mode === 'explicit' && project.defaultModel.providerId === connectionId
@@ -398,9 +416,12 @@ export class ProjectProviderRuntime {
       : project.defaultModel.mode === 'local-first' && connectionId === 'ollama'
         ? project.defaultModel.modelId
         : undefined;
-    const modelId = unique([policy.chat.defaultModelId, inheritedModel, settings.defaultModelId, models[0]?.id])[0];
+    const policyModel = connectionId === policy.chat.defaultConnectionId
+      ? policy.chat.defaultModelId
+      : undefined;
+    const modelId = unique([policyModel, inheritedModel, settings.defaultModelId, models[0]?.id])[0];
     if (!modelId || !models.some((model) => model.id === modelId)) {
-      throw new Error(`Project ${project.id} default Chat connection ${connectionId} has no available model.`);
+      throw new Error(`Project ${project.id} Chat connection ${connectionId} has no available model.`);
     }
     return { mode: 'explicit', providerId: connectionId, modelId };
   }
@@ -409,7 +430,7 @@ export class ProjectProviderRuntime {
     const registry = this.buildRegistry(project);
     const provider = registry.list().find((candidate) => candidate.id === providerId);
     if (!provider) return undefined;
-    assertProjectProviderAllowed(project, providerId, provider.kind);
+    if (!this.connections.handles(providerId)) assertProjectProviderAllowed(project, providerId, provider.kind);
     const model = (await provider.listModels()).find((candidate) => candidate.id === modelId);
     return model ? { providerKind: provider.kind, model } : undefined;
   }
@@ -423,7 +444,7 @@ export class ProjectProviderRuntime {
     const selection = options.modelSelection ?? project.defaultModel;
     const candidates: RoutingCandidate[] = [];
     const allowedConnections = new Set(
-      options.connectionScope === 'chat' ? policy.chat.allowedConnectionIds : policy.inference.allowedConnectionIds
+      this.projectConnectionIds(project, options.connectionScope === 'chat' ? 'chat' : 'cowork')
     );
 
     for (const provider of registry.list()) {

@@ -1,0 +1,45 @@
+name: Apply Context-derived Project connections
+
+on:
+  push:
+    branches:
+      - fix/project-chat-connection-scope
+    paths:
+      - .github/workflows/apply-context-project-connections.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/project-chat-connection-scope
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Recover and apply the staged migration script
+        shell: bash
+        run: |
+          git show HEAD^:.github/workflows/apply-context-project-connections.yml \
+            | sed -n "/python <<'PY'/,/^          PY$/p" \
+            | sed '1d;$d;s/^          //' > /tmp/apply-context-project-connections.py
+          python /tmp/apply-context-project-connections.py
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm install
+      - name: Build and test
+        run: npm run check
+      - name: Commit validated fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/apply-context-project-connections.yml
+          git add src/provider-connections.ts src/project-provider-runtime.ts src/project-admin.ts src/agent-product-runtime.ts src/agent-runtime/session-context.ts test/project-connection-boundaries.test.ts test/project-context-connection-inheritance.test.ts package.json CHANGELOG.md
+          git commit -m "fix: inherit Personal Connections in Projects"
+          git push origin HEAD:fix/project-chat-connection-scope

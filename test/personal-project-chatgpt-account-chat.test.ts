@@ -124,8 +124,15 @@ test('Personal Project normal Chat uses direct ChatGPT Account transport with Ac
       assert.equal(selectedConnectionId, connectionId);
       assert.equal(modelId, 'default');
       return { provider, model };
-    }
-  } as ProjectProviderRuntime;
+    },
+  projectConnectionIds(selected: ProjectDefinition, mode?: 'chat' | 'cowork') {
+    const policy = selected.connectionPolicy;
+    if (!policy) return [];
+    return mode === 'chat'
+      ? [...policy.chat.allowedConnectionIds]
+      : [...policy.inference.allowedConnectionIds];
+  },
+  } as unknown as ProjectProviderRuntime;
   const connections = {
     view(id: string) { return id === connectionId ? connection : undefined; }
   } as ProviderConnectionRuntime;

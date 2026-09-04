@@ -7,6 +7,9 @@ import test from 'node:test';
 import { OperationCancelledError } from '../src/cancellation.js';
 import { routeCognitiveStage, type RoutingCandidate } from '../src/cognitive-router.js';
 import { ProjectProviderRuntime } from '../src/project-provider-runtime.js';
+import { ClaudeAccountProfileStore } from '../src/claude-account-profiles.js';
+import { CodexAccountProfileStore } from '../src/codex-account-profiles.js';
+import { ProviderConnectionRuntime } from '../src/provider-connections.js';
 import { ProviderSettingsStore } from '../src/provider-settings.js';
 import { ProviderRegistry } from '../src/providers/registry.js';
 import type {
@@ -231,9 +234,15 @@ test('ProjectProviderRuntime exposes scoped historical metrics in routing candid
       id: `runtime-${index}`
     });
   }
+  const settings = new ProviderSettingsStore(path.join(root, 'providers.json'));
   const runtime = new ProjectProviderRuntime({
     localProvider: new TestProvider('ollama', 'local', 'qwen-local'),
-    settings: new ProviderSettingsStore(path.join(root, 'providers.json')),
+    settings,
+    connections: new ProviderConnectionRuntime({
+      settings,
+      claudeProfiles: new ClaudeAccountProfileStore(path.join(root, 'claude-profiles')),
+      codexProfiles: new CodexAccountProfileStore(path.join(root, 'codex-profiles'))
+    }),
     metrics: history.forProject(scoped)
   });
   const catalog = await runtime.routingCandidates(scoped, {

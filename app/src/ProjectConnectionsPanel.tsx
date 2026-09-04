@@ -199,16 +199,11 @@ export function ProjectConnectionsPanel({
         ...customProviderIds
       ]);
       const cloudAllowed = known.some((connection) => connection.providerFamily !== 'ollama') || customProviderIds.length > 0;
-      const defaultConnection = policy.chat.defaultConnectionId;
-      const defaultModel = defaultConnection && policy.chat.defaultModelId
-        ? { mode: 'explicit' as const, providerId: defaultConnection, modelId: policy.chat.defaultModelId }
-        : scopedProject.defaultModel;
       const { project: updated } = await api<{ project: AdminProject }>(`/api/projects/${encodeURIComponent(scopedProject.id)}`, {
         method: 'PATCH',
         body: {
           connectionPolicy: policy,
-          privacy: { cloudAllowed, allowedProviderIds: allowedProviderIds.length ? allowedProviderIds : ['ollama'] },
-          defaultModel
+          privacy: { cloudAllowed, allowedProviderIds: allowedProviderIds.length ? allowedProviderIds : ['ollama'] }
         }
       });
       onProjectChanged(canonicalProject(updated));

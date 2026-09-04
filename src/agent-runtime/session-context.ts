@@ -1,4 +1,4 @@
-import type { CompanyContextSnapshot } from '../company-context.js';
+import { PERSONAL_COMPANY_ID, type CompanyContextSnapshot } from '../company-context.js';
 import type { ProviderConnectionView } from '../provider-connections.js';
 import {
   freezeAgentSessionContext,
@@ -79,7 +79,11 @@ export function buildAgentSessionContext(
   if (connectionOwner === undefined) {
     throw new Error(`Connection ${input.connection.id} is not present in the canonical Company context.`);
   }
-  if (connectionOwner !== null && connectionOwner !== companyId) {
+  const delegatedPersonalConnection =
+    Boolean(input.project) &&
+    companyId !== PERSONAL_COMPANY_ID &&
+    connectionOwner === PERSONAL_COMPANY_ID;
+  if (connectionOwner !== null && connectionOwner !== companyId && !delegatedPersonalConnection) {
     throw new Error(
       `Connection ${input.connection.id} belongs to Company ${connectionOwner}, not selected Company ${companyId}.`
     );
