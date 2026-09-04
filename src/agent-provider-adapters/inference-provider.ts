@@ -72,12 +72,13 @@ function anthropicAgentTurnSchema(
     );
   }
 
-  if (legacyOpenObject) {
-    itemProperties!.arguments = {
-      type: 'string',
-      description: 'JSON-encoded object containing the exact arguments for the selected Axis tool.'
-    };
-  }
+  // Normalize both supported inputs to the exact Anthropic wire contract. This
+  // keeps the #93 compatibility boundary stable even when the provider-neutral
+  // envelope already arrives in the newer JSON-string representation.
+  itemProperties!.arguments = {
+    type: 'string',
+    description: 'JSON-encoded object containing the exact arguments for the selected Axis tool.'
+  };
 
   return closeAnthropicObjectSchemas(cloned) as Record<string, unknown>;
 }
