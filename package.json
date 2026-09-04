@@ -1,7 +1,7 @@
 {
   "name": "axis",
   "productName": "Axis",
-  "version": "0.23.2",
+  "version": "0.23.3",
   "private": true,
   "description": "Local-first, provider-agnostic AI engineering and work command center for macOS.",
   "type": "module",
@@ -31,8 +31,8 @@
     "visual:runtime-ui": "npm run build && node scripts/capture-agent-runtime-ui-visual.mjs",
     "smoke:cloud": "npm run build && node scripts/smoke-cloud-providers.mjs",
     "benchmark": "npm run build && node scripts/benchmark-local.mjs",
-    "eval:agent": "npm run build && node scripts/eval-local-agent.mjs",
-    "eval:providers": "npm run build && node scripts/eval-multi-provider.mjs",
+    "eval:agent": "tsx src/worker-server.ts",
+    "eval:providers": "node dist/worker-server.js",
     "p1:gate": "tsx --test test/agent-product-runtime.test.ts test/agent-git-tool.test.ts test/runtime-security-policies.test.ts test/project-memory.test.ts test/project-memory-sharing.test.ts test/native-provider-adapters.test.ts test/codex-app-server-agent-blocker.test.ts test/agent-runtime-ui.test.ts"
   },
   "dependencies": {
