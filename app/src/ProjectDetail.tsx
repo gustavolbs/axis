@@ -194,7 +194,7 @@ export function ProjectDetail(props: {
 
   useEffect(() => {
     let cancelled = false;
-    void api<{ catalog: ProjectCatalog }>(`/api/projects/${encodeURIComponent(props.project.id)}/catalog`)
+    void api<{ catalog: ProjectCatalog }>('/api/chat/catalog')
       .then(({ catalog: next }) => {
         if (cancelled) return;
         setCatalog(next);
