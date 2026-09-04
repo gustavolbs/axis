@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent as
 import {
   Archive,
   ArchiveRestore,
-  Building2,
   ChevronDown,
   Folder,
   FolderOpen,
@@ -13,6 +12,8 @@ import {
   MoreHorizontal,
   PanelLeft,
   Pencil,
+  Pin,
+  PinOff,
   Plus,
   Search,
   Trash2
@@ -22,6 +23,7 @@ import type { AdminProject, CompanyDefinition } from './app-types.js';
 import { App } from './App.js';
 import { CompaniesSettings } from './CompaniesSettings.js';
 import { CompanyHub, type CompanyHubSection } from './CompanyHub.js';
+import { CompanyIcon } from './CompanyIcon.js';
 import { ProjectGallery } from './ProjectGallery.js';
 import { ProjectDetail } from './ProjectDetail.js';
 import { RunInspector } from './RunInspector.js';
@@ -41,8 +43,23 @@ interface SidebarJob {
   input: { goal: string; projectId?: string };
 }
 
+interface ActiveCompanyScope {
+  activeCompanyId: string;
+  company: CompanyDefinition;
+  companies: CompanyDefinition[];
+}
+
 function jobTitle(job: SidebarJob): string {
   return job.title?.trim() || job.input.goal;
+}
+
+function canonicalProject(project: AdminProject): AdminProject {
+  const companyId = project.companyId || project.organizationId || 'personal';
+  return {
+    ...project,
+    companyId,
+    companyName: project.companyName ?? project.organizationName ?? (companyId === 'personal' ? 'Personal' : companyId)
+  };
 }
 
 function storedSurface(): Surface {
@@ -62,6 +79,9 @@ function storedCompanySection(): CompanyHubSection {
 
 const READ_KEY = 'local-coder.read-jobs';
 const EXPANDED_KEY = 'local-coder.expanded-projects';
+const PINNED_JOBS_KEY = 'local-coder.pinned-chats';
+const PINNED_PROJECTS_KEY = 'local-coder.pinned-projects';
+const CREATE_PROJECT_KEY = 'local-coder.create-project';
 
 function storedIds(key: string): Set<string> {
   try {
@@ -133,28 +153,40 @@ export function AppRoot() {
   const [runtimeOnline, setRuntimeOnline] = useState<boolean>();
   const [readJobs, setReadJobs] = useState<Set<string>>(() => storedIds(READ_KEY));
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => storedIds(EXPANDED_KEY));
+  const [pinnedJobs, setPinnedJobs] = useState<Set<string>>(() => storedIds(PINNED_JOBS_KEY));
+  const [pinnedProjects, setPinnedProjects] = useState<Set<string>>(() => storedIds(PINNED_PROJECTS_KEY));
 
   const sidebarCollapsed = userCollapsed || autoCollapsed;
   const isElectron = window.lc?.isElectron === true;
   const platform = window.lc?.platform ?? 'web';
 
   async function refreshSidebar() {
-    const [{ context }, { jobs: nextJobs }, { projects: nextProjects }] = await Promise.all([
-      api<{ context: { companies: CompanyDefinition[] } }>('/api/companies/context'),
+    const [{ scope }, { context }] = await Promise.all([
+      api<{ scope: ActiveCompanyScope }>('/api/companies/active'),
+      api<{ context: { companies: CompanyDefinition[] } }>('/api/companies/context')
+    ]);
+    localStorage.setItem('local-coder.company', scope.activeCompanyId);
+    setSelectedCompanyId(scope.activeCompanyId);
+    setCompanies(context.companies);
+
+    const [{ jobs: nextJobs }, { projects: nextProjects }] = await Promise.all([
       api<{ jobs: SidebarJob[] }>('/api/jobs'),
       api<{ projects: AdminProject[] }>('/api/projects')
     ]);
-    const nextCompanies = context.companies;
     setJobs(nextJobs);
-    setProjects(nextProjects);
-    setCompanies(nextCompanies);
-    if (!nextCompanies.some((company) => company.id === selectedCompanyId && !company.archivedAt)) {
-      const fallback = nextCompanies.find((company) => company.id === 'personal' && !company.archivedAt) ?? nextCompanies.find((company) => !company.archivedAt);
-      if (fallback) {
-        localStorage.setItem('local-coder.company', fallback.id);
-        setSelectedCompanyId(fallback.id);
-      }
-    }
+    setProjects(nextProjects.map(canonicalProject));
+  }
+
+  async function activateCompany(companyId: string) {
+    const { scope } = await api<{ scope: ActiveCompanyScope }>('/api/companies/active', {
+      method: 'PUT', body: { companyId }
+    });
+    localStorage.setItem('local-coder.company', scope.activeCompanyId);
+    localStorage.removeItem('local-coder.open-job');
+    localStorage.removeItem('local-coder.project');
+    setSelectedCompanyId(scope.activeCompanyId);
+    setSelectedProjectId('');
+    await refreshSidebar();
   }
 
   useEffect(() => {
@@ -171,12 +203,18 @@ export function AppRoot() {
     events.addEventListener('worker', () => setRuntimeOnline(true));
     events.addEventListener('worker-error', () => setRuntimeOnline(false));
     const refresh = () => { void refreshSidebar(); };
+    const refreshPins = () => {
+      setPinnedJobs(storedIds(PINNED_JOBS_KEY));
+      setPinnedProjects(storedIds(PINNED_PROJECTS_KEY));
+    };
     window.addEventListener('local-coder:projects-changed', refresh);
     window.addEventListener('local-coder:companies-changed', refresh);
+    window.addEventListener('local-coder:pins-changed', refreshPins);
     return () => {
       events.close();
       window.removeEventListener('local-coder:projects-changed', refresh);
       window.removeEventListener('local-coder:companies-changed', refresh);
+      window.removeEventListener('local-coder:pins-changed', refreshPins);
     };
   }, []);
 
@@ -190,8 +228,14 @@ export function AppRoot() {
     .filter((company) => !company.archivedAt)
     .sort((left, right) => left.order - right.order || left.name.localeCompare(right.name)), [companies]);
   const selectedCompany = useMemo(() => activeCompanies.find((company) => company.id === selectedCompanyId), [activeCompanies, selectedCompanyId]);
-  const recentJobs = useMemo(() => jobs.filter((job) => !job.archivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 24), [jobs]);
-  const visibleProjects = useMemo(() => projects.filter((project) => !project.archived).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10), [projects]);
+  const recentJobs = useMemo(() => jobs.filter((job) => !job.archivedAt).sort((a, b) => {
+    const pinDelta = Number(pinnedJobs.has(b.id)) - Number(pinnedJobs.has(a.id));
+    return pinDelta || b.updatedAt.localeCompare(a.updatedAt);
+  }).slice(0, 24), [jobs, pinnedJobs]);
+  const visibleProjects = useMemo(() => projects.filter((project) => !project.archived).sort((a, b) => {
+    const pinDelta = Number(pinnedProjects.has(b.id)) - Number(pinnedProjects.has(a.id));
+    return pinDelta || b.updatedAt.localeCompare(a.updatedAt);
+  }).slice(0, 10), [projects, pinnedProjects]);
   const archivedJobs = useMemo(() => jobs.filter((job) => job.archivedAt).sort((a, b) => (b.archivedAt ?? '').localeCompare(a.archivedAt ?? '')), [jobs]);
   const archivedProjects = useMemo(() => projects.filter((project) => project.archived), [projects]);
   const selectedProject = useMemo(() => projects.find((project) => project.id === selectedProjectId), [projects, selectedProjectId]);
@@ -210,11 +254,11 @@ export function AppRoot() {
   const groupedLooseJobs = useMemo(() => {
     const groups = new Map<string, SidebarJob[]>();
     for (const job of looseJobs) {
-      const label = groupLabel(job.updatedAt);
+      const label = pinnedJobs.has(job.id) ? 'Pinned' : groupLabel(job.updatedAt);
       groups.set(label, [...(groups.get(label) ?? []), job]);
     }
     return [...groups.entries()];
-  }, [looseJobs]);
+  }, [looseJobs, pinnedJobs]);
 
   const searchResults = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
@@ -259,6 +303,16 @@ export function AppRoot() {
     });
   }
 
+  function toggleJobPin(job: SidebarJob) {
+    setJobMenuId(undefined);
+    setPinnedJobs((current) => {
+      const next = new Set(current);
+      if (next.has(job.id)) next.delete(job.id); else next.add(job.id);
+      localStorage.setItem(PINNED_JOBS_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  }
+
   function renameProject(project: AdminProject) {
     setProjectMenuId(undefined);
     setDialog({ kind: 'prompt', title: 'Rename project', label: 'Name', value: project.name, confirmLabel: 'Rename', onConfirm: (next) => void mutate(() => api(`/api/projects/${encodeURIComponent(project.id)}`, { method: 'PATCH', body: { name: next } })) });
@@ -271,6 +325,17 @@ export function AppRoot() {
   function deleteProject(project: AdminProject) {
     setProjectMenuId(undefined);
     setDialog({ kind: 'confirm', title: 'Delete project', message: `"${project.name}" will be deleted. This cannot be undone, and a project that still holds conversations cannot be deleted at all.`, confirmLabel: 'Delete', danger: true, onConfirm: () => void mutate(() => api(`/api/projects/${encodeURIComponent(project.id)}`, { method: 'DELETE' })) });
+  }
+
+  function toggleProjectPin(project: AdminProject) {
+    setProjectMenuId(undefined);
+    setPinnedProjects((current) => {
+      const next = new Set(current);
+      if (next.has(project.id)) next.delete(project.id); else next.add(project.id);
+      localStorage.setItem(PINNED_PROJECTS_KEY, JSON.stringify([...next]));
+      window.dispatchEvent(new CustomEvent('local-coder:pins-changed'));
+      return next;
+    });
   }
 
   function selectSurface(next: Surface) {
@@ -288,11 +353,16 @@ export function AppRoot() {
     setCompanyHubSection(next);
   }
 
-  function openCompany(company: CompanyDefinition, section: CompanyHubSection = 'overview') {
-    localStorage.setItem('local-coder.company', company.id);
-    setSelectedCompanyId(company.id);
-    selectCompanySection(section);
-    selectSurface('company');
+  async function openCompany(company: CompanyDefinition, section: CompanyHubSection = 'overview') {
+    setActionError(undefined);
+    try {
+      if (company.id !== selectedCompanyId) await activateCompany(company.id);
+      else localStorage.setItem('local-coder.company', company.id);
+      selectCompanySection(section);
+      selectSurface('company');
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function openWorkHubForCompany(companyId: string) {
@@ -300,11 +370,23 @@ export function AppRoot() {
     selectSurface('work-hub');
   }
 
-  function startNewTask() {
-    localStorage.removeItem('local-coder.open-job');
-    localStorage.removeItem('local-coder.project');
-    selectSurface('agent');
-    setAgentEpoch((value) => value + 1);
+  async function startNewTask() {
+    setActionError(undefined);
+    try {
+      if (selectedCompanyId !== 'personal') await activateCompany('personal');
+      localStorage.removeItem('local-coder.open-job');
+      localStorage.removeItem('local-coder.project');
+      setSelectedProjectId('');
+      selectSurface('agent');
+      setAgentEpoch((value) => value + 1);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function startNewProject() {
+    localStorage.setItem(CREATE_PROJECT_KEY, 'true');
+    selectSurface('projects');
   }
 
   function persistIds(key: string, ids: Set<string>) {
@@ -336,25 +418,36 @@ export function AppRoot() {
     localStorage.setItem('local-coder.open-job', job.id);
     if (job.input.projectId) {
       localStorage.setItem('local-coder.project', job.input.projectId);
+      setSelectedProjectId(job.input.projectId);
       setExpandedProjects((current) => {
         if (current.has(job.input.projectId!)) return current;
         const next = new Set(current).add(job.input.projectId!);
         persistIds(EXPANDED_KEY, next);
         return next;
       });
-    } else localStorage.removeItem('local-coder.project');
+    } else {
+      localStorage.removeItem('local-coder.project');
+      setSelectedProjectId('');
+    }
     selectSurface('agent');
     setAgentEpoch((value) => value + 1);
   }
 
-  function runProject(project: AdminProject) {
+  async function runProject(project: AdminProject) {
     setSearchOpen(false);
-    localStorage.removeItem('local-coder.open-job');
-    localStorage.setItem('local-coder.project', project.id);
-    localStorage.setItem('local-coder.company', project.companyId);
-    setSelectedCompanyId(project.companyId);
-    setSelectedProjectId(project.id);
-    selectSurface('project');
+    setActionError(undefined);
+    try {
+      const companyId = project.companyId || project.organizationId || 'personal';
+      if (companyId !== selectedCompanyId) await activateCompany(companyId);
+      localStorage.removeItem('local-coder.open-job');
+      localStorage.setItem('local-coder.project', project.id);
+      localStorage.setItem('local-coder.company', companyId);
+      setSelectedCompanyId(companyId);
+      setSelectedProjectId(project.id);
+      selectSurface('project');
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function openSettings(project?: AdminProject) {
@@ -371,7 +464,7 @@ export function AppRoot() {
   }
 
   function handleCommand(command: DesktopCommand) {
-    if (command === 'new-chat') startNewTask();
+    if (command === 'new-chat') void startNewTask();
     else if (command === 'toggle-sidebar') toggleSidebar();
     else if (command === 'settings') setSettingsOpen(true);
     else if (command === 'projects') selectSurface('projects');
@@ -386,7 +479,7 @@ export function AppRoot() {
       }
       const key = event.key.toLowerCase();
       if (key === 'k') { event.preventDefault(); setSearchOpen(true); }
-      else if (key === 'n') { event.preventDefault(); startNewTask(); }
+      else if (key === 'n') { event.preventDefault(); void startNewTask(); }
       else if (key === '\\') { event.preventDefault(); toggleSidebar(); }
       else if (key === ',') { event.preventDefault(); setSettingsOpen(true); }
       else if (key === '1') { event.preventDefault(); selectSurface('projects'); }
@@ -447,14 +540,16 @@ export function AppRoot() {
   function renderJobRow(job: SidebarJob) {
     const running = isRunning(job.status);
     const read = readJobs.has(job.id);
+    const pinned = pinnedJobs.has(job.id);
     const state = running ? 'running' : read ? 'read' : 'unread';
     const dotLabel = running ? 'In progress' : read ? 'Mark as unread' : 'Mark as read';
-    return <div className="lc-shell-sidebar-row-wrap" key={job.id}>
+    return <div className="lc-shell-sidebar-row-wrap" key={job.id} data-pinned={pinned ? 'true' : 'false'}>
       <button className="lc-shell-chat-dot" data-state={state} onClick={() => { if (!running) markRead(job.id, !read); }} aria-label={`${dotLabel}: ${job.input.goal}`} aria-pressed={running ? undefined : !read} title={dotLabel} />
       <button className={`lc-shell-sidebar-row ${read || running ? '' : 'unread'}`} onClick={() => openJob(job)} title={jobTitle(job)}><span className="lc-shell-sidebar-row-copy"><strong>{jobTitle(job)}</strong><small>{relative(job.updatedAt)}</small></span></button>
       <button className="lc-shell-row-menu-button" aria-label={`More options for ${jobTitle(job)}`} aria-haspopup="menu" aria-expanded={jobMenuId === job.id} onClick={(event) => { event.stopPropagation(); setProjectMenuId(undefined); setJobMenuId((current) => current === job.id ? undefined : job.id); }}><MoreHorizontal size={14} /></button>
       {jobMenuId === job.id ? <div className="lc-shell-row-menu" role="menu" aria-label={`Actions for ${jobTitle(job)}`}>
         <button type="button" role="menuitem" onClick={() => openJob(job)}>Open chat<MessageSquare size={16} /></button>
+        <button type="button" role="menuitem" onClick={() => toggleJobPin(job)}>{pinned ? 'Unpin chat' : 'Pin chat'}{pinned ? <PinOff size={16} /> : <Pin size={16} />}</button>
         <button type="button" role="menuitem" onClick={() => { setJobMenuId(undefined); markRead(job.id, !read); }}>{read ? 'Mark as unread' : 'Mark as read'}<Mail size={16} /></button>
         <button type="button" role="menuitem" onClick={() => renameJob(job)}>Rename…<Pencil size={16} /></button>
         <button type="button" role="menuitem" onClick={() => { setJobMenuId(undefined); selectSurface('runs'); }}>View run details<History size={16} /></button>
@@ -469,6 +564,7 @@ export function AppRoot() {
   const shellStyle = { '--lc-sidebar-width': `${sidebarCollapsed ? collapsedWidth : sidebarWidth}px` } as CSSProperties;
   const tooltip = (label: string) => sidebarCollapsed ? label : undefined;
   const avatar = profileName.trim().charAt(0).toUpperCase() || 'L';
+  const companySurface = surface === 'company' || surface === 'project' || surface === 'projects' || surface === 'agent';
 
   return <div className={`lc-shell-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${autoCollapsed ? 'auto-sidebar-collapsed' : ''} ${sidebarResizing ? 'sidebar-resizing' : ''} surface-${surface}`} style={shellStyle} data-shell={isElectron ? 'electron' : 'web'} data-platform={platform}>
     <div className="lc-shell-window-chrome">
@@ -478,10 +574,10 @@ export function AppRoot() {
 
     <aside className="lc-shell-sidebar" aria-label="Axis" data-collapsed={sidebarCollapsed ? 'true' : 'false'}>
       <nav className="lc-shell-primary-nav">
-        <button className="lc-shell-new-chat" onClick={startNewTask} aria-label="New chat" data-tooltip={tooltip('New chat')}><i><Plus size={15} /></i><span>New chat</span></button>
+        <button className="lc-shell-new-chat" onClick={() => void startNewTask()} aria-label="New chat" data-tooltip={tooltip('New chat')}><i><Plus size={15} /></i><span>New chat</span></button>
         <div className="lc-shell-company-nav-heading"><span>Contexts</span><button type="button" onClick={() => selectSurface('companies')} aria-label="Manage Companies" data-tooltip={tooltip('Manage Companies')}><Plus size={13} /></button></div>
-        {activeCompanies.map((company) => <button key={company.id} className={surface === 'company' && selectedCompanyId === company.id ? 'active' : ''} onClick={() => openCompany(company)} aria-label={company.name} data-tooltip={tooltip(company.name)} data-company-id={company.id}>
-          <span className="lc-shell-company-dot" style={{ backgroundColor: company.color }}>{company.id === 'personal' ? <Building2 size={12} /> : null}</span><span>{company.name}</span>
+        {activeCompanies.map((company) => <button key={company.id} className={companySurface && selectedCompanyId === company.id ? 'active lc-shell-company-row' : 'lc-shell-company-row'} onClick={() => void openCompany(company)} aria-label={company.name} data-tooltip={tooltip(company.name)} data-company-id={company.id}>
+          <span className="lc-shell-company-icon" style={{ color: company.color }}><CompanyIcon icon={company.icon} size={16} /></span><span>{company.name}</span>
         </button>)}
         <button className={surface === 'work-hub' ? 'active' : ''} onClick={() => { localStorage.setItem('local-coder.work-hub-company-filter', 'all'); selectSurface('work-hub'); }} aria-label="Work Hub" data-tooltip={tooltip('Work Hub')}><LayoutDashboard size={16} /><span>Work Hub</span></button>
         <button className={surface === 'runs' ? 'active' : ''} onClick={() => selectSurface('runs')} aria-label="Runs" data-tooltip={tooltip('Runs')}><History size={16} /><span>Runs</span></button>
@@ -494,13 +590,15 @@ export function AppRoot() {
           {visibleProjects.map((project) => {
             const children = jobsByProject.get(project.id) ?? [];
             const expanded = expandedProjects.has(project.id);
-            return <div className="lc-shell-project-node" key={project.id}>
+            const pinned = pinnedProjects.has(project.id);
+            return <div className="lc-shell-project-node" key={project.id} data-pinned={pinned ? 'true' : 'false'}>
               <div className="lc-shell-sidebar-row-wrap">
                 <button className="lc-shell-project-disclosure" onClick={() => toggleProject(project.id)} aria-expanded={expanded} aria-label={`${expanded ? 'Collapse' : 'Expand'} ${project.name}`} disabled={children.length === 0}>{expanded ? <FolderOpen size={15} /> : <Folder size={15} />}</button>
-                <button className="lc-shell-sidebar-row project-row" onClick={() => runProject(project)} title={project.workspace}><span className="lc-shell-sidebar-row-copy"><strong>{project.name}</strong><small>{project.companyName}</small></span></button>
+                <button className="lc-shell-sidebar-row project-row" onClick={() => void runProject(project)} title={project.workspace}><span className="lc-shell-sidebar-row-copy"><strong>{project.name}</strong><small>{project.companyName}</small></span></button>
                 <button className="lc-shell-row-menu-button" aria-label={`More options for ${project.name}`} aria-haspopup="menu" aria-expanded={projectMenuId === project.id} onClick={(event) => { event.stopPropagation(); setJobMenuId(undefined); setProjectMenuId((current) => current === project.id ? undefined : project.id); }}><MoreHorizontal size={14} /></button>
                 {projectMenuId === project.id ? <div className="lc-shell-row-menu" role="menu" aria-label={`Actions for ${project.name}`}>
-                  <button type="button" role="menuitem" onClick={() => { setProjectMenuId(undefined); runProject(project); }}>Open project<FolderOpen size={16} /></button>
+                  <button type="button" role="menuitem" onClick={() => { setProjectMenuId(undefined); void runProject(project); }}>Open project<FolderOpen size={16} /></button>
+                  <button type="button" role="menuitem" onClick={() => toggleProjectPin(project)}>{pinned ? 'Unpin project' : 'Pin project'}{pinned ? <PinOff size={16} /> : <Pin size={16} />}</button>
                   <button type="button" role="menuitem" onClick={() => renameProject(project)}>Rename…<Pencil size={16} /></button>
                   <div className="lc-shell-row-menu-separator" role="separator" />
                   <button type="button" role="menuitem" onClick={() => archiveProject(project, true)}>Archive<Archive size={16} /></button>
@@ -514,7 +612,7 @@ export function AppRoot() {
         </section>
 
         <section className="lc-shell-sidebar-section">
-          <div className="lc-shell-sidebar-section-title"><span>Chats</span><button onClick={startNewTask} aria-label="New chat without a project"><Plus size={14} /></button></div>
+          <div className="lc-shell-sidebar-section-title"><span>Chats</span><button onClick={() => void startNewTask()} aria-label="New chat without a project"><Plus size={14} /></button></div>
           {groupedLooseJobs.map(([label, group]) => <div className="lc-shell-recent-group" key={label}><div className="lc-shell-recent-label">{label}</div>{group.map((job) => renderJobRow(job))}</div>)}
           {looseJobs.length === 0 ? <p className="lc-shell-sidebar-empty">No chats yet</p> : null}
         </section>
@@ -530,12 +628,12 @@ export function AppRoot() {
     <main className="lc-shell-content-shell">
       {actionError ? <div className="lc-agent-error-banner" role="status" aria-live="polite"><span>{actionError}</span><button onClick={() => setActionError(undefined)} aria-label="Dismiss">Dismiss</button></div> : null}
       {surface === 'agent' ? <App key={agentEpoch} /> : null}
-      {surface === 'projects' ? <ProjectGallery onOpenProject={runProject} /> : null}
+      {surface === 'projects' ? <ProjectGallery onOpenProject={(project) => void runProject(project)} /> : null}
       {surface === 'companies' ? <div className="company-manager-surface"><CompaniesSettings /></div> : null}
-      {surface === 'company' && selectedCompany ? <CompanyHub company={selectedCompany} projects={projects} section={companyHubSection} onSectionChange={selectCompanySection} onOpenProject={runProject} onOpenWorkHub={openWorkHubForCompany} onCompanyChanged={() => void refreshSidebar()} /> : null}
+      {surface === 'company' && selectedCompany ? <CompanyHub company={selectedCompany} projects={projects} section={companyHubSection} onSectionChange={selectCompanySection} onOpenProject={(project) => void runProject(project)} onAddProject={startNewProject} onOpenWorkHub={openWorkHubForCompany} onCompanyChanged={() => void refreshSidebar()} /> : null}
       {surface === 'company' && !selectedCompany ? <div className="company-manager-surface"><CompaniesSettings /></div> : null}
-      {surface === 'project' && selectedProject ? <ProjectDetail project={selectedProject} conversations={jobs} onBack={() => selectedCompany ? openCompany(selectedCompany, 'projects') : selectSurface('projects')} onOpenConversation={openJob} onCreated={openJob} onProjectChanged={(project) => setProjects((current) => current.map((item) => item.id === project.id ? project : item))} /> : null}
-      {surface === 'project' && !selectedProject ? <ProjectGallery onOpenProject={runProject} /> : null}
+      {surface === 'project' && selectedProject ? <ProjectDetail project={selectedProject} conversations={jobs} onBack={() => selectedCompany ? void openCompany(selectedCompany, 'projects') : selectSurface('projects')} onOpenConversation={openJob} onCreated={openJob} onProjectChanged={(project) => setProjects((current) => current.map((item) => item.id === project.id ? canonicalProject(project) : item))} /> : null}
+      {surface === 'project' && !selectedProject ? <ProjectGallery onOpenProject={(project) => void runProject(project)} /> : null}
       {surface === 'runs' ? <RunInspector /> : null}
       {surface === 'work-hub' ? <GlobalWorkHubLauncher tab={workHubTab} onTabChange={selectWorkHubTab} /> : null}
       {surface === 'archived' ? <ArchivedView jobs={archivedJobs} projects={archivedProjects} onOpenJob={openJob} onRestoreJob={(job) => archiveJob(job, false)} onDeleteJob={deleteJob} onRestoreProject={(project) => archiveProject(project, false)} onDeleteProject={deleteProject} /> : null}
@@ -545,16 +643,16 @@ export function AppRoot() {
       <section className="global-search" role="dialog" aria-modal="true" aria-label="Search">
         <div className="global-search-input"><Search size={17} /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search chats, projects and Companies" /><kbd>Esc</kbd></div>
         <div className="global-search-results">
-          {searchResults.companies.length ? <div className="global-search-group"><span>Companies</span>{searchResults.companies.map((company) => <button key={company.id} onClick={() => { setSearchOpen(false); openCompany(company); }}><Building2 size={15} /><span><strong>{company.name}</strong><small>{company.id === 'personal' ? 'Personal context' : company.description || 'Company context'}</small></span></button>)}</div> : null}
+          {searchResults.companies.length ? <div className="global-search-group"><span>Companies</span>{searchResults.companies.map((company) => <button key={company.id} onClick={() => { setSearchOpen(false); void openCompany(company); }}><CompanyIcon icon={company.icon} size={15} /><span><strong>{company.name}</strong><small>{company.id === 'personal' ? 'Personal context' : company.description || 'Company context'}</small></span></button>)}</div> : null}
           {searchResults.jobs.length ? <div className="global-search-group"><span>Chats</span>{searchResults.jobs.map((job) => <button key={job.id} onClick={() => openJob(job)}><MessageSquare size={15} /><span><strong>{job.input.goal}</strong><small>{relative(job.updatedAt)}</small></span></button>)}</div> : null}
-          {searchResults.projects.length ? <div className="global-search-group"><span>Projects</span>{searchResults.projects.map((project) => <button key={project.id} onClick={() => runProject(project)}><Folder size={15} /><span><strong>{project.name}</strong><small>{project.companyName ?? project.workspace}</small></span></button>)}</div> : null}
+          {searchResults.projects.length ? <div className="global-search-group"><span>Projects</span>{searchResults.projects.map((project) => <button key={project.id} onClick={() => void runProject(project)}><Folder size={15} /><span><strong>{project.name}</strong><small>{project.companyName ?? project.workspace}</small></span></button>)}</div> : null}
           {!searchResults.companies.length && !searchResults.jobs.length && !searchResults.projects.length ? <p className="global-search-empty">No results</p> : null}
         </div>
       </section>
     </div> : null}
 
     <ShellDialog request={dialog} onClose={() => setDialog(undefined)} />
-    <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} onRunProject={(project) => { setSettingsOpen(false); runProject(project); }} />
+    <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} onRunProject={(project) => { setSettingsOpen(false); void runProject(project); }} />
   </div>;
 }
 
