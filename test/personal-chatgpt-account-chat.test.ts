@@ -131,7 +131,8 @@ test('Personal ChatGPT Account normal Chat bypasses the AgentRuntime blocker wit
   ]);
 
   const effective = runtime.effectiveRuntimeContext('personal-chatgpt-chat');
-  assert.equal(effective?.session.connection.id, connectionId);
-  assert.equal(effective?.session.executionTarget.mode, 'inference-only');
-  assert.deepEqual(effective?.session.roots, []);
+  assert.equal(effective?.connection.id, connectionId);
+  assert.equal(effective?.connection.authKind, 'chatgpt-account');
+  assert.equal(effective?.execution.mode, 'inference-only');
+  assert.deepEqual(effective?.roots, []);
 });
