@@ -10,6 +10,7 @@ import {
   Inbox,
   LayoutDashboard,
   LoaderCircle,
+  MapPin,
   RefreshCw,
   Settings2,
   Trash2,
@@ -42,6 +43,18 @@ const BOARD_COLUMNS: Array<{ id: string; label: string; statuses: WorkHubTicketV
   { id: 'qa', label: 'QA', statuses: ['qa'] },
   { id: 'done', label: 'Done', statuses: ['done'] }
 ];
+
+const CALENDAR_START_HOUR = 6;
+const CALENDAR_END_HOUR = 22;
+const CALENDAR_HOUR_HEIGHT = 58;
+const CALENDAR_TIME_WIDTH = 52;
+const CALENDAR_DAY_WIDTH = 168;
+
+interface CalendarPlacement {
+  event: WorkHubCalendarEventView;
+  lane: number;
+  laneCount: number;
+}
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function localDate(value: string): string { return new Date(value).toLocaleDateString([], { month: 'short', day: 'numeric' }); }
@@ -81,6 +94,42 @@ function addLocalDays(value: Date, days: number): Date {
 function storedScope(): WorkHubScope {
   return localStorage.getItem('local-coder.work-hub-company-filter')?.trim() || 'all';
 }
+function minutesOfDay(value: string): number {
+  const date = new Date(value);
+  return date.getHours() * 60 + date.getMinutes();
+}
+function calendarEventKey(event: WorkHubCalendarEventView): string {
+  return `${event.sourceId}:${event.externalId}`;
+}
+function calendarEventDetails(event: WorkHubCalendarEventView, sourceLabel: string): string {
+  const timing = event.allDay
+    ? `${localDate(event.start)} · All day`
+    : `${localDate(event.start)} · ${localTime(event.start)}–${localTime(event.end)}`;
+  return [
+    timing,
+    event.companyName,
+    sourceLabel,
+    event.system,
+    event.calendar,
+    event.location,
+    event.organizer ? `Organizer: ${event.organizer}` : undefined,
+    event.status ? `Status: ${event.status}` : undefined
+  ].filter((value): value is string => Boolean(value)).join(' · ');
+}
+function placeCalendarEvents(events: WorkHubCalendarEventView[]): CalendarPlacement[] {
+  const sorted = [...events].sort((left, right) => left.start.localeCompare(right.start) || left.end.localeCompare(right.end));
+  const laneEnds: number[] = [];
+  const placements = sorted.map((event) => {
+    const start = Date.parse(event.start);
+    const end = Math.max(start + 15 * 60_000, Date.parse(event.end));
+    let lane = laneEnds.findIndex((laneEnd) => laneEnd <= start);
+    if (lane < 0) lane = laneEnds.length;
+    laneEnds[lane] = end;
+    return { event, lane, laneCount: 1 };
+  });
+  const laneCount = Math.max(1, laneEnds.length);
+  return placements.map((placement) => ({ ...placement, laneCount }));
+}
 
 async function api<T>(path: string): Promise<T> {
   const response = await fetch(path, { headers: { accept: 'application/json' } });
@@ -102,6 +151,7 @@ export function GlobalWorkHubLauncher({ tab, onTabChange: setTab }: GlobalWorkHu
   const [error, setError] = useState<string>();
   const [clock, setClock] = useState(() => Date.now());
   const [weekStart, setWeekStart] = useState(() => startOfLocalWeek().getTime());
+  const [activeCalendarEventKey, setActiveCalendarEventKey] = useState<string>();
   const automaticRefreshStarted = useRef(false);
   const mainRef = useRef<HTMLElement>(null);
 
@@ -143,7 +193,10 @@ export function GlobalWorkHubLauncher({ tab, onTabChange: setTab }: GlobalWorkHu
     }).catch((next) => setError(errorMessage(next)));
   }, []);
 
-  useEffect(() => { mainRef.current?.scrollTo({ top: 0 }); }, [tab, scope]);
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 });
+    setActiveCalendarEventKey(undefined);
+  }, [tab, scope, weekStart]);
 
   const activeCompanies = companies;
   const companyIndex = (companyId: string) => Math.max(0, activeCompanies.findIndex((company) => company.id === companyId));
@@ -237,6 +290,18 @@ export function GlobalWorkHubLauncher({ tab, onTabChange: setTab }: GlobalWorkHu
     : null;
   const pageTitle = tab === 'today' ? 'Today' : tab === 'calendar' ? 'Calendar' : tab === 'work' ? 'My Work' : tab === 'inbox' ? 'Inbox' : 'Sources';
   const scopeName = scope === 'all' ? 'All contexts' : activeCompanies.find((company) => company.id === scope)?.name ?? 'All contexts';
+  const calendarWidth = CALENDAR_TIME_WIDTH + CALENDAR_DAY_WIDTH * 7;
+  const calendarHeight = (CALENDAR_END_HOUR - CALENDAR_START_HOUR) * CALENDAR_HOUR_HEIGHT;
+  const now = new Date(clock);
+  const currentDayIndex = weekDays.findIndex((day) => todayKey(day) === todayKey(now));
+  const currentMinute = now.getHours() * 60 + now.getMinutes();
+  const showCurrentTime = currentDayIndex >= 0 && currentMinute >= CALENDAR_START_HOUR * 60 && currentMinute <= CALENDAR_END_HOUR * 60;
+  const timedCalendarPlacements = weekDays.flatMap((day, dayIndex) => {
+    const dayEvents = weekEvents.filter((event) => !event.allDay && sameLocalDay(event.start, day));
+    return placeCalendarEvents(dayEvents).map((placement) => ({ ...placement, day, dayIndex }));
+  });
+  const paintedCalendarPlacements = [...timedCalendarPlacements].sort((left, right) =>
+    Number(calendarEventKey(left.event) === activeCalendarEventKey) - Number(calendarEventKey(right.event) === activeCalendarEventKey));
 
   return <section className="work-hub-shell work-hub-page" aria-label="Work Hub">
     <aside className="work-hub-rail">
@@ -305,19 +370,65 @@ export function GlobalWorkHubLauncher({ tab, onTabChange: setTab }: GlobalWorkHu
           </div>
           <strong>{weekTitle}</strong><span>{weekEvents.length} event{weekEvents.length === 1 ? '' : 's'}</span>
         </div>
-        <div className="work-hub-list work-hub-week-list" aria-label={`Week of ${weekTitle}`}>
-          {weekDays.map((day) => {
-            const events = weekEvents.filter((event) => sameLocalDay(event.start, day));
-            return <section className="work-hub-section" key={todayKey(day)}>
-              <div className="work-hub-section-heading"><h3>{day.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}</h3><span>{events.length || ''}</span></div>
-              {events.map((event) => <article className={`work-hub-item work-hub-calendar-event ${companyClass(event.companyId)}`} key={`${event.sourceId}:${event.externalId}`} data-company-id={event.companyId} title={`${event.companyName} · ${sourceName(event.sourceId)}`}>
-                <div className="work-hub-time">{event.allDay ? 'All day' : `${localTime(event.start)}–${localTime(event.end)}`}</div>
-                <div className="work-hub-item-copy"><strong>{event.title}</strong><small>{event.companyName} · {event.system}{event.calendar ? ` · ${event.calendar}` : ''}{event.location ? ` · ${event.location}` : ''}</small></div>
-                <aside><CompanyBadge name={event.companyName} />{externalLink(event.meetingUrl ?? event.url, event.meetingUrl ? 'Join' : 'Open')}</aside>
-              </article>)}
-              {events.length === 0 ? <div className="work-hub-column-empty">No events</div> : null}
-            </section>;
-          })}
+        <div className="work-hub-week-scroll">
+          <div className="work-hub-week" role="grid" aria-label={`Week of ${weekTitle}`}>
+            <div className="work-hub-week-header" role="row">
+              <span className="work-hub-week-zone">Local</span>
+              {weekDays.map((day) => <div className={todayKey(day) === todayKey(now) ? 'today' : ''} key={todayKey(day)} role="columnheader"><span>{day.toLocaleDateString([], { weekday: 'short' })}</span><strong>{day.getDate()}</strong></div>)}
+            </div>
+            <div className="work-hub-all-day" role="row">
+              <span>all-day</span>
+              {weekDays.map((day) => <div key={todayKey(day)}>{weekEvents.filter((event) => event.allDay && sameLocalDay(event.start, day)).map((event) => {
+                const link = event.meetingUrl ?? event.url;
+                const details = calendarEventDetails(event, sourceName(event.sourceId));
+                return link
+                  ? <a key={calendarEventKey(event)} className={`work-hub-all-day-event ${companyClass(event.companyId)}`} href={link} target="_blank" rel="noreferrer" title={details} data-company-id={event.companyId}>{event.title}</a>
+                  : <span key={calendarEventKey(event)} className={`work-hub-all-day-event ${companyClass(event.companyId)}`} title={details} data-company-id={event.companyId}>{event.title}</span>;
+              })}</div>)}
+            </div>
+            <svg className="work-hub-week-grid" viewBox={`0 0 ${calendarWidth} ${calendarHeight}`} role="img" aria-label={`Weekly calendar, ${weekTitle}`}>
+              <rect className="work-hub-week-grid-bg" x="0" y="0" width={calendarWidth} height={calendarHeight} />
+              {Array.from({ length: CALENDAR_END_HOUR - CALENDAR_START_HOUR + 1 }, (_, index) => {
+                const hour = CALENDAR_START_HOUR + index;
+                const y = index * CALENDAR_HOUR_HEIGHT;
+                return <g key={hour}><line className="work-hub-hour-line" x1={CALENDAR_TIME_WIDTH} x2={calendarWidth} y1={y} y2={y} /><text className="work-hub-hour-label" x={CALENDAR_TIME_WIDTH - 8} y={Math.min(calendarHeight - 4, y + 4)}>{`${String(hour).padStart(2, '0')}:00`}</text></g>;
+              })}
+              {weekDays.map((day, dayIndex) => <line className={`work-hub-day-line${todayKey(day) === todayKey(now) ? ' today' : ''}`} key={todayKey(day)} x1={CALENDAR_TIME_WIDTH + dayIndex * CALENDAR_DAY_WIDTH} x2={CALENDAR_TIME_WIDTH + dayIndex * CALENDAR_DAY_WIDTH} y1="0" y2={calendarHeight} />)}
+              {paintedCalendarPlacements.map(({ event, lane, laneCount, day, dayIndex }) => {
+                const rawStart = minutesOfDay(event.start);
+                const rawEnd = sameLocalDay(event.end, day) ? minutesOfDay(event.end) : CALENDAR_END_HOUR * 60;
+                const visibleStart = Math.max(CALENDAR_START_HOUR * 60, Math.min(CALENDAR_END_HOUR * 60 - 15, rawStart));
+                const visibleEnd = Math.max(visibleStart + 15, Math.min(CALENDAR_END_HOUR * 60, rawEnd));
+                const laneWidth = (CALENDAR_DAY_WIDTH - 5) / laneCount;
+                const x = CALENDAR_TIME_WIDTH + dayIndex * CALENDAR_DAY_WIDTH + 3 + lane * laneWidth;
+                const y = ((visibleStart - CALENDAR_START_HOUR * 60) / 60) * CALENDAR_HOUR_HEIGHT + 2;
+                const height = Math.max(25, ((visibleEnd - visibleStart) / 60) * CALENDAR_HOUR_HEIGHT - 3);
+                const link = event.meetingUrl ?? event.url;
+                const key = calendarEventKey(event);
+                const details = calendarEventDetails(event, sourceName(event.sourceId));
+                return <foreignObject key={key} x={x} y={y} width={Math.max(34, laneWidth - 2)} height={height}>
+                  <article
+                    className={`work-hub-calendar-event ${companyClass(event.companyId)}`}
+                    tabIndex={0}
+                    data-company-id={event.companyId}
+                    aria-label={`${event.title}. ${details}`}
+                    onMouseEnter={() => setActiveCalendarEventKey(key)}
+                    onMouseLeave={() => setActiveCalendarEventKey((current) => current === key ? undefined : current)}
+                    onFocus={() => setActiveCalendarEventKey(key)}
+                    onBlur={() => setActiveCalendarEventKey((current) => current === key ? undefined : current)}
+                  >
+                    <strong>{event.title}</strong>
+                    <small>{localTime(event.start)}–{localTime(event.end)}</small>
+                    <span>{event.companyName}</span>
+                    {event.location ? <span><MapPin size={9} />{event.location}</span> : null}
+                    {link ? <a className="work-hub-calendar-join" href={link} target="_blank" rel="noreferrer">{event.meetingUrl ? 'Join' : 'Open'}<ExternalLink size={9} /></a> : null}
+                    <div className="work-hub-calendar-tooltip" role="tooltip"><strong>{event.title}</strong><span>{details}</span></div>
+                  </article>
+                </foreignObject>;
+              })}
+              {showCurrentTime ? <g className="work-hub-now"><circle cx={CALENDAR_TIME_WIDTH + currentDayIndex * CALENDAR_DAY_WIDTH + 3} cy={((currentMinute - CALENDAR_START_HOUR * 60) / 60) * CALENDAR_HOUR_HEIGHT} r="3" /><line x1={CALENDAR_TIME_WIDTH + currentDayIndex * CALENDAR_DAY_WIDTH + 3} x2={CALENDAR_TIME_WIDTH + (currentDayIndex + 1) * CALENDAR_DAY_WIDTH} y1={((currentMinute - CALENDAR_START_HOUR * 60) / 60) * CALENDAR_HOUR_HEIGHT} y2={((currentMinute - CALENDAR_START_HOUR * 60) / 60) * CALENDAR_HOUR_HEIGHT} /></g> : null}
+            </svg>
+          </div>
         </div>
       </div> : null}
 
@@ -340,16 +451,25 @@ export function GlobalWorkHubLauncher({ tab, onTabChange: setTab }: GlobalWorkHu
       </div>)}{visibleMessages.length === 0 ? <div className="work-hub-empty large"><Inbox size={24} /><strong>Your inbox is empty for this scope</strong><span>Dismissed messages stay hidden locally; source administration remains inside Companies.</span></div> : null}</div> : null}
 
       {tab === 'sources' ? <>
-        <div className="work-hub-source-toolbar"><div><strong>{scopedSources.length} source{scopedSources.length === 1 ? '' : 's'}</strong><span>Read-only aggregation and health. Add, remove or reassign sources only inside their owning Company.</span></div></div>
-        <div className="work-hub-source-list">
+        <div className="work-hub-source-toolbar"><div><strong>{scopedSources.length} source{scopedSources.length === 1 ? '' : 's'}</strong><span>Read-only aggregation and sync health. Add, remove or reassign sources only inside their owning Company.</span></div></div>
+        <div className="work-hub-list">
           {scopedSources.map((source) => {
             const state = scopedStates.find((candidate) => candidate.sourceId === source.id);
-            const syncing = state?.status === 'syncing' || busy === `refresh:${source.id}`;
-            return <article className={`work-hub-source-row ${companyClass(source.companyId)}`} key={source.id} data-company-id={source.companyId} data-source-id={source.id}>
-              <div className="work-hub-source-identity"><Settings2 size={15} /><span><strong>{source.label}</strong><small>{source.companyName} · {kindLabel(source.kind)} · {source.connectionId}</small></span></div>
-              <div className="work-hub-source-state"><CompanyBadge name={source.companyName} /><span className={`status-${state?.status ?? 'idle'}`}>{state?.status ?? 'idle'}</span><small>{state?.itemCount ?? 0} items{state?.durationMs ? ` · ${durationLabel(state.durationMs)}` : ''}</small></div>
-              <div className="work-hub-source-actions"><button className="btn-secondary" disabled={busy !== undefined} onClick={() => void refreshSource(source)}><RefreshCw className={syncing ? 'spin' : ''} size={12} />{syncing ? 'Syncing…' : 'Sync'}</button></div>
-              {state?.error ? <div className="work-hub-source-error">{state.error}</div> : null}
+            const status = state?.status ?? 'idle';
+            const syncing = status === 'syncing' || busy === `refresh:${source.id}`;
+            const detail = syncing
+              ? `${syncStageLabel(state)}${state?.syncStartedAt ? ` · ${elapsedLabel(state.syncStartedAt, clock)}` : ''}`
+              : `${stateLabel(status)} · ${state?.itemCount ?? 0} item${state?.itemCount === 1 ? '' : 's'}${state?.durationMs ? ` · ${durationLabel(state.durationMs)}` : ''}`;
+            const SourceIcon = source.kind === 'calendar' ? CalendarDays : source.kind === 'tickets' ? BriefcaseBusiness : Inbox;
+            return <article className={`work-hub-source-card ${companyClass(source.companyId)} status-${status}`} key={source.id} data-company-id={source.companyId} data-source-id={source.id}>
+              <div className="work-hub-source-icon"><SourceIcon size={17} /></div>
+              <div className="work-hub-source-copy">
+                <strong>{source.label}</strong>
+                <small>{source.companyName} · {kindLabel(source.kind)} · {source.connectionId}</small>
+                <span className="work-hub-state">{syncing ? <LoaderCircle className="spin" size={11} /> : status === 'ready' ? <CheckCircle2 size={11} /> : status === 'error' ? <AlertCircle size={11} /> : <Settings2 size={11} />}{detail}</span>
+              </div>
+              <div className="work-hub-source-actions"><CompanyBadge name={source.companyName} /><button className="btn-secondary" disabled={busy !== undefined} onClick={() => void refreshSource(source)}><RefreshCw className={syncing ? 'spin' : ''} size={12} />{syncing ? 'Syncing…' : status === 'error' ? 'Try again' : 'Sync'}</button></div>
+              {state?.error ? <div className="work-hub-source-error"><AlertCircle size={13} /><span>{state.error}</span></div> : null}
             </article>;
           })}
           {scopedSources.length === 0 ? <div className="work-hub-empty large"><Settings2 size={24} /><strong>No sources for this scope</strong><span>Open the owning Company → Connections to configure Work Hub sources.</span></div> : null}

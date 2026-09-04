@@ -2,15 +2,41 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
-## [0.23.3] - 2026-09-03
+## [0.23.5] - 2026-09-03
+
+### Added
+- Added Project-scoped scheduled tasks with create/edit/delete, manual/hourly/daily/weekdays/weekly recurrence, pause/resume, Run now, and automatic overdue pickup while Axis is running.
+- Added real-Electron Project overview visual smoke coverage for populated, scheduled-task dialog, light-theme, and narrow-window states.
 
 ### Changed
-- Rebuilt the Project overview around the current Claude Projects information hierarchy: project composer and recent chats stay primary, while Instructions and Project knowledge form the compact right-side context rail.
-- Moved Axis-specific model and Connection policy administration out of the always-visible Project sidebar and into an explicit modal opened from the model control or project menu.
+- Rebuilt the Project overview around the current Claude Cowork hierarchy: the composer and Recent conversations remain primary, while Instructions, Scheduled, Context, and Memory form the right-side project rail.
+- Moved Axis-specific model and Connection policy administration out of the always-visible Project rail and into an explicit modal opened from the model control or project menu.
+- Favorite projects now use a functional star state and sort ahead of non-favorites in the Projects gallery.
 
 ### Fixed
-- Wired previously decorative Project overview controls: pin persistence, rename, archive, delete confirmation, instruction editing, project-folder knowledge selection, model/Connection configuration, Chat/Cowork selection, send, and recent-chat navigation now perform their corresponding actions.
-- Removed nonfunctional Scheduled and Git review placeholders from the Project landing page so the overview no longer exposes unfinished controls or lets the Connection policy overflow and corrupt the layout.
+- Wired the Project overview controls for instructions, Context folder selection, Chat/Cowork submission, scheduled tasks, favorites, model/Connection configuration, rename, archive, delete, and recent-chat navigation instead of leaving decorative or incomplete controls.
+- Removed the Project Git review and overflowing Connection-policy blocks from the overview so the page no longer corrupts its layout or exposes unrelated administration in the Claude-style project rail.
+
+## [0.23.4] - 2026-09-03
+
+### Fixed
+- Restored the Work Hub Calendar as a seven-day weekly time-grid agenda with all-day events, timed positioning, overlap lanes, week navigation, and a current-time marker while preserving Company scope and provenance.
+- Fixed calendar event detail tooltips so the hovered or keyboard-focused SVG event paints above neighboring event blocks instead of rendering its tooltip underneath them.
+- Fixed Work Hub calendar timezone drift by preserving offset-qualified source instants, rejecting ambiguous timed timestamps without an explicit UTC offset, rendering conversion only in the device timezone, and invalidating stale pre-fix calendar caches before re-sync.
+- Calendar sync date windows now use the machine's local calendar date instead of UTC date slicing, preventing the requested range itself from shifting around local evening hours.
+
+## [0.23.3] - 2026-09-03
+
+### Added
+- Added an Archived search field using the same compact search control as Projects, filtering archived chats and projects by title/name, workspace, Company, and original chat goal while preserving pagination and restore/delete actions.
+- Added an Anthropic-only wire adaptation that closes every object schema as required by Claude structured outputs while JSON-encoding open tool arguments and restoring them to canonical objects before Axis tool dispatch, preserving provider-neutral runtime semantics and arbitrary tool arguments.
+- Added regression coverage that verifies the Anthropic agent schema contains no open object schemas and that tool arguments round-trip back into the canonical Axis contract.
+
+### Changed
+- Archived search results reuse the existing Axis empty-state treatment when no items match instead of introducing a one-off search result surface.
+
+### Fixed
+- Fixed Anthropic API-key AgentRuntime turns failing with HTTP 400 on Claude Haiku 4.5 and other structured-output models because the canonical open `toolCalls[].arguments` object was sent directly as `additionalProperties: true`.
 
 ## [0.23.2] - 2026-09-03
 
@@ -18,6 +44,10 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Re-audited `docs/CODEX_CLAUDE_DESKTOP_PARITY.md` against merged PRs #75–#88 so the unified AgentRuntime, filesystem, process, Git, MCP, browser, Project Memory and runtime-security work is no longer mislabeled as absent.
 - Replaced the stale pre-AgentRuntime diagnosis and implementation order with the real P1 Gate state: stabilization first, then product worktree orchestration, durable restart checkpoints, a real Local Worker execution target, the accepted Codex Account blocker/live evidence, and only then the remaining P2–P4 roadmap.
 - Clarified checklist semantics with explicit BASE, PARCIAL, BLOCKER and intentional architectural-decision states while keeping live-provider, UI and product-orchestration gaps open rather than overclaiming completion.
+- Work Hub Sources now reuses the established Work Hub list, source icon, semantic status, Company provenance, retry, and contained error patterns instead of maintaining an unstyled parallel row treatment.
+
+### Fixed
+- Restored the Work Hub Sources visual hierarchy after the multi-company refactor left the renderer on class names with no matching shared styles, fixing collapsed metadata, uncontained sync-error strips, and inconsistent source status/action alignment.
 
 ## [0.23.1] - 2026-09-03
 
