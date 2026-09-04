@@ -10,6 +10,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  Trash2,
   UserRound,
   X
 } from 'lucide-react';
@@ -19,6 +20,7 @@ import { CompanyIcon } from './CompanyIcon.js';
 import { ConnectionCenterSettings } from './ConnectionCenterSettings.js';
 import { CompanySourcesSettings } from './CompanySourcesSettings.js';
 import type { McpConnectorView, ProviderConnectionView } from './native.js';
+import { ShellDialog, type ShellDialogRequest } from './ShellDialog.js';
 import { UiSelect, type UiSelectOption } from './UiSelect.js';
 
 export type CompanyHubSection = 'overview' | 'projects' | 'connections' | 'mcps' | 'skills' | 'settings';
@@ -83,10 +85,6 @@ function McpStatus({ status }: { status: McpConnectorView['status'] }) {
   return <span className="company-mcp-status muted"><CircleAlert size={14} />{status === 'disabled' ? 'Disabled' : 'Unknown'}</span>;
 }
 
-function mcpMark(name: string): string {
-  return name.trim().charAt(0).toUpperCase() || 'M';
-}
-
 export function CompanyHub({
   company,
   projects,
@@ -110,6 +108,7 @@ export function CompanyHub({
   const [description, setDescription] = useState(company.description ?? '');
   const [color, setColor] = useState(company.color);
   const [saving, setSaving] = useState(false);
+  const [contextDialog, setContextDialog] = useState<ShellDialogRequest>();
   const isPersonal = company.id === 'personal';
 
   const scopedProjects = useMemo(() => projects
@@ -178,7 +177,33 @@ export function CompanyHub({
       });
       window.dispatchEvent(new Event('local-coder:companies-changed'));
       onCompanyChanged();
-      setNotice('Company settings saved.');
+      setNotice('Context settings saved.');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function requestDeleteContext() {
+    if (isPersonal) return;
+    setContextDialog({
+      kind: 'confirm',
+      title: 'Delete context',
+      message: `“${company.name}” will be permanently deleted. Axis will refuse the operation while this context still owns Projects, Connections or conversations.`,
+      confirmLabel: 'Delete context',
+      danger: true,
+      onConfirm: () => void deleteContext()
+    });
+  }
+
+  async function deleteContext() {
+    setSaving(true);
+    setNotice(undefined);
+    try {
+      await api(`/api/companies/${encodeURIComponent(company.id)}`, { method: 'DELETE' });
+      window.dispatchEvent(new CustomEvent('local-coder:companies-changed'));
+      onCompanyChanged();
     } catch (error) {
       setNotice(errorMessage(error));
     } finally {
@@ -322,7 +347,7 @@ export function CompanyHub({
               {connectors.length ? <div className="work-hub-list company-mcp-connectors">{connectors.map((connector) => {
                 const reconnecting = mcpBusy === `reconnect:${connection.id}:${connector.name}`;
                 return <div className="work-hub-item company-mcp-card" key={connector.name} data-status={connector.status}>
-                  <span className="company-mcp-logo" aria-hidden="true">{mcpMark(connector.name)}</span>
+                  <span className="company-mcp-logo" aria-hidden="true"><Network size={17} /></span>
                   <span className="work-hub-item-copy"><strong>{connector.name}</strong><small>{connector.target || connector.detail || `${connector.transport.toUpperCase()} transport`}</small></span>
                   <McpStatus status={connector.status} />
                   {connector.status === 'needs-auth' || connector.status === 'error' ? <button type="button" className="btn-secondary" disabled={reconnecting} onClick={() => void reconnectMcp(connection, connector)}>{reconnecting ? 'Connecting…' : connector.status === 'needs-auth' ? 'Connect' : 'Reconnect'}</button> : null}
@@ -359,26 +384,32 @@ export function CompanyHub({
       </> : null}
 
       {section === 'settings' ? <>
-        <CompanyPageHeader title="Settings" description={isPersonal ? 'Personal is a fixed context in Axis.' : 'Update how this context appears in Axis.'} />
+        <CompanyPageHeader title="Settings" description={isPersonal ? 'Personal is a fixed context in Axis.' : 'Update or delete this context.'} />
         {isPersonal ? <section className="company-personal-settings">
           <span className="company-personal-settings-icon"><UserRound size={18} /></span>
-          <div><strong>Personal</strong><p>This context cannot be renamed or converted into a company.</p></div>
+          <div><strong>Personal</strong><p>This context cannot be renamed or deleted.</p></div>
         </section> : <form className="company-settings-form" onSubmit={(event) => void saveCompany(event)}>
           <section className="settings-form-section">
             <div className="settings-section-copy"><strong>Name</strong></div>
-            <input required aria-label="Company name" value={name} onChange={(event) => setName(event.target.value)} />
+            <input required aria-label="Context name" value={name} onChange={(event) => setName(event.target.value)} />
           </section>
           <section className="settings-form-section">
             <div className="settings-section-copy"><strong>Description</strong></div>
-            <input aria-label="Company description" value={description} onChange={(event) => setDescription(event.target.value)} />
+            <input aria-label="Context description" value={description} onChange={(event) => setDescription(event.target.value)} />
           </section>
           <section className="settings-form-section">
             <div className="settings-section-copy"><strong>Accent color</strong></div>
-            <input aria-label="Company color" type="color" value={color} onChange={(event) => setColor(event.target.value.toUpperCase())} />
+            <input aria-label="Context color" type="color" value={color} onChange={(event) => setColor(event.target.value.toUpperCase())} />
           </section>
           <div className="work-hub-actions company-settings-actions"><button type="submit" className="btn-primary" disabled={saving || !name.trim()}>{saving ? 'Saving…' : 'Save changes'}</button></div>
+          <section className="settings-form-section">
+            <div className="settings-section-copy"><strong>Delete context</strong><small>Available only after its Projects, Connections and conversations are removed.</small></div>
+            <button type="button" className="btn-secondary danger" disabled={saving} onClick={requestDeleteContext}><Trash2 size={13} />Delete context</button>
+          </section>
         </form>}
       </> : null}
     </main>
+
+    <ShellDialog request={contextDialog} onClose={() => setContextDialog(undefined)} />
   </section>;
 }
