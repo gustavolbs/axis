@@ -99,6 +99,8 @@ const SENSITIVE_ENV_NAME = /(?:TOKEN|SECRET|KEY|PASSWORD|PASSWD|COOKIE|AUTH)/i;
 const SENSITIVE_ASSIGNMENT = /\b(?:OPENAI_API_KEY|CODEX_API_KEY|CODEX_ACCESS_TOKEN)\s*=\s*[^\s\r\n]+/gi;
 const BEARER_TOKEN = /\bBearer\s+[A-Za-z0-9._~+\/-]{12,}={0,2}/gi;
 const OPENAI_TOKEN = /\bsk-(?:proj-)?[A-Za-z0-9._-]{12,}/gi;
+const CODEX_USAGE_LIMIT = /you(?:'|’)?ve hit your usage limit/i;
+const CODEX_USAGE_RESET = /try again at\s+([A-Z][a-z]{2}\s+\d{1,2}(?:st|nd|rd|th)?,\s+\d{4}\s+\d{1,2}:\d{2}\s+(?:AM|PM))/i;
 
 function profileId(value: string): string {
   const trimmed = value.trim();
@@ -263,6 +265,13 @@ export function sanitizeCodexOutput(input: string, knownSensitiveValues: string[
     .replace(SENSITIVE_ASSIGNMENT, (match) => `${match.slice(0, match.indexOf('=') + 1)}[REDACTED]`)
     .replace(BEARER_TOKEN, 'Bearer [REDACTED]')
     .replace(OPENAI_TOKEN, '[REDACTED]');
+}
+
+export function simplifyCodexUsageLimitError(input: string): string | undefined {
+  const safe = sanitizeCodexOutput(input).trim();
+  if (!CODEX_USAGE_LIMIT.test(safe)) return undefined;
+  const reset = CODEX_USAGE_RESET.exec(safe)?.[1]?.trim();
+  return `ChatGPT Account usage limit reached.${reset ? ` Try again at ${reset}.` : ''}`;
 }
 
 function buildSafeBaseEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -465,13 +474,20 @@ export class CodexAccountRuntime {
         args.push('--output-schema', schemaPath);
       }
       args.push(cleanPrompt);
-      return await this.run(args, {
+      const result = await this.run(args, {
         cwd: options.cwd,
         env: this.profileEnv(profile),
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         signal: options.signal,
         stopOnValidJson: options.stopOnValidJson
       });
+      if (result.exitCode !== 0 && !result.timedOut && !result.cancelled) {
+        const usageLimit = simplifyCodexUsageLimitError(
+          [result.stderr, result.stdout].filter(Boolean).join('\n')
+        );
+        if (usageLimit) return { ...result, stdout: '', stderr: usageLimit };
+      }
+      return result;
     } finally {
       if (schemaDir) {
         try { fs.rmSync(schemaDir, { recursive: true, force: true }); } catch { /* best effort */ }

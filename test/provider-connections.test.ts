@@ -104,12 +104,12 @@ test('authenticated Claude accounts expose explicit stable model choices without
   const account = catalog.find((provider) => provider.id === claudeAccountConnectionId('personal'));
   assert.ok(account);
   assert.equal(account.ready, true);
-  assert.equal(account.label, 'Claude Personal');
+  assert.equal(account.label, 'Account · Claude · Claude Personal');
   assert.equal(account.providerFamily, 'anthropic');
   assert.equal(account.auth, 'claude-account');
   assert.equal(account.billing, 'subscription');
   assert.deepEqual(account.models.map((model) => model.id), ['default', 'fable', 'opus', 'sonnet', 'haiku']);
-  assert.deepEqual(account.models.map((model) => model.displayName), ['Account default', 'Fable', 'Opus', 'Sonnet', 'Haiku']);
+  assert.deepEqual(account.models.map((model) => model.displayName), ['Default model', 'Fable', 'Opus', 'Sonnet', 'Haiku']);
 
   const companyId = claudeAccountConnectionId('company');
   const companyView = connections.view(companyId);

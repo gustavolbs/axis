@@ -2,16 +2,28 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
-## [0.24.1] - 2026-09-04
+## [0.24.1] - 2026-09-03
+
+### Added
+- Added real-Electron Project overview smoke coverage for the existing pin, shared composer, inline model selector, compact rail, project action menu, light/dark themes, and narrow-window overflow behavior.
 
 ### Fixed
 - Repaired the Project overview without changing Axis Project pin semantics: the existing pin remains persistent, the composer/context folder controls open the real folder picker, instruction cancellation restores the saved value, and project rename/archive/delete actions are now reachable from the header menu.
 - Replaced the Project-only Model & connections dialog with the same inline model-selector presentation used by New Chat. Project model choices now come from the Project catalog and open as the existing composer popover instead of exposing the Connection-policy matrix from the overview.
 - Removed decorative Context search and Scheduled-task controls from the overview instead of shipping a client-only scheduler that bypasses the planned local Automation architecture.
 - Stabilized the Company/Work Hub visual smoke by waiting for the global Company filter transition before opening Sources.
+- Fixed Connection authentication badges being flattened to the generic gray status-pill style; API Key now renders blue, Account amber, and Local green while preserving the existing three-stylesheet/CSP-safe renderer contract.
+- Simplified recognized ChatGPT/Codex Account usage-limit failures before they reach the UI, stripping CLI banners, workdir/model/session metadata, duplicated provider output, system instructions, and upgrade/credits noise while preserving the provider-supplied retry time.
+- Fixed OpenAI API-key Chat structured responses so the strict `axis_agent_turn` schema satisfies Structured Outputs for every required property, including nullable optional fields and JSON-encoded tool arguments.
+- Restored normal Chat for ChatGPT Personal Account in Company Personal, including Personal Projects, through the inference-only direct account transport instead of the canonical AgentRuntime tool loop.
+- Propagated cancellation to Claude Account and ChatGPT/Codex Account transports so Stop reaches the provider process.
+- Reconciled Anthropic API-key structured output with the provider-neutral strict response envelope and retained regression coverage for account routing, provider/model presentation, schema strictness, and cancellation.
 
-### Added
-- Added real-Electron Project overview smoke coverage for the existing pin, shared composer, inline model selector, compact rail, project action menu, light/dark themes, and narrow-window overflow behavior.
+### Changed
+- Reworked the Chat model selector into `Connections` and `Models`: connections show the configured name (or provider fallback) with explicit authentication badges, while models show normalized names/versions and concise task-fit descriptions.
+
+### Security
+- The direct ChatGPT Personal Account compatibility path is limited to normal Chat in Company Personal. Cowork and non-Personal ChatGPT/Codex AgentRuntime flows remain fail-closed until provider-native executable tools can be intercepted safely before execution.
 
 ## [0.24.0] - 2026-09-03
 
@@ -153,6 +165,13 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added session-owned background process lifecycle tools: `process_start`, `process_poll`, `process_wait`, `process_stdin`, `process_signal`, `process_terminate` and `process_list`. Background commands expose stable process IDs, incremental cursor-based output, explicit retention gaps, bounded stdin, controlled signals and final mutation status without requiring a PTY.
 - Added `process_which` diagnostics for the exact executable PATH visible to Axis plus a `createProcessTools()` suite so Git, validation and later runtime composition can reuse one policy/environment/registry boundary instead of inventing process execution separately.
 - Added process runtime coverage for successful and non-zero commands, timeout, tree cancellation, cwd escapes, environment filtering, exact execution-target selection, command lifecycle, permission denial, mutation status, read-only fail-closed policy, provider/auth independence, background process isolation, cursored/truncated logs, wait cancellation, stdin, signals and session cleanup.
+- Added provider-neutral Project Memory capture from the canonical runtime lifecycle with deterministic per-Company/per-Project storage, structured session summaries, bounded activity/evidence, root-scoped repository summaries, rolling high-signal handoffs, recent failure/cancellation context and canonical retrieval for later sessions.
+- Added provider/auth/session-independence coverage for shared Project Memory, plus hard isolation tests for cross-Company/cross-Project/same-root scopes, same-origin clone identities, dirty-worktree freshness and runtime restart recovery.
+- Added structured Account runtime regression coverage for Claude and ChatGPT/Codex subscription authentication, profile-scoped config directories, redaction, secret-free metadata, safe MCP management, exact model selection, cancellation, timeouts, missing-runtime failures and official CLI structured-output plumbing.
+- Added a common provider capability taxonomy and model-aware negotiation layer across API Key, Account and Ollama adapters, including conservative defaults, explicit model narrowing, fail-closed unknown support and canonical session capability freezing.
+- Added the first local-provider-backed canonical AgentRuntime integration tests so the same provider-neutral runtime and filesystem tool contract are exercised through both OpenAI API Key and Ollama-style providers without provider-owned tool execution.
+- Added deterministic timeout/cancellation and mutation safety semantics across AgentRuntime tool execution, including explicit non-safe retry treatment for uncertain mutations.
+- Added process environment sanitization, exact session root checks and subprocess ownership boundaries for shell-free process execution.
 - Added provider-neutral Project Memory capture from the canonical `AgentLifecycleSink`, with structured session handoffs for goals, repository reads and mutations, commands, validations, decisions, failures, cancellations and current work state.
 - Added local atomic persistence and bounded task-ranked recovery partitioned by Company + Project + repository root fingerprint, with path/value sanitization, shared transversal secret redaction, retention limits, deterministic recent/trigram ranking and compact prompt-ready handoffs.
 - Added explicit memory root-binding persistence keyed by Company + Project + repository fingerprint so later Project-scoped runs can recover prior root-specific handoffs before the current workspace has been read again.
@@ -189,10 +208,32 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Provider-side MCP execution is not trusted as a policy boundary. Axis composes MCP tools itself and passes only the resulting canonical tool definitions through provider adapters.
 - Imported MCP configuration never promotes source-file env values to Axis-owned plaintext secrets: sensitive auth stays as an environment or credential-vault reference resolved at request time.
 - Remote MCP redirects cannot escape the original network authorization boundary; unauthorized redirect targets fail before credentials or custom headers are forwarded.
+- Browser sessions are bound to the immutable runtime session/Company and cannot be reused across Companies even if session IDs collide. Browser content is marked untrusted and cannot mutate runtime authority.
+- Browser navigation blocks credential-bearing URLs and rejects loopback, private, link-local and metadata targets unless explicitly allowlisted; every redirect is re-authorized before the next request and cross-origin auth-like headers are stripped.
+- Fetch-only browser backends fail interaction, screenshot and developer tooling explicitly; Axis never silently falls back to Computer Use or another execution surface.
+- Filesystem tools refuse absolute paths, traversal, symlink escapes and cross-Company roots; writable operations require exact write-authorized roots and deny read-only session roots.
+- Process tools run argv-only without a shell, require an exact authorized cwd/root, strip ambient secrets, refuse arbitrary environment overrides, and require canonical permissions before mutation.
+- Managed background processes are scoped to the immutable runtime session, bounded in output/retention, and cannot be addressed or terminated from another session.
+- Provider adapters reject hidden provider-native tool calls before canonical Axis dispatch, preserve exact model/Connection identity, propagate cancellation, and never silently switch provider/model/Company.
+- ChatGPT/Codex Account stays fail-closed in canonical AgentRuntime until every provider-managed core tool can be intercepted before execution; read-only sandboxing, `approval=never`, app-server approval events and post-hoc output parsing are not treated as substitutes.
 
 ## [0.19.0] - 2026-09-02
 
 ### Added
+- Added provider-neutral MCP tools and resources for native HTTP Streamable MCP, native legacy SSE MCP, Claude Account and ChatGPT/Codex Account sources through one canonical `AxisTool`/`AgentResource` runtime surface.
+- Added Company-scoped MCP catalog discovery with exact Connection ownership, sensitive config reference-only handling, per-tool timeout, cancellation, canonical protocol error mapping, mutation-safe retry semantics and common lifecycle telemetry.
+- Added Work Hub-backed MCP server adapters for normalized Jira, Slack, Teams and Calendar data plus explicit source-owned authentication boundaries.
+
+### Security
+- MCP resources remain Company/Connection scoped and fail closed when ownership is missing or ambiguous. Sensitive auth/config values stay behind source-owned references and never enter model-visible tool definitions.
+- Remote MCP URLs are normalized, require HTTPS, reject embedded credentials and never inherit arbitrary provider credentials.
+
+## [0.18.0] - 2026-09-02
+
+### Added
+- Added standalone multi-Company Contexts with explicit immutable IDs, editable names/descriptions/icons/colors, Personal as a reserved built-in Context, persistent ordering/search/archive/restore, safe empty-Company deletion, and canonical active-Company selection across restart.
+- Added Company-scoped Connection ownership with stable bindings independent from mutable provider account organization metadata, plus Company-aware Project/job filtering and cross-Company action guards.
+- Added Company Context UI navigation, Company Hub, scoped Project and Connection surfaces, and Work Hub Company filtering while removing redundant global Company selectors from Settings and Chat.
 - Added a provider-neutral `AgentRuntime` with immutable session authority over Company, optional Project, exact Connection/model, execution target, roots, enabled MCP resources, capabilities, permissions, rules, and attached resource metadata.
 - Added a typed canonical conversation/tool protocol with normalized messages, tool definitions/calls/results, lifecycle events, structured decisions, permission requests, validation events, cancellation, and session-scoped approval tokens.
 - Added a minimal `AgentProviderAdapter` contract that exposes only provider/model/capability identity plus `runTurn()`, with a deterministic in-memory adapter proving the runtime is not coupled to Claude, OpenAI, Ollama, or Account transport details.
@@ -200,10 +241,6 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added a base runtime permission gate and a filesystem-root tool with canonical path containment checks, plus regression coverage for traversal and out-of-root access denial.
 - Added deterministic automated coverage for normal conversation, tool execution, decision pauses/resume, permission pauses/resume, timeout, user cancellation, provider error, tool error, session isolation, and immutability.
 - Added `docs/AGENT_RUNTIME.md` documenting ownership boundaries, provider-neutral contracts, lifecycle events, pause/resume semantics, tool safety, timeout/cancellation, failure rules, and extension points.
-
-## [0.18.0] - 2026-09-02
-
-### Added
 - Added the canonical Project Company-ownership contract: `companyId` is now the source of truth, creation requires an explicit non-archived Company, legacy organization metadata is mapped only through deterministic id equality, and projects reconcile fail-closed when ownership is ambiguous or missing.
 - Added Company-tagged run summaries, run detail, conversation navigation, archived surfaces, and dashboard activity so Project-originated history exposes its owning Company across primary renderer views.
 - Added local-automation parity foundations: a canonical versioned schedule/task store with typed recurrence, timezone/model/Connection/policy snapshot, task-pinned Company/Project execution, attempt/run history, missed-run handling, retry/backoff, deterministic `nextRunAt`, atomic writes, and migration seams.
@@ -220,10 +257,15 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ### Security
 - Cross-Company Project/Connection reuse fails closed during project creation, runtime policy resolution, and project policy edits; local Connections are still permitted across Companies only as shared compute and remain scoped by the active Project/Company policy.
 - Local Automation revalidates exact Company, Project, Connection, model, execution target, immutable schedule policy snapshot and current Project runtime authority before each attempt; cross-Company drift, missing resources, unsafe policy widening and unapproved Connection changes block execution instead of silently falling back.
+- Company identity is derived from canonical bindings and active Context, never from workspace paths, provider labels, account display metadata or request-body claims. Personal remains reserved and cannot be repurposed as a normal Company.
+
 
 ## [0.17.0] - 2026-09-02
 
 ### Added
+- Added persistent project-less Personal Chat history and explicit Personal provider catalog isolation from organization-owned credentials.
+- Added per-Connection subscription account profiles and exact API-key Connection identities in Personal Chat, including multiple credentials for one provider family without ambiguous legacy fallback.
+- Added provider-neutral Personal Chat model discovery and invocation across current/future providers plus Ollama without hardcoding a closed provider family list.
 - Added Company as the canonical tenancy/context primitive, with persistent Company definitions, explicit Personal context, migration from legacy Organization metadata, archived lifecycle state, and deterministic ownership resolution for Projects, Connections, MCP servers, Skills, memory, runs, credentials, and Work Hub sources.
 - Added a top sidebar Contexts switcher for Personal + active Companies, persisted current Company selection, dedicated Company Hub surfaces, and Company-scoped Projects, Connections, MCPs, Skills, and Settings with shared UI primitives.
 - Added Work Hub as a global read-only operational aggregation across Companies, with Company filters and compact Today, Calendar, My Work, Inbox, and Sources views that preserve Company provenance on every row/item.
@@ -244,6 +286,7 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ### Security
 - Company boundaries are explicit authority boundaries: resources from one Company cannot be reused by another except for intentionally shared local compute, and labels/names never grant access.
 - Work Hub aggregation is read-only and provenance-preserving; source add/remove/reassignment remains Company-scoped and cannot be performed from the global Hub.
+- Personal Chat catalog and history are scoped by canonical Company/session ownership and reject organization-owned API credentials and subscription accounts even when provider families match.
 
 ## [0.16.0] - 2026-09-01
 
@@ -254,19 +297,30 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added GitHub Actions macOS packaging for Apple Silicon and Intel with unsigned `.app`, `.dmg`, and `.zip` artifacts plus gated release-time signing/notarization when Apple secrets are available.
 - Added deterministic macOS artifact verification for Info.plist metadata, signing state, architecture, ASAR payload, DMG contents, and ZIP bundle structure.
 - Added renderer/native-shell regression tests and real-Electron visual smoke coverage for the shell, project management, settings, profile, and application startup.
+- Added provider-neutral cloud model discovery, direct inference, token usage, pricing, spend policies and Personal/Project catalog surfaces for OpenAI, Anthropic and future registered cloud providers.
+- Added explicit stable provider-account profiles for Claude and ChatGPT/Codex subscription accounts, with isolated config directories and provider-owned login/status/MCP management.
+- Added personal Chat model selection across API Key, Claude Account, ChatGPT Account and Local/Ollama identities.
 
 ### Changed
 - The existing web server is now an optional diagnostics/dev wrapper around the shared runtime instead of the only product shell, and desktop launch is now the default `npm run app` entrypoint.
 - Browser mode keeps fetch-based runtime transport; standalone Electron routes `/api/*` and `/api/events` through the preload bridge to the in-process runtime instead of binding a localhost control plane.
 - macOS CI now builds/tests on ARM64 and also packages a separate Intel artifact for distribution.
 
+### Security
+- Cloud API credentials remain in their configured secret backend and provider-account session credentials remain in provider-owned profile directories; neither is persisted into project/runtime metadata.
+
 ## [0.15.0] - 2026-09-01
 
 ### Added
+- Added the standalone desktop shell with persistent sidebar navigation, Chat/Cowork composer, provider/model picker, usage/settings surfaces, and packaged macOS support.
+- Added local/remote execution settings, isolated provider account profiles, and provider connection management.
 - Added a production OpenAI Responses adapter with configurable endpoint/API key/model/headers, normalized request mapping for text/file/image inputs, JSON-schema tools, tool-call/result messages, reasoning summaries, timeouts, cancellation, and canonical usage/finish/error metadata.
 - Added a production Anthropic Messages adapter with configurable endpoint/API key/model/version/beta/max-token settings, normalized content/tool blocks, image/document inputs, `tool_use`/`tool_result` round-tripping, thinking blocks, usage/stop-reason mapping, and provider-native web-search capability negotiation.
 - Added secure HTTP provider transports with loopback/private/credentialed-URL blocking, redirect revalidation, bounded response reads, timeout/user-cancel distinction, and upstream error normalization.
 - Added focused adapter coverage for OpenAI and Anthropic request/response mapping, tools, attachments, reasoning, web search, provider errors, timeout, cancellation, network policy, and capability reporting.
+
+### Security
+- Desktop renderer remains sandboxed behind a narrow preload bridge and restrictive CSP; external HTTPS links are opened in the system browser.
 
 ## [0.14.0] - 2026-09-01
 

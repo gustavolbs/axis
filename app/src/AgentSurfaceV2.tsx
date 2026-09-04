@@ -220,6 +220,7 @@ interface ProviderModeConfig {
   description: string;
   providerId: string;
   providerFamily?: 'ollama' | 'anthropic' | 'openai';
+  authKind?: CatalogProvider['auth'];
   authLabel?: string;
   ready: boolean;
   reason?: string;
@@ -268,6 +269,17 @@ function providerLabel(providerId: string): string {
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join(' ');
 }
+function connectionDisplayName(provider: CatalogProvider): string {
+  const fallback = providerLabel(provider.providerFamily ?? provider.id);
+  const raw = provider.label?.trim();
+  if (!raw) return fallback;
+  const clean = raw
+    .replace(/^API Key\s*·\s*/i, '')
+    .replace(/^Account\s*·\s*(?:Claude|ChatGPT)\s*·\s*/i, '')
+    .replace(/^(?:OpenAI|Claude)\s*·\s*(?=.+)/i, '')
+    .trim();
+  return clean || fallback;
+}
 function providerDescription(provider: CatalogProvider): string {
   if (provider.auth === 'local' || provider.kind === 'local') return 'Local model · stays on this computer';
   if (provider.auth === 'api-key') return 'API key · provider model list updates live';
@@ -278,18 +290,18 @@ function providerDescription(provider: CatalogProvider): string {
   return `Use the selected ${provider.label ?? providerLabel(provider.id)} model directly`;
 }
 function providerAuthLabel(provider: CatalogProvider): string {
-  if (provider.auth === 'api-key') return 'API key';
-  if (provider.auth === 'claude-account') return 'Claude account';
-  if (provider.auth === 'chatgpt-account') return 'ChatGPT account';
-  if (provider.auth === 'local' || provider.kind === 'local') return 'Local';
-  return 'Provider';
+  if (provider.auth === 'api-key') return 'API KEY';
+  if (provider.auth === 'claude-account' || provider.auth === 'chatgpt-account') return 'ACCOUNT';
+  if (provider.auth === 'local' || provider.kind === 'local') return 'LOCAL';
+  return 'PROVIDER';
 }
-function modelDescription(provider: CatalogProvider): string {
-  if (provider.auth === 'local' || provider.kind === 'local') return 'Local model';
-  if (provider.auth === 'api-key') return 'API key · live provider model';
-  if (provider.auth === 'claude-account') return 'Claude account · managed model alias';
-  if (provider.auth === 'chatgpt-account') return 'ChatGPT account · managed model';
-  return `Cloud · ${provider.providerFamily ? providerLabel(provider.providerFamily) : 'provider'}`;
+function modelDescription(provider: CatalogProvider, model: CatalogModel): string {
+  const identity = `${model.id} ${model.displayName}`.toLowerCase();
+  if (model.id === 'default') return "Uses this account's default model";
+  if (/(?:haiku|nano|mini|flash|fast)/.test(identity)) return 'Faster for quick responses';
+  if (/(?:fable|opus|reasoning|\bo1\b|\bo3\b|\bo4\b)/.test(identity)) return 'For complex tasks';
+  if (provider.auth === 'local' || provider.kind === 'local') return 'Private local model for everyday tasks';
+  return 'Efficient for everyday tasks';
 }
 function modelValue(selection: ModelSelection): string {
   if (selection.mode === 'auto') return 'auto';
@@ -357,9 +369,6 @@ function claudeDisplayLabel(model: ModelOption): string {
 }
 
 function claudeMenuModels(models: ModelOption[]): { recent: ModelOption[]; legacy: ModelOption[] } {
-  // Account connections expose stable aliases such as `sonnet` and `opus`
-  // rather than versioned Claude ids. They are already provider-managed
-  // current choices, so they belong in the main list instead of “More models”.
   if (models.length > 0 && !models.some((model) => claudeFamily(model.modelId))) {
     return { recent: models, legacy: [] };
   }
@@ -577,7 +586,7 @@ export function AgentSurfaceV2() {
           modelId: model.id,
           label: model.displayName,
           createdAt: model.createdAt,
-          description: modelDescription(provider),
+          description: modelDescription(provider, model),
           available: provider.ready && model.available,
           contextWindow: model.contextWindow,
           maxOutputTokens: model.maxOutputTokens,
@@ -592,10 +601,11 @@ export function AgentSurfaceV2() {
   const providerModes = useMemo<ProviderModeConfig[]>(() => {
     const modes = (catalog?.providers ?? []).map((provider) => ({
       id: provider.id,
-      label: provider.label ?? providerLabel(provider.id),
+      label: connectionDisplayName(provider),
       description: providerDescription(provider),
       providerId: provider.id,
       providerFamily: provider.providerFamily ?? provider.id as 'ollama' | 'anthropic' | 'openai',
+      authKind: provider.auth,
       authLabel: providerAuthLabel(provider),
       ready: provider.ready && provider.models.some((model) => model.available),
       reason: provider.reason
@@ -608,7 +618,8 @@ export function AgentSurfaceV2() {
         description: 'Start on Ollama; ask before bounded cloud escalation',
         providerId: 'ollama',
         providerFamily: 'ollama',
-        authLabel: 'Local',
+        authKind: 'local',
+        authLabel: 'LOCAL',
         ready: modes[localIndex]!.ready,
         reason: modes[localIndex]!.reason
       });
@@ -1273,26 +1284,26 @@ function ModelMenu(props: {
     const legacy = props.modelMenu === 'legacy-models';
     const visibleModels = legacy ? modelGroups.legacy : modelGroups.recent;
     return <div className="lc-agent-popover model-popover model-list-popover" role="menu">
-      <button className="popover-back" onClick={() => props.setModelMenu(legacy ? 'models' : 'providers')}><ChevronLeft size={16} /><strong>{legacy ? moreCopy.title : `${currentModeConfig.label} models`}</strong></button>
+      <button className="popover-back" onClick={() => props.setModelMenu(legacy ? 'models' : 'providers')}><ChevronLeft size={16} /><strong>{legacy ? moreCopy.title : 'Models'}</strong></button>
       <div className="popover-separator" />
       {visibleModels.map((model) => <button key={`${currentMode}-${model.modelId}`} className={selectedModelId === model.modelId ? 'selected' : ''} disabled={!model.available} title={!model.available ? model.reason ?? 'Provider unavailable' : undefined} onClick={() => { props.setModelSelection(modeValue(currentMode, model.modelId)); props.setModelMenu('closed'); }}>
         <span><strong>{currentModeConfig.providerFamily === 'anthropic' ? claudeDisplayLabel(model) : model.label}</strong><small>{model.description}{model.available ? '' : ` · ${model.reason ?? 'unavailable'}`}</small></span>
         {selectedModelId === model.modelId ? <Check size={16} /> : null}
       </button>)}
       {!legacy && modelGroups.legacy.length > 0 ? <><div className="popover-separator" /><button className="popover-row-link" onClick={() => props.setModelMenu('legacy-models')}><span><strong>More models</strong><small>{moreCopy.description}</small></span><ChevronRight size={16} /></button></> : null}
-      {visibleModels.length === 0 ? <div className="model-menu-note">{legacy ? moreCopy.empty : currentModeConfig.reason ?? 'No Chat models are available for this provider. Check its connection and API key.'}</div> : null}
+      {visibleModels.length === 0 ? <div className="model-menu-note">{legacy ? moreCopy.empty : currentModeConfig.reason ?? 'No Chat models are available for this connection. Check its authentication and availability.'}</div> : null}
     </div>;
   }
 
   return <div className="lc-agent-popover model-popover" role="menu">
-    <div className="model-provider-label">Provider or account</div>
+    <div className="model-provider-label">Connections</div>
     {props.providerModes.map((mode) => {
       const ready = modeReady(mode);
       const unavailable = mode.id === 'local-first' && !props.allowLocalFirst
-        ? ' · requires a project'
-        : ready ? '' : ` · ${mode.reason ?? 'unavailable'}`;
+        ? 'Requires a project'
+        : ready ? '' : mode.reason ?? 'Unavailable';
       return <button key={mode.id} className={selectedMode === mode.id ? 'selected' : ''} disabled={!ready} title={!ready ? mode.reason : undefined} onClick={() => chooseProviderMode(mode)}>
-        <span><strong>{mode.label}{mode.authLabel ? <em>{mode.authLabel}</em> : null}</strong><small>{mode.description}{unavailable}</small></span>
+        <span><strong>{mode.label}{mode.authLabel ? <span className={`model-auth-badge status-pill ${mode.authKind === 'api-key' ? 'live' : mode.authKind === 'local' ? 'good' : mode.authKind === 'claude-account' || mode.authKind === 'chatgpt-account' ? 'warn' : ''}`}>{mode.authLabel}</span> : null}</strong>{unavailable ? <small>{unavailable}</small> : null}</span>
         {ready ? <ChevronRight size={16} /> : null}
       </button>;
     })}

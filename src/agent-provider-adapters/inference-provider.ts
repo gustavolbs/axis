@@ -42,12 +42,11 @@ function closeAnthropicObjectSchemas(value: unknown): unknown {
 }
 
 /**
- * Anthropic structured outputs require every object schema to be closed. The
- * canonical Axis envelope deliberately leaves tool arguments open because the
- * exact shape belongs to the selected tool. On the Anthropic wire only, encode
- * that open object as JSON text and restore it before the canonical runtime sees
- * the response. This preserves arbitrary tool arguments without weakening the
- * provider-neutral runtime contract or sending an invalid Anthropic schema.
+ * Anthropic structured outputs require every object schema to be closed. Older
+ * Axis agent envelopes exposed tool arguments as an open object; newer strict
+ * envelopes already encode them as JSON text for all providers. Accept both
+ * shapes here so the Anthropic compatibility boundary remains forward-compatible
+ * while preserving canonical arbitrary tool arguments.
  */
 function anthropicAgentTurnSchema(
   schema: Record<string, unknown>
@@ -65,16 +64,17 @@ function anthropicAgentTurnSchema(
     ? itemProperties.arguments
     : undefined;
 
-  if (
-    !argumentsSchema ||
-    argumentsSchema.type !== 'object' ||
-    argumentsSchema.additionalProperties !== true
-  ) {
+  const alreadyJsonEncoded = argumentsSchema?.type === 'string';
+  const legacyOpenObject = argumentsSchema?.type === 'object' && argumentsSchema.additionalProperties === true;
+  if (!argumentsSchema || (!alreadyJsonEncoded && !legacyOpenObject)) {
     throw new AgentProviderProtocolError(
-      'Axis agent turn schema no longer exposes open tool arguments in the expected shape.'
+      'Axis agent turn schema exposes tool arguments in an unsupported shape.'
     );
   }
 
+  // Normalize both supported inputs to the exact Anthropic wire contract. This
+  // keeps the #93 compatibility boundary stable even when the provider-neutral
+  // envelope already arrives in the newer JSON-string representation.
   itemProperties!.arguments = {
     type: 'string',
     description: 'JSON-encoded object containing the exact arguments for the selected Axis tool.'
@@ -230,7 +230,7 @@ export function createOpenAiApiKeyAgentAdapter(
 
 /**
  * Anthropic API-key connections keep the canonical Axis contract while adapting
- * the open tool-arguments object to Anthropic's closed structured-output schema.
+ * the agent envelope to Anthropic's closed structured-output requirements.
  */
 export function createAnthropicApiKeyAgentAdapter(
   provider: InferenceProvider,

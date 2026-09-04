@@ -1,3 +1,4 @@
+import { currentCancellationSignal } from './cancellation.js';
 import { ClaudeAccountProfileStore, ClaudeAccountRuntime } from './claude-account-profiles.js';
 import { CodexAccountProfileStore, CodexAccountRuntime } from './codex-account-profiles.js';
 import {
@@ -115,6 +116,39 @@ function claudeVersionLabel(modelId: string): string {
   return `${family.charAt(0).toUpperCase()}${family.slice(1)}${version ? ` ${version}` : ''}`;
 }
 
+function openAiVersionLabel(modelId: string, fallback: string): string {
+  const match = /^gpt-(\d+(?:\.\d+)*)(?:-(.+))?$/i.exec(modelId.trim());
+  if (!match) return fallback;
+  const suffix = match[2]
+    ?.split('-')
+    .filter(Boolean)
+    .map((part) => /^[a-z]+$/i.test(part)
+      ? `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`
+      : part)
+    .join(' ');
+  return `GPT ${match[1]}${suffix ? ` ${suffix}` : ''}`;
+}
+
+function normalizedCatalogModel(
+  view: ProviderConnectionView,
+  model: ModelDefinition
+): ModelDefinition {
+  if (
+    model.id === 'default' &&
+    (view.auth === 'claude-account' || view.auth === 'chatgpt-account')
+  ) {
+    return { ...model, displayName: 'Default model' };
+  }
+  if (view.auth === 'api-key' && view.providerFamily === 'openai') {
+    return { ...model, displayName: openAiVersionLabel(model.id, model.displayName) };
+  }
+  if (view.auth === 'api-key' && view.providerFamily === 'anthropic') {
+    const family = claudeModelFamily(model.id);
+    return family ? { ...model, displayName: claudeVersionLabel(model.id) } : model;
+  }
+  return model;
+}
+
 function latestClaudeModels(models: ModelDefinition[]): Map<ClaudeAccountModelFamily, ModelDefinition> {
   const latest = new Map<ClaudeAccountModelFamily, ModelDefinition>();
   for (const model of [...models].sort((left, right) => {
@@ -135,7 +169,7 @@ function latestClaudeModels(models: ModelDefinition[]): Map<ClaudeAccountModelFa
  * its latest model without a Local Coder release.
  */
 const CLAUDE_ACCOUNT_MODELS: AccountModelSpec[] = [
-  { id: 'default', label: 'Account default' },
+  { id: 'default', label: 'Default model' },
   { id: 'fable', label: 'Fable', alias: true },
   { id: 'opus', label: 'Opus', alias: true },
   { id: 'sonnet', label: 'Sonnet', alias: true },
@@ -145,7 +179,7 @@ const CLAUDE_ACCOUNT_MODELS: AccountModelSpec[] = [
 function accountModels(providerId: string, family: 'anthropic' | 'openai', label: string): ModelDefinition[] {
   const specs = family === 'anthropic'
     ? CLAUDE_ACCOUNT_MODELS
-    : [{ id: 'default', label: 'Account default' }];
+    : [{ id: 'default', label: 'Default model' }];
   return specs.map((spec) => ({
     providerId,
     id: spec.id,
@@ -214,6 +248,7 @@ class ClaudeAccountInferenceProvider implements InferenceProvider {
     const startedAt = Date.now();
     const result = await this.runtime.invoke(this.profileId, accountPrompt(request), {
       timeoutMs: request.timeoutMs,
+      signal: currentCancellationSignal(),
       model: request.model,
       captureResultMetadata: true,
       allowedTools: ['mcp__*'],
@@ -265,6 +300,7 @@ class ChatGptAccountInferenceProvider implements InferenceProvider {
     const startedAt = Date.now();
     const result = await this.runtime.invoke(this.profileId, accountPrompt(request), {
       timeoutMs: request.timeoutMs,
+      signal: currentCancellationSignal(),
       model: request.model,
       outputSchema: request.output?.type === 'json_schema' ? request.output.schema : undefined
     });
@@ -297,6 +333,13 @@ function apiConnectionLabel(providerFamily: 'anthropic' | 'openai', credentialLa
     : /\b(?:gpt|openai)\b/i.test(credentialLabel);
   if (alreadyNamesProvider) return credentialLabel;
   return `${providerFamily === 'openai' ? 'OpenAI' : 'Claude'} · ${credentialLabel}`;
+}
+
+function catalogConnectionLabel(view: ProviderConnectionView): string {
+  if (view.auth === 'api-key') return `API Key · ${view.label}`;
+  if (view.auth === 'claude-account') return `Account · Claude · ${view.label}`;
+  if (view.auth === 'chatgpt-account') return `Account · ChatGPT · ${view.label}`;
+  return view.label;
 }
 
 function connectionBelongsToOrganization(
@@ -496,7 +539,9 @@ export class ProviderConnectionRuntime {
       let reason = view.reason;
       if (view.available) {
         try {
-          models = await this.provider(view).listModels();
+          models = (await this.provider(view).listModels()).map((model) =>
+            normalizedCatalogModel(view, model)
+          );
           if (models.length === 0) reason = `${view.label} is not authenticated or has no available models.`;
         } catch (error) {
           reason = error instanceof Error ? error.message : String(error);
@@ -505,7 +550,7 @@ export class ProviderConnectionRuntime {
       results.push({
         id: view.id,
         kind: 'cloud',
-        label: view.label,
+        label: catalogConnectionLabel(view),
         providerFamily: view.providerFamily,
         auth: view.auth,
         billing: view.billing,

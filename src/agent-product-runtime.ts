@@ -407,6 +407,40 @@ function runtimeSystemPrompt(
   ].filter((item): item is string => Boolean(item)).join('\n\n');
 }
 
+function directPersonalChatSystemPrompt(
+  input: ProjectEngineerInput,
+  connection: ProviderConnectionView,
+  modelId: string,
+  project?: ProjectDefinition
+): string {
+  return [
+    '# AXIS PERSONAL CHAT',
+    'This is a direct Personal Chat provider transport, not an Axis AgentRuntime tool cycle.',
+    `Project: ${project?.id ?? '(none)'}`,
+    `Connection: ${connection.id}`,
+    `Provider family: ${connection.providerFamily}`,
+    `Auth kind: ${connection.auth}`,
+    `Model: ${modelId}`,
+    'Answer the conversation directly. No Axis repository roots, filesystem, shell, Git, browser, MCP, or other canonical runtime tools are attached to this compatibility transport.',
+    'Never claim that Axis executed repository or canonical runtime tool work.',
+    'Never expose raw chain-of-thought; concise reasoning summaries are allowed.',
+    project?.instructions?.trim()
+      ? `# PROJECT INSTRUCTIONS\n${project.instructions.trim()}`
+      : undefined,
+    input.context?.trim() ? `# USER CONTEXT\n${input.context.trim()}` : undefined,
+    input.constraints?.length
+      ? `# CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}`
+      : undefined
+  ].filter((item): item is string => Boolean(item)).join('\n\n');
+}
+
+function directPersonalChatTranscript(input: ProjectEngineerInput): string {
+  return JSON.stringify([
+    ...(input.chatHistory ?? []),
+    { role: 'user', content: input.goal }
+  ]);
+}
+
 function eventFiles(
   events: readonly AgentLifecycleEvent[],
   type: 'read' | 'mutation'
@@ -463,9 +497,12 @@ function asEngineerResult(
 }
 
 /**
- * Canonical product-composition layer. Both Chat and Cowork execute the same
- * AgentRuntime. Their authority differs only through the immutable session
- * context and the tools/capabilities/permissions derived from it.
+ * Canonical product-composition layer. Project Chat and Cowork normally execute
+ * the same AgentRuntime with immutable authority. Personal Company ChatGPT/Codex
+ * Account Chat is the narrow compatibility exception: normal Chat uses a direct
+ * provider conversation, with or without a Personal Project, because Codex
+ * cannot yet prove the all-tools-disabled boundary required to enter AgentRuntime.
+ * Cowork and every non-Personal Company ChatGPT Account session stay fail-closed.
  */
 export class AgentProductRuntime implements AgentProductLifecycleSource {
   private readonly listeners = new Set<(event: AgentLifecycleEvent) => void>();
@@ -575,6 +612,85 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       connectionId: decision.selected.providerId,
       modelId: decision.selected.modelId
     };
+  }
+
+  private async executeDirectPersonalChatGptAccount(
+    input: ProductEngineerInput,
+    sessionId: string
+  ): Promise<LocalEngineerResult | undefined> {
+    if ((input.interactionMode ?? 'cowork') !== 'chat') return undefined;
+
+    const project = input.projectId
+      ? this.options.projects.getProject(input.projectId)
+      : undefined;
+    const snapshot = this.options.companyContext();
+    const companyId = canonicalCompanyId(snapshot, project, input.companyId);
+    if (companyId !== PERSONAL_COMPANY_ID) return undefined;
+
+    const selection = await this.resolveSelection(input, project, 'chat', snapshot, companyId);
+    const connection = this.options.connections.view(selection.connectionId);
+    if (!connection) throw new Error(`Unknown provider connection: ${selection.connectionId}`);
+    if (connection.auth !== 'chatgpt-account') return undefined;
+    if (connection.providerFamily !== 'openai') {
+      throw new Error(`ChatGPT Account connection ${connection.id} must use provider family openai.`);
+    }
+    if (project) assertProjectConnection(project, 'chat', connection);
+
+    const context = buildAgentSessionContext({
+      companyContext: snapshot,
+      sessionId,
+      companyId,
+      project: project ? { id: project.id } : undefined,
+      connection,
+      modelId: selection.modelId,
+      executionTarget: {
+        id: this.targetId,
+        kind: 'desktop',
+        mode: 'inference-only'
+      },
+      roots: [],
+      permissions: { default: 'denied', entries: {} },
+      capabilities: { entries: {} },
+      resources: []
+    });
+    this.effectiveContexts.set(sessionId, buildEffectiveRuntimeContext({
+      session: context,
+      policyEngine: this.policyEngine,
+      labels: {
+        companyName: snapshot.companies.find((company) => company.id === companyId)?.name
+      },
+      mcpCandidates: []
+    }));
+
+    const resolved = await this.options.providers.personalModelDefinition(
+      connection.id,
+      selection.modelId
+    );
+    const effort = input.reasoningEffort && input.reasoningEffort !== 'auto'
+      ? input.reasoningEffort
+      : undefined;
+    const result = await resolved.provider.invoke({
+      model: selection.modelId,
+      systemPrompt: directPersonalChatSystemPrompt(input, connection, selection.modelId, project),
+      userPrompt: directPersonalChatTranscript(input),
+      stage: 'agent-runtime',
+      output: { type: 'text' },
+      reasoning: effort ? { effort } : undefined,
+      onProgress: undefined
+    });
+    if (result.providerId !== connection.id) {
+      throw new Error(
+        `Direct Personal Chat provider identity mismatch: selected ${connection.id}, returned ${result.providerId}.`
+      );
+    }
+
+    return asEngineerResult(
+      input,
+      'success',
+      result.content.trim() || 'Completed.',
+      [],
+      []
+    );
   }
 
   private async resolveTransport(
@@ -770,6 +886,9 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       throw new Error('AgentRuntime product execution requires budgetJobId/sessionId.');
     }
     const productInput = input as ProductEngineerInput;
+    const directPersonalChat = await this.executeDirectPersonalChatGptAccount(productInput, sessionId);
+    if (directPersonalChat) return directPersonalChat;
+
     let session = this.pending.get(sessionId);
     if (!session) session = await this.compose(productInput, sessionId);
 
