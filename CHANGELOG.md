@@ -2,6 +2,16 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.23.2] - 2026-09-03
+
+### Changed
+- Rebuilt the Project overview around the current Claude Projects information hierarchy: project composer and recent chats stay primary, while Instructions and Project knowledge form the compact right-side context rail.
+- Moved Axis-specific model and Connection policy administration out of the always-visible Project sidebar and into an explicit modal opened from the model control or project menu.
+
+### Fixed
+- Wired previously decorative Project overview controls: pin persistence, rename, archive, delete confirmation, instruction editing, project-folder knowledge selection, model/Connection configuration, Chat/Cowork selection, send, and recent-chat navigation now perform their corresponding actions.
+- Removed nonfunctional Scheduled and Git review placeholders from the Project landing page so the overview no longer exposes unfinished controls or lets the Connection policy overflow and corrupt the layout.
+
 ## [0.23.1] - 2026-09-03
 
 ### Added
