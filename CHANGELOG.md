@@ -2,6 +2,14 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.23.4] - 2026-09-03
+
+### Fixed
+- Restored the Work Hub Calendar as a seven-day weekly time-grid agenda with all-day events, timed positioning, overlap lanes, week navigation, and a current-time marker while preserving Company scope and provenance.
+- Fixed calendar event detail tooltips so the hovered or keyboard-focused SVG event paints above neighboring event blocks instead of rendering its tooltip underneath them.
+- Fixed Work Hub calendar timezone drift by preserving offset-qualified source instants, rejecting ambiguous timed timestamps without an explicit UTC offset, rendering conversion only in the device timezone, and invalidating stale pre-fix calendar caches before re-sync.
+- Calendar sync date windows now use the machine's local calendar date instead of UTC date slicing, preventing the requested range itself from shifting around local evening hours.
+
 ## [0.23.3] - 2026-09-03
 
 ### Added
