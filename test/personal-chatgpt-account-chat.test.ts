@@ -122,7 +122,7 @@ test('Personal ChatGPT Account normal Chat bypasses the AgentRuntime blocker wit
   assert.equal(result.status, 'success');
   assert.equal(result.summary, 'Direct account answer');
   assert.equal(requests.length, 1);
-  assert.equal(requests[0]?.output.type, 'text');
+  assert.equal(requests[0]?.output?.type, 'text');
   assert.match(requests[0]?.systemPrompt ?? '', /direct Personal Chat provider transport/);
   assert.deepEqual(JSON.parse(requests[0]?.userPrompt ?? '[]'), [
     { role: 'user', content: 'Previous question' },
