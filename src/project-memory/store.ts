@@ -251,6 +251,17 @@ export class ProjectMemoryStore {
     this.update(scope, () => undefined);
   }
 
+  clear(scope: ProjectMemoryScope): void {
+    const file = this.fileForScope(scope);
+    this.withLock(file, () => {
+      try {
+        fs.unlinkSync(file);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+    });
+  }
+
   private toHandoff(scope: ProjectMemoryScope, session: ProjectMemorySessionRecord): ProjectMemoryHandoff {
     const decisions = session.decisions.slice(-12).map((decision) => {
       const resolution = decision.resolution ? ` → ${decision.resolution}` : '';
