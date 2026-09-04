@@ -410,17 +410,23 @@ function runtimeSystemPrompt(
 function directPersonalChatSystemPrompt(
   input: ProjectEngineerInput,
   connection: ProviderConnectionView,
-  modelId: string
+  modelId: string,
+  project?: ProjectDefinition
 ): string {
   return [
     '# AXIS PERSONAL CHAT',
     'This is a direct Personal Chat provider transport, not an Axis AgentRuntime tool cycle.',
+    `Project: ${project?.id ?? '(none)'}`,
     `Connection: ${connection.id}`,
     `Provider family: ${connection.providerFamily}`,
     `Auth kind: ${connection.auth}`,
     `Model: ${modelId}`,
-    'Answer the conversation directly. Do not claim that Axis executed filesystem, shell, Git, browser, MCP, or other canonical runtime tools.',
+    'Answer the conversation directly. No Axis repository roots, filesystem, shell, Git, browser, MCP, or other canonical runtime tools are attached to this compatibility transport.',
+    'Never claim that Axis executed repository or canonical runtime tool work.',
     'Never expose raw chain-of-thought; concise reasoning summaries are allowed.',
+    project?.instructions?.trim()
+      ? `# PROJECT INSTRUCTIONS\n${project.instructions.trim()}`
+      : undefined,
     input.context?.trim() ? `# USER CONTEXT\n${input.context.trim()}` : undefined,
     input.constraints?.length
       ? `# CONSTRAINTS\n${input.constraints.map((item) => `- ${item}`).join('\n')}`
@@ -491,12 +497,12 @@ function asEngineerResult(
 }
 
 /**
- * Canonical product-composition layer. Project Chat and Cowork execute the same
- * AgentRuntime with immutable authority. Personal ChatGPT/Codex Account Chat is
- * the narrow compatibility exception: it remains a direct provider conversation
- * because Codex cannot yet prove the all-tools-disabled boundary required to
- * enter AgentRuntime. Cowork and all Project-scoped ChatGPT Account sessions stay
- * fail-closed rather than weakening that boundary.
+ * Canonical product-composition layer. Project Chat and Cowork normally execute
+ * the same AgentRuntime with immutable authority. Personal Company ChatGPT/Codex
+ * Account Chat is the narrow compatibility exception: normal Chat uses a direct
+ * provider conversation, with or without a Personal Project, because Codex
+ * cannot yet prove the all-tools-disabled boundary required to enter AgentRuntime.
+ * Cowork and every non-Personal Company ChatGPT Account session stay fail-closed.
  */
 export class AgentProductRuntime implements AgentProductLifecycleSource {
   private readonly listeners = new Set<(event: AgentLifecycleEvent) => void>();
@@ -612,22 +618,29 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     input: ProductEngineerInput,
     sessionId: string
   ): Promise<LocalEngineerResult | undefined> {
-    if ((input.interactionMode ?? 'cowork') !== 'chat' || input.projectId) return undefined;
+    if ((input.interactionMode ?? 'cowork') !== 'chat') return undefined;
 
+    const project = input.projectId
+      ? this.options.projects.getProject(input.projectId)
+      : undefined;
     const snapshot = this.options.companyContext();
-    const companyId = canonicalCompanyId(snapshot, undefined, input.companyId);
-    const selection = await this.resolveSelection(input, undefined, 'chat', snapshot, companyId);
+    const companyId = canonicalCompanyId(snapshot, project, input.companyId);
+    if (companyId !== PERSONAL_COMPANY_ID) return undefined;
+
+    const selection = await this.resolveSelection(input, project, 'chat', snapshot, companyId);
     const connection = this.options.connections.view(selection.connectionId);
     if (!connection) throw new Error(`Unknown provider connection: ${selection.connectionId}`);
     if (connection.auth !== 'chatgpt-account') return undefined;
     if (connection.providerFamily !== 'openai') {
       throw new Error(`ChatGPT Account connection ${connection.id} must use provider family openai.`);
     }
+    if (project) assertProjectConnection(project, 'chat', connection);
 
     const context = buildAgentSessionContext({
       companyContext: snapshot,
       sessionId,
       companyId,
+      project: project ? { id: project.id } : undefined,
       connection,
       modelId: selection.modelId,
       executionTarget: {
@@ -658,7 +671,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       : undefined;
     const result = await resolved.provider.invoke({
       model: selection.modelId,
-      systemPrompt: directPersonalChatSystemPrompt(input, connection, selection.modelId),
+      systemPrompt: directPersonalChatSystemPrompt(input, connection, selection.modelId, project),
       userPrompt: directPersonalChatTranscript(input),
       stage: 'agent-runtime',
       output: { type: 'text' },
