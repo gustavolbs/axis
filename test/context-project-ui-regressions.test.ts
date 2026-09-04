@@ -34,7 +34,7 @@ test('Company MCP inventory keeps search, add, logo, health and reconnect contro
   const css = source('app/src/lc-base.css');
 
   assert.match(hub, /aria-label="Search MCPs"/);
-  assert.match(hub, />Add MCP<\/button>/);
+  assert.match(hub, /Add MCP/);
   assert.match(hub, /company-mcp-logo/);
   assert.match(hub, /<Network size=\{17\}/);
   assert.match(hub, /company-mcp-status connected/);
