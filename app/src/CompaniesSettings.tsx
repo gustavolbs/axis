@@ -4,21 +4,16 @@ import {
   ArchiveRestore,
   ArrowDown,
   ArrowUp,
-  BriefcaseBusiness,
-  Building2,
-  Code2,
-  GraduationCap,
-  HeartPulse,
-  Landmark,
-  Palette,
   Pencil,
   Plus,
-  Rocket,
   Search,
+  Trash2,
   X
 } from 'lucide-react';
 
 import type { CompanyDefinition, CompanyIconId } from './app-types.js';
+import { CompanyIcon } from './CompanyIcon.js';
+import { ShellDialog, type ShellDialogRequest } from './ShellDialog.js';
 import { UiSelect, type UiSelectOption } from './UiSelect.js';
 
 async function api<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
@@ -45,17 +40,6 @@ const iconOptions: UiSelectOption[] = [
   { value: 'palette', label: 'Creative' }
 ];
 
-function CompanyIcon({ icon, size = 16 }: { icon: CompanyIconId; size?: number }) {
-  if (icon === 'briefcase-business') return <BriefcaseBusiness size={size} />;
-  if (icon === 'code-2') return <Code2 size={size} />;
-  if (icon === 'rocket') return <Rocket size={size} />;
-  if (icon === 'landmark') return <Landmark size={size} />;
-  if (icon === 'heart-pulse') return <HeartPulse size={size} />;
-  if (icon === 'graduation-cap') return <GraduationCap size={size} />;
-  if (icon === 'palette') return <Palette size={size} />;
-  return <Building2 size={size} />;
-}
-
 function relative(value: string): string {
   const minutes = Math.floor((Date.now() - new Date(value).getTime()) / 60_000);
   if (minutes < 1) return 'now';
@@ -76,6 +60,7 @@ export function CompaniesSettings() {
   const [icon, setIcon] = useState<CompanyIconId>('building-2');
   const [busy, setBusy] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [dialog, setDialog] = useState<ShellDialogRequest>();
 
   async function load() {
     // Bring legacy Project/Account identities into the canonical store before
@@ -158,6 +143,32 @@ export function CompaniesSettings() {
     }
   }
 
+  function requestDelete(company: CompanyDefinition) {
+    setDialog({
+      kind: 'confirm',
+      title: 'Delete context',
+      message: `“${company.name}” will be permanently deleted. Axis only allows this when the context has no projects, connections or conversations.`,
+      confirmLabel: 'Delete context',
+      danger: true,
+      onConfirm: () => void deleteCompany(company)
+    });
+  }
+
+  async function deleteCompany(company: CompanyDefinition) {
+    setBusy(`delete:${company.id}`);
+    setNotice(undefined);
+    try {
+      await api(`/api/companies/${encodeURIComponent(company.id)}`, { method: 'DELETE' });
+      await load();
+      setNotice(`${company.name} deleted.`);
+      window.dispatchEvent(new CustomEvent('local-coder:companies-changed'));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
   async function move(company: CompanyDefinition, direction: -1 | 1) {
     const index = active.findIndex((item) => item.id === company.id);
     const target = index + direction;
@@ -211,7 +222,11 @@ export function CompaniesSettings() {
                   <button type="button" className="btn-secondary connection-refresh" aria-label={`Move ${company.name} down`} title="Move down" disabled={disabled || activeIndex < 0 || activeIndex >= active.length - 1} onClick={() => void move(company, 1)}><ArrowDown size={13} /></button>
                   <button type="button" className="btn-secondary connection-refresh" disabled={disabled} onClick={() => openEditor(company)}><Pencil size={13} />Edit</button>
                   <button type="button" className="btn-secondary connection-refresh" disabled={disabled} onClick={() => void setArchived(company, true)}><Archive size={13} />Archive</button>
-                </> : <button type="button" className="btn-secondary connection-refresh" disabled={disabled} onClick={() => void setArchived(company, false)}><ArchiveRestore size={13} />Restore</button>}
+                  <button type="button" className="btn-secondary connection-refresh danger" disabled={disabled} onClick={() => requestDelete(company)}><Trash2 size={13} />Delete</button>
+                </> : <>
+                  <button type="button" className="btn-secondary connection-refresh" disabled={disabled} onClick={() => void setArchived(company, false)}><ArchiveRestore size={13} />Restore</button>
+                  <button type="button" className="btn-secondary connection-refresh danger" disabled={disabled} onClick={() => requestDelete(company)}><Trash2 size={13} />Delete</button>
+                </>}
               </div>
             </div>
           </article>;
@@ -231,5 +246,7 @@ export function CompaniesSettings() {
         <div className="nested-settings-dialog-actions"><button type="button" onClick={closeEditor}>Cancel</button><button className="settings-save-button" disabled={busy === 'save'}>{busy === 'save' ? 'Saving…' : editing ? 'Save company' : 'Create company'}</button></div>
       </form>
     </div> : null}
+
+    <ShellDialog request={dialog} onClose={() => setDialog(undefined)} />
   </div>;
 }
