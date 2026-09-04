@@ -260,3 +260,4 @@ test('Project Chat resolves its Chat default before the Cowork default', () => {
 `);
 
 console.log('Applied Project Chat/Cowork connection-scope fix.');
+// validation trigger
