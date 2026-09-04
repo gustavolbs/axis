@@ -175,7 +175,14 @@ test('Cowork resolves Project auto routing to one exact Connection/model before 
         }]
       };
     },
-    buildRegistry() { return registry; }
+    buildRegistry() { return registry; },
+  projectConnectionIds(selected: ProjectDefinition, mode?: 'chat' | 'cowork') {
+    const policy = selected.connectionPolicy;
+    if (!policy) return [];
+    return mode === 'chat'
+      ? [...policy.chat.allowedConnectionIds]
+      : [...policy.inference.allowedConnectionIds];
+  },
   } as unknown as ProjectProviderRuntime;
   const connections = {
     view(id: string) { return id === selectedConnection.id ? selectedConnection : undefined; }
@@ -226,7 +233,14 @@ test('auto routing rejects a foreign allowed Connection from the canonical Compa
       routingCalls += 1;
       throw new Error('routingCandidates must not run after a Company ownership violation');
     },
-    buildRegistry() { throw new Error('buildRegistry must not run after a Company ownership violation'); }
+    buildRegistry() { throw new Error('buildRegistry must not run after a Company ownership violation'); },
+  projectConnectionIds(selected: ProjectDefinition, mode?: 'chat' | 'cowork') {
+    const policy = selected.connectionPolicy;
+    if (!policy) return [];
+    return mode === 'chat'
+      ? [...policy.chat.allowedConnectionIds]
+      : [...policy.inference.allowedConnectionIds];
+  },
   } as unknown as ProjectProviderRuntime;
   const connections = {
     view(id: string) {

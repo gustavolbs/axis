@@ -348,6 +348,7 @@ function connectionBelongsToOrganization(
   legacyCredentialIds: ReadonlySet<string>
 ): boolean {
   if (view.organizationId === LOCAL_ORGANIZATION_ID) return true;
+  if (view.organizationId === PERSONAL_ORGANIZATION_ID) return true;
   if (view.organizationId === organizationId) return true;
   return view.auth === 'api-key' && Boolean(view.credentialId && legacyCredentialIds.has(view.credentialId));
 }

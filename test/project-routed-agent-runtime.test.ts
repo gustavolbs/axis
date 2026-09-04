@@ -16,6 +16,9 @@ import type {
 import type { ProjectDefinition } from '../src/project-store.js';
 import { ProjectProviderRuntime } from '../src/project-provider-runtime.js';
 import { ProjectRoutedChatClient } from '../src/project-routed-chat.js';
+import { ClaudeAccountProfileStore } from '../src/claude-account-profiles.js';
+import { CodexAccountProfileStore } from '../src/codex-account-profiles.js';
+import { ProviderConnectionRuntime } from '../src/provider-connections.js';
 import { ProviderSettingsStore } from '../src/provider-settings.js';
 import { OllamaInferenceProvider } from '../src/providers/ollama-provider.js';
 import type {
@@ -130,10 +133,25 @@ function runtimeFixture() {
   });
   const local = new FakeProvider('ollama', 'local', ['qwen-fast', 'qwen-strong']);
   let cloud: FakeProvider | undefined;
+  const connections = new ProviderConnectionRuntime({
+    localProvider: local,
+    credentials,
+    settings,
+    claudeProfiles: new ClaudeAccountProfileStore(path.join(root, 'claude-profiles')),
+    codexProfiles: new CodexAccountProfileStore(path.join(root, 'codex-profiles')),
+    apiProviderFactories: {
+      anthropic: (apiKey) => {
+        assert.equal(apiKey, 'secret-value-never-persisted');
+        cloud = new FakeProvider('anthropic', 'cloud', ['cloud-fast', 'cloud-other'], '{"ok":true}');
+        return cloud;
+      }
+    }
+  });
   const providerRuntime = new ProjectProviderRuntime({
     localProvider: local,
     credentials,
     settings,
+    connections,
     cloudProviderFactories: {
       anthropic: (apiKey) => {
         assert.equal(apiKey, 'secret-value-never-persisted');

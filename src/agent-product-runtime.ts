@@ -48,7 +48,6 @@ import {
 import type { ProjectEngineerInput } from './project-engineer-backend.js';
 import { ProjectProviderRuntime } from './project-provider-runtime.js';
 import {
-  effectiveProjectConnectionPolicy,
   type ModelSelection,
   type ProjectDefinition
 } from './project-store.js';
@@ -131,12 +130,10 @@ function exactSelection(selection: ModelSelection | undefined): ExactSelection |
 
 function allowedConnectionIds(
   project: ProjectDefinition,
-  mode: AgentProductInteractionMode
+  mode: AgentProductInteractionMode,
+  providers: Pick<ProjectProviderRuntime, 'projectConnectionIds'>
 ): readonly string[] {
-  const policy = effectiveProjectConnectionPolicy(project);
-  return mode === 'chat'
-    ? policy.chat.allowedConnectionIds
-    : policy.inference.allowedConnectionIds;
+  return providers.projectConnectionIds(project, mode);
 }
 
 /**
@@ -149,9 +146,10 @@ function assertCanonicalAutoRoutingScope(
   project: ProjectDefinition,
   mode: AgentProductInteractionMode,
   companyId: string,
-  connections: ProviderConnectionRuntime
+  connections: ProviderConnectionRuntime,
+  providers: Pick<ProjectProviderRuntime, 'projectConnectionIds'>
 ): void {
-  for (const connectionId of allowedConnectionIds(project, mode)) {
+  for (const connectionId of allowedConnectionIds(project, mode, providers)) {
     const connection = connections.view(connectionId);
     if (!connection) throw new Error(`Unknown provider connection: ${connectionId}`);
     buildAgentSessionContext({
@@ -204,25 +202,12 @@ function canonicalCompanyId(
 function assertProjectConnection(
   project: ProjectDefinition,
   mode: AgentProductInteractionMode,
-  connection: ProviderConnectionView
+  connection: ProviderConnectionView,
+  providers: Pick<ProjectProviderRuntime, 'projectConnectionIds'>
 ): void {
-  const policy = effectiveProjectConnectionPolicy(project);
-  const allowed = mode === 'chat'
-    ? policy.chat.allowedConnectionIds
-    : policy.inference.allowedConnectionIds;
-  if (!allowed.includes(connection.id)) {
+  if (!allowedConnectionIds(project, mode, providers).includes(connection.id)) {
     throw new Error(
-      `Connection ${connection.id} is not allowed for ${mode} in Project ${project.id}.`
-    );
-  }
-  if (!project.privacy.allowedProviderIds.includes(connection.providerFamily)) {
-    throw new Error(
-      `Provider family ${connection.providerFamily} is not allowed by Project ${project.id}.`
-    );
-  }
-  if (connection.providerFamily !== 'ollama' && !project.privacy.cloudAllowed) {
-    throw new Error(
-      `Project ${project.id} does not allow cloud provider ${connection.providerFamily}.`
+      `Connection ${connection.id} is not visible to ${mode} in Project ${project.id}'s Context.`
     );
   }
 }
@@ -583,7 +568,8 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       project,
       mode,
       companyId,
-      this.options.connections
+      this.options.connections,
+      this.options.providers
     );
 
     if (mode === 'chat') {
@@ -636,7 +622,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     if (connection.providerFamily !== 'openai') {
       throw new Error(`ChatGPT Account connection ${connection.id} must use provider family openai.`);
     }
-    if (project) assertProjectConnection(project, 'chat', connection);
+    if (project) assertProjectConnection(project, 'chat', connection, this.options.providers);
 
     const context = buildAgentSessionContext({
       companyContext: snapshot,
@@ -752,7 +738,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     const selection = await this.resolveSelection(input, project, mode, snapshot, companyId);
     const connection = this.options.connections.view(selection.connectionId);
     if (!connection) throw new Error(`Unknown provider connection: ${selection.connectionId}`);
-    if (project) assertProjectConnection(project, mode, connection);
+    if (project) assertProjectConnection(project, mode, connection, this.options.providers);
 
     const roots = rootsFor(companyId, project, input.workspace, mode);
     const resources = resourcesFor(

@@ -105,11 +105,21 @@ function providerFallbackLabel(providerId: string): string {
 }
 
 function providerAuthLabel(provider: CatalogProvider): string {
-  if (provider.auth === 'api-key') return 'API key';
-  if (provider.auth === 'claude-account') return 'Claude account';
-  if (provider.auth === 'chatgpt-account') return 'ChatGPT account';
-  if (provider.auth === 'local' || provider.kind === 'local') return 'Local';
-  return 'Provider';
+  if (provider.auth === 'api-key') return 'API KEY';
+  if (provider.auth === 'claude-account' || provider.auth === 'chatgpt-account') return 'ACCOUNT';
+  if (provider.auth === 'local' || provider.kind === 'local') return 'LOCAL';
+  return 'PROVIDER';
+}
+
+function providerAuthBadgeClass(provider: CatalogProvider): string {
+  const variant = provider.auth === 'api-key'
+    ? 'live'
+    : provider.auth === 'local' || provider.kind === 'local'
+      ? 'good'
+      : provider.auth === 'claude-account' || provider.auth === 'chatgpt-account'
+        ? 'warn'
+        : '';
+  return `model-auth-badge status-pill ${variant}`;
 }
 
 function providerDescription(provider: CatalogProvider): string {
@@ -515,11 +525,11 @@ export function ProjectDetail(props: {
                         const ready = provider.ready && provider.models.some((model) => model.available);
                         const selected = modelSelection.mode === 'explicit' && modelSelection.providerId === provider.id;
                         const rows = [<button key={provider.id} type="button" className={selected ? 'selected' : ''} disabled={!ready} title={!ready ? provider.reason : undefined} onClick={() => setModelMenuProvider(provider.id)}>
-                          <span><strong>{provider.label ?? providerFallbackLabel(provider.id)}<em>{providerAuthLabel(provider)}</em></strong><small>{providerDescription(provider)}{ready ? '' : ` · ${provider.reason ?? 'unavailable'}`}</small></span>
+                          <span><strong>{provider.label ?? providerFallbackLabel(provider.id)}<span className={providerAuthBadgeClass(provider)}>{providerAuthLabel(provider)}</span></strong><small>{providerDescription(provider)}{ready ? '' : ` · ${provider.reason ?? 'unavailable'}`}</small></span>
                           {ready ? <ChevronRight size={16} /> : null}
                         </button>];
                         if (provider.id === 'ollama') rows.push(<button key="local-first" type="button" className={modelSelection.mode === 'local-first' ? 'selected' : ''} disabled={!ready} title={!ready ? provider.reason : undefined} onClick={() => setModelMenuProvider('local-first')}>
-                          <span><strong>Local-first<em>Local</em></strong><small>Start on Ollama; ask before bounded cloud escalation</small></span>
+                          <span><strong>Local-first<span className="model-auth-badge status-pill good">LOCAL</span></strong><small>Start on Ollama; ask before bounded cloud escalation</small></span>
                           {ready ? <ChevronRight size={16} /> : null}
                         </button>);
                         return rows;

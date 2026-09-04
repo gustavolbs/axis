@@ -2,6 +2,18 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.24.2] - 2026-09-04
+
+### Fixed
+- Project model catalogs now inherit first-class inference Connections from the owning Context instead of treating legacy Project allowlists as the source of truth.
+- Personal Connections are available in Personal Projects and are reusable from Company Projects, while sibling Company Connections remain isolated.
+- Project Chat and Cowork receive the same Context-derived Connection visibility; mode differences remain capability concerns rather than Connection ownership boundaries.
+- Unified the connection picker presentation: the Project overview now shows the same colored auth badges (API Key blue, Account amber, Local green) as New Chat, and both surfaces show the connection description line.
+- Model catalogs (`/chat/catalog` and `/projects/:id/catalog`) are cached for 30 seconds with in-flight deduplication, so reopening the connection picker no longer re-runs live model discovery; any in-app mutation clears the cache immediately.
+
+### Security
+- Delegating a Personal inference identity into a Company Project preserves the Project's canonical Company scope and never re-homes the Connection or permits sibling-Company access.
+
 ## [0.24.1] - 2026-09-03
 
 ### Added

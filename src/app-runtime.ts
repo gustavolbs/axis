@@ -180,6 +180,10 @@ export function normalizeBaseUrl(value: string): string {
   return `${parsed.protocol}//${parsed.host}`;
 }
 
+// ponytail: TTL bounds staleness from changes outside the app (e.g. `claude login`
+// in a terminal); in-app mutations clear the cache immediately on any non-GET request.
+const CATALOG_CACHE_TTL_MS = 30_000;
+
 export class DesktopAppRuntime {
   private readonly listeners = new Set<AppRuntimeListener>();
   private readonly config = { ...loadConfig(), executionMode: 'remote' as const };
@@ -229,6 +233,18 @@ export class DesktopAppRuntime {
     path.join(path.dirname(this.config.runStorePath), 'sessions')
   );
   private workerTimer?: NodeJS.Timeout;
+  private readonly catalogCache = new Map<string, { at: number; value: Promise<unknown> }>();
+
+  private cachedCatalog<T>(key: string, load: () => Promise<T>): Promise<T> {
+    const cached = this.catalogCache.get(key);
+    if (cached && Date.now() - cached.at < CATALOG_CACHE_TTL_MS) return cached.value as Promise<T>;
+    const entry = { at: Date.now(), value: load() };
+    this.catalogCache.set(key, entry);
+    entry.value.catch(() => {
+      if (this.catalogCache.get(key) === entry) this.catalogCache.delete(key);
+    });
+    return entry.value;
+  }
 
   private companySnapshot(): CompanyContextSnapshot {
     return this.companyContext.reconcile({
@@ -369,6 +385,10 @@ export class DesktopAppRuntime {
     const method = (request.method ?? 'GET').toUpperCase();
     const url = new URL(request.path, 'app://local-coder');
     const pathname = url.pathname.replace(/^\/api(?=\/|$)/, '') || '/';
+
+    // Mutations can change credentials, connections, providers or projects,
+    // all of which feed the model catalogs.
+    if (method !== 'GET') this.catalogCache.clear();
 
     if (method === 'GET' && pathname === '/companies') {
       return {
@@ -596,7 +616,7 @@ export class DesktopAppRuntime {
     }
 
     if (method === 'GET' && pathname === '/chat/catalog') {
-      return { catalog: await this.personalProviders.personalChatCatalog() };
+      return { catalog: await this.cachedCatalog('personal', () => this.personalProviders.personalChatCatalog()) };
     }
     if (method === 'GET' && pathname === '/usage') {
       const period = parseUsageDashboardPeriod(url.searchParams.get('period'));
@@ -654,7 +674,8 @@ export class DesktopAppRuntime {
     }
     const catalogMatch = /^\/projects\/([^/]+)\/catalog$/.exec(pathname);
     if (catalogMatch && method === 'GET') {
-      return { catalog: await this.projects.catalog(decodeURIComponent(catalogMatch[1])) };
+      const projectId = decodeURIComponent(catalogMatch[1]);
+      return { catalog: await this.cachedCatalog(`project:${projectId}`, () => this.projects.catalog(projectId)) };
     }
     const usageMatch = /^\/projects\/([^/]+)\/usage$/.exec(pathname);
     if (usageMatch && method === 'GET') {

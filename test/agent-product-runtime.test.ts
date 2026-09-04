@@ -246,8 +246,15 @@ function product(input: {
       const model = (await provider.listModels()).find((item) => item.id === modelId);
       if (!model) throw new Error(`No model ${modelId}`);
       return { provider, model };
-    }
-  } as ProjectProviderRuntime;
+    },
+  projectConnectionIds(selected: ProjectDefinition, mode?: 'chat' | 'cowork') {
+    const policy = selected.connectionPolicy;
+    if (!policy) return [];
+    return mode === 'chat'
+      ? [...policy.chat.allowedConnectionIds]
+      : [...policy.inference.allowedConnectionIds];
+  },
+  } as unknown as ProjectProviderRuntime;
 
   return new AgentProductRuntime({
     companyContext: () => snapshot({
@@ -539,7 +546,7 @@ test('two Companies and two real provider families execute concurrently through 
         mode: 'chat',
         modelSelection: { mode: 'explicit', providerId: 'anthropic-b', modelId: 'claude-b' }
       })),
-      /not allowed for chat in Project project-a/
+      /not visible to chat in Project project-a/
     );
     await assert.rejects(
       runtime.executeEngineer(engineerInput({ project: projectA, sessionId: 'cross-company', mode: 'chat', companyId: 'company-b' })),
