@@ -169,5 +169,6 @@ test('Personal Project normal Chat uses direct ChatGPT Account transport with Ac
   assert.equal(effective?.connection.authKind, 'chatgpt-account');
   assert.equal(effective?.execution.mode, 'inference-only');
   assert.deepEqual(effective?.roots, []);
-  assert.deepEqual(effective?.resources, []);
+  assert.deepEqual(effective?.mcp, []);
+  assert.deepEqual(effective?.permissions, []);
 });
