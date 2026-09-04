@@ -2,6 +2,23 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.24.0] - 2026-09-03
+
+### Added
+- Added permanent Company-context deletion with confirmation and fail-closed resource checks, plus Company-scoped Add Project actions and project ownership reconciliation.
+- Added searchable MCP management in each Company, including connector identity marks, explicit health/auth status, refresh/reconnect actions, and custom remote MCP registration for Claude and ChatGPT/Codex accounts.
+- Added Company / Project / conversation breadcrumbs for Project chats while keeping Project and Company scope owned by shell navigation rather than duplicated composer selectors.
+
+### Changed
+- Sidebar Contexts now use each Company’s configured icon and color and switching a Context updates the canonical desktop Company scope before Projects and conversations are loaded.
+- New Chat is always projectless Personal Chat; Project conversations are started from their Project surface and no longer expose a redundant Project selector in the composer.
+- Company Project pages now render Projects using canonical Company ownership and expose Add Project directly from Overview and Projects.
+
+### Fixed
+- Fixed project creation being silently forced into a stale Personal scope, which could produce the “workspace is already assigned” cross-Company conflict when the UI appeared to target a Company.
+- Removed duplicate Company selectors from the titlebar, composer, approval flow, and assistant results.
+- Wired chat and Project pin actions to persistent local pin state and sort pinned items first in sidebar/project listings.
+
 ## [0.23.1] - 2026-09-03
 
 ### Added
