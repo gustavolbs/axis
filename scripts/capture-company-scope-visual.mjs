@@ -150,6 +150,31 @@ async function screenshot(cdp, name) {
   console.log(`captured ${path.relative(root, targetPath)}`);
 }
 
+async function assertContextNavigation(cdp) {
+  const state = await evaluate(cdp, `(() => {
+    const heading = document.querySelector('.lc-shell-company-nav-heading');
+    const title = heading?.querySelector(':scope > span');
+    const add = heading?.querySelector(':scope > button');
+    const titleRect = title?.getBoundingClientRect();
+    const addRect = add?.getBoundingClientRect();
+    const titleStyle = title ? getComputedStyle(title) : undefined;
+    const buttonStyle = add ? getComputedStyle(add) : undefined;
+    const after = add ? getComputedStyle(add, '::after') : undefined;
+    return {
+      title: title?.textContent?.trim(),
+      titleFontSize: titleStyle?.fontSize,
+      titleWeight: titleStyle?.fontWeight,
+      buttonHeight: addRect?.height,
+      buttonFontSize: buttonStyle?.fontSize,
+      buttonLabel: after?.content,
+      buttonBelowTitle: Boolean(titleRect && addRect && addRect.top >= titleRect.bottom - 1)
+    };
+  })()`);
+  if (state?.title !== 'Contexts' || state.titleFontSize !== '12px' || state.buttonFontSize !== '13px' || !state.buttonBelowTitle || !String(state.buttonLabel).includes('New context')) {
+    throw new Error(`Context navigation hierarchy is invalid: ${JSON.stringify(state)}`);
+  }
+}
+
 async function assertContextRow(cdp, companyId, expectedName) {
   const state = await evaluate(cdp, `(() => {
     const row = document.querySelector('.lc-shell-company-row[data-company-id="${companyId}"]');
@@ -189,12 +214,19 @@ try {
   const duplicateSelectors = await evaluate(cdp, `document.querySelectorAll('.axis-company-scope').length`);
   if (duplicateSelectors !== 0) throw new Error(`Unexpected duplicate Company selectors: ${duplicateSelectors}`);
 
+  await assertContextNavigation(cdp);
   const personalState = await assertContextRow(cdp, 'personal', 'Personal');
   await assertContextRow(cdp, acme.id, 'Acme Engineering');
   await assertContextRow(cdp, northstar.id, 'Northstar Health');
   if (!personalState.active) throw new Error('Personal should be the selected Context on first launch.');
   if (await activeCompany(cdp) !== 'personal') throw new Error('Sidebar and runtime Company scope are not synchronized.');
   await screenshot(cdp, 'company-contexts-expanded');
+
+  await evaluate(cdp, `document.querySelector('.lc-shell-company-nav-heading > button')?.click(); true`);
+  await waitFor(cdp, `document.querySelector('.nested-settings-dialog h2')?.textContent?.includes('Add context') === true`, 'Add Context dialog');
+  await screenshot(cdp, 'company-context-add');
+  await evaluate(cdp, `document.querySelector('.nested-settings-dialog button[aria-label="Close"]')?.click(); true`);
+  await waitFor(cdp, `document.querySelector('.nested-settings-dialog') === null`, 'closed Add Context dialog');
 
   await evaluate(cdp, `document.querySelector('.lc-shell-company-row[data-company-id="${acme.id}"]')?.click(); true`);
   await waitFor(cdp, `document.querySelector('.lc-shell-company-row[data-company-id="${acme.id}"]')?.classList.contains('active') === true`, 'Acme Context selection');
