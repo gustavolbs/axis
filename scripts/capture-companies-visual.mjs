@@ -260,10 +260,12 @@ try {
   console.log(`work-hub-deep-link ${JSON.stringify(deepLink)}`);
   await screenshot(cdp, 'work-hub-acme-filtered');
 
-  await evaluate(cdp, `(() => { const all = [...document.querySelectorAll('.work-hub-company-filter button')].find((button) => button.textContent?.trim() === 'All'); all?.click(); const sources = [...document.querySelectorAll('.work-hub-rail button')].find((button) => button.textContent?.trim() === 'Sources'); sources?.click(); return true; })()`);
-  await waitFor(cdp, `document.querySelector('.work-hub-source-list') !== null && document.querySelectorAll('.work-hub-source-list [data-source-id]').length === 2`, 'global source aggregation');
+  await evaluate(cdp, `(() => { const all = [...document.querySelectorAll('.work-hub-company-filter button')].find((button) => button.textContent?.trim() === 'All'); all?.click(); return true; })()`);
+  await waitFor(cdp, `[...document.querySelectorAll('.work-hub-company-filter button')].find((button) => button.textContent?.trim() === 'All')?.getAttribute('aria-pressed') === 'true'`, 'global Work Hub All filter');
+  await evaluate(cdp, `(() => { const sources = [...document.querySelectorAll('.work-hub-rail button')].find((button) => button.textContent?.trim() === 'Sources'); sources?.click(); return true; })()`);
+  await waitFor(cdp, `document.querySelectorAll('.work-hub-source-card[data-source-id]').length === 2`, 'global source aggregation');
   const globalSources = await evaluate(cdp, `(() => ({
-    sourceRows: [...document.querySelectorAll('.work-hub-source-list [data-source-id]')].map((item) => ({ companyId: item.dataset.companyId, text: item.textContent?.replace(/\\s+/g, ' ').trim() })),
+    sourceRows: [...document.querySelectorAll('.work-hub-source-card[data-source-id]')].map((item) => ({ companyId: item.dataset.companyId, text: item.textContent?.replace(/\\s+/g, ' ').trim() })),
     addButtons: [...document.querySelectorAll('.work-hub-main button')].filter((button) => /add source|choose what to sync/i.test(button.textContent || '')).length,
     removeButtons: [...document.querySelectorAll('.work-hub-main button')].filter((button) => /remove/i.test(button.textContent || '')).length,
     copy: document.querySelector('.work-hub-header p')?.textContent

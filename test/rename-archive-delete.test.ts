@@ -110,6 +110,7 @@ test('archiving no longer destroys history, and the list pages', () => {
   assert.match(appRoot, /setVisible\(\(current\) => current \+ ARCHIVED_PAGE_SIZE\)/);
   assert.match(appRoot, /filteredJobs\.slice\(0, Math\.min\(visible, filteredJobs\.length\)\)/);
   assert.match(appRoot, /const remaining = filteredJobs\.length - shown\.length/);
+  assert.match(appRoot, /Math\.min\(visible, filteredJobs\.length\)/);
   assert.match(appRoot, /remaining > 0 \?/);
   assert.match(css, /\.archived-more/);
 });
