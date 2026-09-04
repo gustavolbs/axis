@@ -31,7 +31,7 @@ import {
   Zap
 } from 'lucide-react';
 
-import type { AdminProject, ModelSelection } from './app-types.js';
+import type { AdminProject, ModelSelection, ProjectConnectionPolicy } from './app-types.js';
 import { FolderField } from './FolderField.js';
 import { MarkdownMessage, stripMarkdownForSpeech } from './MarkdownMessage.js';
 import { displayProfileName } from './native.js';
@@ -200,6 +200,9 @@ interface ProjectCatalog {
   scope?: 'personal' | 'project';
   projectId: string;
   defaultModel: ModelSelection;
+  chatDefaultModel?: ModelSelection;
+  coworkDefaultModel?: ModelSelection;
+  connectionPolicy?: ProjectConnectionPolicy;
   providers: CatalogProvider[];
 }
 interface ModelOption {
@@ -326,24 +329,45 @@ function providerMode(value: string): string {
 function modeValue(mode: string, modelId: string): string {
   return `${mode === 'local-first' ? 'local-first' : mode}\0${modelId}`;
 }
-function firstAvailableModel(catalog: ProjectCatalog, providerId: string): CatalogModel | undefined {
+function allowedConnectionIds(catalog: ProjectCatalog, mode: ComposerMode): ReadonlySet<string> | undefined {
+  const policy = catalog.connectionPolicy;
+  if (!policy) return undefined;
+  return new Set(mode === 'chat'
+    ? policy.chat.allowedConnectionIds
+    : policy.inference.allowedConnectionIds);
+}
+function catalogProviderAllowed(catalog: ProjectCatalog, providerId: string, mode: ComposerMode): boolean {
+  const allowed = allowedConnectionIds(catalog, mode);
+  return !allowed || allowed.has(providerId);
+}
+function firstAvailableModel(
+  catalog: ProjectCatalog,
+  providerId: string,
+  mode: ComposerMode
+): CatalogModel | undefined {
+  if (!catalogProviderAllowed(catalog, providerId, mode)) return undefined;
   const provider = catalog.providers.find((item) => item.id === providerId && item.ready);
   return provider?.models.find((model) => model.available);
 }
-function catalogHasSelection(catalog: ProjectCatalog, value: string): boolean {
+function catalogHasSelection(catalog: ProjectCatalog, value: string, mode: ComposerMode): boolean {
   const selection = parseModelValue(value);
   if (selection.mode === 'auto') return false;
   const providerId = selection.mode === 'local-first' ? 'ollama' : selection.providerId;
+  if (!catalogProviderAllowed(catalog, providerId, mode)) return false;
   const provider = catalog.providers.find((item) => item.id === providerId && item.ready);
   return Boolean(provider?.models.some((model) => model.id === selection.modelId && model.available));
 }
-function defaultComposerSelection(catalog: ProjectCatalog): string {
-  const configured = modelValue(catalog.defaultModel);
-  if (configured !== 'auto') return configured;
-  const local = firstAvailableModel(catalog, 'ollama');
-  if (local) return modeValue(catalog.scope === 'personal' ? 'ollama' : 'local-first', local.id);
+function defaultComposerSelection(catalog: ProjectCatalog, mode: ComposerMode): string {
+  const scopedDefault = mode === 'chat' ? catalog.chatDefaultModel : catalog.coworkDefaultModel;
+  const configured = modelValue(scopedDefault ?? catalog.defaultModel);
+  if (configured !== 'auto' && catalogHasSelection(catalog, configured, mode)) return configured;
+  const local = firstAvailableModel(catalog, 'ollama', mode);
+  if (local) {
+    return modeValue(catalog.scope === 'personal' || mode === 'chat' ? 'ollama' : 'local-first', local.id);
+  }
   for (const provider of catalog.providers) {
-    const model = firstAvailableModel(catalog, provider.id);
+    if (!catalogProviderAllowed(catalog, provider.id, mode)) continue;
+    const model = firstAvailableModel(catalog, provider.id, mode);
     if (model) return modeValue(provider.id, model.id);
   }
   return 'auto';
@@ -476,6 +500,7 @@ export function AgentSurfaceV2() {
     ?? (active?.status === 'waiting-decision' ? active.decisionRequest : undefined);
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
   const currentInference = worker?.inference?.current ?? undefined;
+  const composerCatalogMode: ComposerMode = active?.input.interactionMode === 'chat' ? 'chat' : mode;
 
   useEffect(() => {
     localStorage.removeItem('local-coder.open-job');
@@ -543,9 +568,9 @@ export function AgentSurfaceV2() {
           : undefined;
         setModelSelection((current) => activeSelection
           ? modelValue(activeSelection)
-          : catalogHasSelection(next, current)
+          : catalogHasSelection(next, current, composerCatalogMode)
             ? current
-            : defaultComposerSelection(next));
+            : defaultComposerSelection(next, composerCatalogMode));
       })
       .catch((next) => {
         if (cancelled) return;
@@ -554,7 +579,7 @@ export function AgentSurfaceV2() {
         setError(next instanceof Error ? next.message : String(next));
       });
     return () => { cancelled = true; };
-  }, [selectedProjectId, activeId, catalogRefreshNonce]);
+  }, [selectedProjectId, activeId, catalogRefreshNonce, composerCatalogMode]);
 
   useEffect(() => {
     if (!active?.decisionRequest) return;
@@ -580,6 +605,7 @@ export function AgentSurfaceV2() {
   const modelOptions = useMemo<ModelOption[]>(() => {
     const options: ModelOption[] = [];
     for (const provider of catalog?.providers ?? []) {
+      if (catalog && !catalogProviderAllowed(catalog, provider.id, composerCatalogMode)) continue;
       for (const model of provider.models) {
         options.push({
           providerId: provider.id,
@@ -596,10 +622,12 @@ export function AgentSurfaceV2() {
       }
     }
     return options;
-  }, [catalog]);
+  }, [catalog, composerCatalogMode]);
 
   const providerModes = useMemo<ProviderModeConfig[]>(() => {
-    const modes = (catalog?.providers ?? []).map((provider) => ({
+    const modes = (catalog?.providers ?? [])
+      .filter((provider) => !catalog || catalogProviderAllowed(catalog, provider.id, composerCatalogMode))
+      .map((provider) => ({
       id: provider.id,
       label: connectionDisplayName(provider),
       description: providerDescription(provider),
@@ -625,7 +653,7 @@ export function AgentSurfaceV2() {
       });
     }
     return modes;
-  }, [catalog]);
+  }, [catalog, composerCatalogMode]);
 
   const selectedMode = providerMode(modelSelection);
   const selectedModeConfig = providerModes.find((item) => item.id === selectedMode)
@@ -707,6 +735,9 @@ export function AgentSurfaceV2() {
   function chooseMode(next: ComposerMode) {
     localStorage.setItem('local-coder.composer-mode', next);
     setMode(next);
+    if (catalog && !catalogHasSelection(catalog, modelSelection, next)) {
+      setModelSelection(defaultComposerSelection(catalog, next));
+    }
     if (next === 'cowork' && !selectedProject && !workspace.trim()) {
       setModelMenu('closed');
       if (projects.length > 0) setProjectMenu(true);

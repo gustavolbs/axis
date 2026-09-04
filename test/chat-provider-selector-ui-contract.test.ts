@@ -54,3 +54,13 @@ test('chat provider selector keeps friendly connection names and normalized mode
     assert.ok(surface.includes(copy), `missing model copy: ${copy}`);
   }
 });
+
+
+test('Project model selector is scoped to the current Chat or Cowork connection authority', () => {
+  assert.match(surface, /connectionPolicy\?: ProjectConnectionPolicy/);
+  assert.match(surface, /mode === 'chat'[\s\S]{0,120}policy\.chat\.allowedConnectionIds[\s\S]{0,120}policy\.inference\.allowedConnectionIds/);
+  assert.match(surface, /catalogProviderAllowed\(catalog, provider\.id, composerCatalogMode\)/);
+  assert.match(surface, /catalogHasSelection\(next, current, composerCatalogMode\)/);
+  assert.match(surface, /defaultComposerSelection\(next, composerCatalogMode\)/);
+  assert.match(surface, /catalogHasSelection\(catalog, modelSelection, next\)/);
+});

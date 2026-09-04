@@ -377,14 +377,14 @@ test('model menu is catalog-driven, keeps branded built-ins, and exposes Effort 
   assert.match(agentSurface, /Older Claude versions and dated snapshots/);
   assert.match(agentSurface, /setModelMenu\('providers'\).*models<\/strong>/s, 'the model list must have a back path to providers');
   assert.match(agentSurface, /setModelMenu\('models'\)/, 'choosing a provider must open its model list');
-  assert.match(agentSurface, /\(catalog\?\.providers \?\? \[\]\)\.map\(\(provider\)/);
+  assert.match(agentSurface, /\(catalog\?\.providers \?\? \[\]\)[\s\S]{0,180}catalogProviderAllowed\(catalog, provider\.id, composerCatalogMode\)[\s\S]{0,180}\.map\(\(provider\)/);
   assert.match(agentSurface, /id: provider\.id/);
   assert.doesNotMatch(agentSurface, /type ProviderMode = 'ollama'/, 'new providers must not require a hardcoded union');
   for (const label of ['Ollama', 'Claude', 'GPT']) assert.match(agentSurface, new RegExp(`return '${label}'`));
   assert.match(agentSurface, /label: 'Local-first'/);
   assert.match(agentSurface, /Start on Ollama; ask before bounded cloud escalation/);
   assert.match(agentSurface, /mode\.reason \?\? 'Unavailable'/, 'provider discovery failures must be visible');
-  assert.match(agentSurface, /catalogHasSelection\(next, current\)/, 'catalog refresh must preserve a valid explicit model');
+  assert.match(agentSurface, /catalogHasSelection\(next, current, composerCatalogMode\)/, 'catalog refresh must preserve a valid explicit model inside the active Chat or Cowork scope');
   assert.doesNotMatch(agentSurface, /<strong>Auto<\/strong>/, 'Auto must not appear as a fifth provider mode');
   assert.match(agentSurface, /<strong>Effort<\/strong>/);
   assert.match(agentSurface, /<strong>Thinking<\/strong>/);

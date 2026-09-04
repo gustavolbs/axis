@@ -570,9 +570,8 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     snapshot: CompanyContextSnapshot,
     companyId: string
   ): Promise<ExactSelection> {
-    const candidate = input.modelSelection ?? project?.defaultModel;
-    const exact = exactSelection(candidate);
-    if (exact) return exact;
+    const requested = exactSelection(input.modelSelection);
+    if (requested) return requested;
     if (!project) {
       throw new Error(
         'AgentRuntime product execution requires an exact selected Connection and model before Personal session composition.'
@@ -595,6 +594,9 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       }
       return resolved;
     }
+
+    const projectDefault = exactSelection(project.defaultModel);
+    if (projectDefault) return projectDefault;
 
     const { candidates } = await this.options.providers.routingCandidates(project, {
       stage: 'implementation',

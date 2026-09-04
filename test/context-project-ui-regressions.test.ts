@@ -9,11 +9,12 @@ function source(file: string): string {
   return fs.readFileSync(path.join(root, file), 'utf8');
 }
 
-test('Project Overview Chat uses the New Chat model catalog without requiring Connection-policy configuration', () => {
+test('Project Overview Chat uses the scoped Project catalog without requiring a Connections modal', () => {
   const projectDetail = source('app/src/ProjectDetail.tsx');
   assert.doesNotMatch(projectDetail, /Configure a default Chat connection and model for this Project first/);
-  assert.match(projectDetail, /api<\{ catalog: ProjectCatalog \}>\('\/api\/chat\/catalog'\)/);
-  assert.doesNotMatch(projectDetail, /\/api\/projects\/\$\{encodeURIComponent\(props\.project\.id\)\}\/catalog/);
+  assert.match(projectDetail, /\/api\/projects\/\$\{encodeURIComponent\(props\.project\.id\)\}\/catalog/);
+  assert.doesNotMatch(projectDetail, /api<\{ catalog: ProjectCatalog \}>\('\/api\/chat\/catalog'\)/);
+  assert.match(projectDetail, /projectCatalogProviderAllowed/);
   assert.match(projectDetail, /modelSelection\s*\n\s*}/);
   assert.match(projectDetail, /className="model-effort-trigger"/);
   assert.match(projectDetail, /className="lc-agent-popover model-popover"/);

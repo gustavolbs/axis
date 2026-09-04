@@ -29,7 +29,7 @@ test('Project overview reuses the New Chat composer presentation instead of main
 });
 
 test('Project model control uses the inline New Chat model popover and never opens a Connections modal', () => {
-  assert.match(source, /\/catalog`\)/);
+  assert.match(source, /\/api\/projects\/\$\{encodeURIComponent\(props\.project\.id\)\}\/catalog/);
   assert.match(source, /className="lc-agent-popover model-popover"/);
   assert.match(source, /className="model-provider-label">Provider or account/);
   assert.match(source, /className="popover-back"/);
@@ -67,4 +67,14 @@ test('Project actions and instruction cancellation are functional', () => {
   assert.ok(!source.includes('>Model & connections<'), 'Project menu must not expose the removed Connections modal');
   assert.match(source, /function cancelInstructions\(\)[\s\S]*setInstructions\(props\.project\.instructions \?\? ''\)/);
   assert.match(source, /setGoal\(''\)/);
+});
+
+
+test('Project overview model catalog enforces Chat and Cowork connection scopes', () => {
+  assert.match(source, /connectionPolicy\?: ProjectConnectionPolicy/);
+  assert.match(source, /mode === 'chat'[\s\S]{0,120}policy\.chat\.allowedConnectionIds[\s\S]{0,120}policy\.inference\.allowedConnectionIds/);
+  assert.match(source, /catalogHasSelection\(next, current, mode\)/);
+  assert.match(source, /firstCatalogSelection\(next, mode\)/);
+  assert.match(source, /projectCatalogProviderAllowed\(catalog, provider\.id, mode\)/);
+  assert.match(source, /catalogHasSelection\(catalog, modelSelection, next\)/);
 });

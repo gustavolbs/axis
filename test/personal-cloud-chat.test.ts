@@ -384,7 +384,7 @@ test('projectless Chat exposes and submits exact personal provider models withou
   assert.match(providerRuntime, /profile\.organizationId === undefined/);
 
   assert.match(surface, /'\/api\/chat\/catalog'/);
-  assert.match(surface, /\(catalog\?\.providers \?\? \[\]\)\.map\(\(provider\)/);
+  assert.match(surface, /\(catalog\?\.providers \?\? \[\]\)[\s\S]{0,180}catalogProviderAllowed\(catalog, provider\.id, composerCatalogMode\)[\s\S]{0,180}\.map\(\(provider\)/);
   assert.doesNotMatch(surface, /type ProviderMode = 'ollama'/);
   assert.match(surface, /modelOverrideAllowed = Boolean\(selectedProject\) \|\| mode === 'chat'/);
   assert.match(surface, /allowLocalFirst=\{Boolean\(selectedProject\)\}/);
