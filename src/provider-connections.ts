@@ -332,6 +332,13 @@ function apiConnectionLabel(providerFamily: 'anthropic' | 'openai', credentialLa
   return `${providerFamily === 'openai' ? 'OpenAI' : 'Claude'} · ${credentialLabel}`;
 }
 
+function catalogConnectionLabel(view: ProviderConnectionView): string {
+  if (view.auth === 'api-key') return `API Key · ${view.label}`;
+  if (view.auth === 'claude-account') return `Account · Claude · ${view.label}`;
+  if (view.auth === 'chatgpt-account') return `Account · ChatGPT · ${view.label}`;
+  return view.label;
+}
+
 function connectionBelongsToOrganization(
   view: ProviderConnectionView,
   organizationId: string,
@@ -540,7 +547,7 @@ export class ProviderConnectionRuntime {
       results.push({
         id: view.id,
         kind: 'cloud',
-        label: view.label,
+        label: catalogConnectionLabel(view),
         providerFamily: view.providerFamily,
         auth: view.auth,
         billing: view.billing,
