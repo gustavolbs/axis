@@ -11,33 +11,39 @@ import {
 import type { InferenceUsage } from '../providers/types.js';
 import { assertVisibleToolCalls, canonicalToolCall } from './common.js';
 
-/** Provider-neutral structured envelope used by native Account adapters. */
+/**
+ * Provider-neutral strict wire envelope used by native Account adapters.
+ * Optional Axis values are nullable because strict Structured Outputs providers
+ * require every declared object property to be present. Tool arguments travel
+ * as JSON text so the schema stays closed while each tool keeps its own dynamic
+ * input shape in the canonical Axis catalog.
+ */
 export const AXIS_AGENT_TURN_SCHEMA: Readonly<Record<string, unknown>> = Object.freeze({
   type: 'object',
   additionalProperties: false,
-  required: ['complete', 'toolCalls'],
+  required: ['complete', 'text', 'reasoningSummary', 'decisionRequest', 'toolCalls'],
   properties: {
     complete: { type: 'boolean' },
-    text: { type: 'string' },
-    reasoningSummary: { type: 'string' },
+    text: { type: ['string', 'null'] },
+    reasoningSummary: { type: ['string', 'null'] },
     decisionRequest: {
-      type: 'object',
+      type: ['object', 'null'],
       additionalProperties: false,
-      required: ['kind', 'prompt'],
+      required: ['id', 'kind', 'prompt', 'options'],
       properties: {
-        id: { type: 'string' },
+        id: { type: ['string', 'null'] },
         kind: { type: 'string' },
         prompt: { type: 'string' },
         options: {
-          type: 'array',
+          type: ['array', 'null'],
           items: {
             type: 'object',
             additionalProperties: false,
-            required: ['id', 'label'],
+            required: ['id', 'label', 'description'],
             properties: {
               id: { type: 'string' },
               label: { type: 'string' },
-              description: { type: 'string' }
+              description: { type: ['string', 'null'] }
             }
           }
         }
@@ -48,11 +54,14 @@ export const AXIS_AGENT_TURN_SCHEMA: Readonly<Record<string, unknown>> = Object.
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'arguments'],
+        required: ['id', 'name', 'arguments'],
         properties: {
-          id: { type: 'string' },
+          id: { type: ['string', 'null'] },
           name: { type: 'string' },
-          arguments: { type: 'object', additionalProperties: true }
+          arguments: {
+            type: 'string',
+            description: 'JSON-encoded object containing arguments for the selected Axis tool.'
+          }
         }
       }
     }
@@ -93,7 +102,9 @@ export function buildStructuredAgentPrompt(request: AgentProviderRequest): strin
     '# AXIS AGENT RUNTIME PROTOCOL',
     'Return only the JSON object required by the supplied schema.',
     'Set complete=true only when this turn is finished.',
+    'Every field in the response schema is required. Use null for absent text, reasoningSummary, decisionRequest, decisionRequest.id, decisionRequest.options, and option descriptions.',
     'If work requires a tool, set complete=false and request only tools from the exact TOOL CATALOG below. Do not execute, simulate, substitute, or invent any filesystem, shell, browser, MCP, plugin, skill, or other provider-managed tool.',
+    'For every tool call, encode arguments as a JSON object string matching that tool inputSchema. Do not put a raw object in toolCalls[].arguments.',
     'Tool results appear later in TRANSCRIPT as role=tool messages. Use those results on the next invocation.',
     'If user input or approval is required before continuing, emit decisionRequest instead of a tool call.',
     'If reasoningSummary is supplied, include only a concise summary; never expose hidden chain-of-thought.',
@@ -107,7 +118,7 @@ export function buildStructuredAgentPrompt(request: AgentProviderRequest): strin
 }
 
 function decisionRequest(value: unknown): AgentDecisionRequest | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined || value === null) return undefined;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new AgentProviderProtocolError('Provider decisionRequest must be an object.');
   }
@@ -119,7 +130,7 @@ function decisionRequest(value: unknown): AgentDecisionRequest | undefined {
   }
 
   let options: AgentDecisionRequest['options'];
-  if (record.options !== undefined) {
+  if (record.options !== undefined && record.options !== null) {
     if (!Array.isArray(record.options)) {
       throw new AgentProviderProtocolError('Provider decisionRequest options must be an array.');
     }
