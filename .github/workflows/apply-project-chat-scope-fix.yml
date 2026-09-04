@@ -22,9 +22,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
       - run: node scripts/apply-project-chat-scope-fix.mjs
-      - run: npm ci
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm install
       - run: npm run check
       - name: Commit validated fix
         run: |
