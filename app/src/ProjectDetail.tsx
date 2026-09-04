@@ -63,13 +63,17 @@ function inheritedChatSelection(project: AdminProject): ModelSelection | undefin
   return undefined;
 }
 
-function projectInitiallyPinned(projectId: string): boolean {
+function pinnedProjectIds(): string[] {
   try {
     const value = JSON.parse(localStorage.getItem(PINNED_PROJECTS_KEY) ?? '[]') as unknown;
-    return Array.isArray(value) && value.includes(projectId);
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
   } catch {
-    return false;
+    return [];
   }
+}
+
+function projectInitiallyPinned(projectId: string): boolean {
+  return pinnedProjectIds().includes(projectId);
 }
 
 export function ProjectDetail(props: {
@@ -118,12 +122,7 @@ export function ProjectDetail(props: {
   function togglePin() {
     const nextPinned = !pinned;
     setPinned(nextPinned);
-    let ids: string[] = [];
-    try {
-      const value = JSON.parse(localStorage.getItem(PINNED_PROJECTS_KEY) ?? '[]') as unknown;
-      ids = Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
-    } catch { /* reset malformed local preference */ }
-    const next = new Set(ids);
+    const next = new Set(pinnedProjectIds());
     if (nextPinned) next.add(props.project.id); else next.delete(props.project.id);
     localStorage.setItem(PINNED_PROJECTS_KEY, JSON.stringify([...next]));
     window.dispatchEvent(new CustomEvent('local-coder:pins-changed'));
@@ -248,7 +247,7 @@ export function ProjectDetail(props: {
     setError(undefined);
     try {
       await api(`/api/projects/${encodeURIComponent(props.project.id)}`, { method: 'DELETE' });
-      const next = new Set(JSON.parse(localStorage.getItem(PINNED_PROJECTS_KEY) ?? '[]') as string[]);
+      const next = new Set(pinnedProjectIds());
       next.delete(props.project.id);
       localStorage.setItem(PINNED_PROJECTS_KEY, JSON.stringify([...next]));
       window.dispatchEvent(new CustomEvent('local-coder:pins-changed'));
