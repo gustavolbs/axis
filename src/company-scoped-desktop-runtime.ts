@@ -1,5 +1,5 @@
 import { ActiveCompanyScope } from './active-company-scope.js';
-import { PERSONAL_COMPANY_ID } from './company-context.js';
+import { CompanyContextStore, PERSONAL_COMPANY_ID, type CompanyContextSnapshot } from './company-context.js';
 import { DesktopAppRuntime, type AppRuntimeListener, type AppRuntimeRequest } from './app-runtime.js';
 import { readProjectGitReview } from './project-git-review.js';
 
@@ -56,6 +56,7 @@ function jobPath(pathname: string): string | undefined {
  */
 export class CompanyScopedDesktopRuntime {
   private readonly active = new ActiveCompanyScope();
+  private readonly companies = new CompanyContextStore();
 
   constructor(private readonly base: DesktopAppRuntime) {}
 
@@ -94,6 +95,28 @@ export class CompanyScopedDesktopRuntime {
       const result = await this.base.request(request) as { company?: { id?: string; archivedAt?: string } };
       if (result.company?.id && result.company.archivedAt) this.active.resetIfActive(result.company.id);
       return result;
+    }
+
+    const companyDeleteMatch = /^\/companies\/([^/]+)$/.exec(pathname);
+    if (companyDeleteMatch && method === 'DELETE') {
+      const companyId = decodeURIComponent(companyDeleteMatch[1]);
+      if (companyId === PERSONAL_COMPANY_ID) throw new Error('Personal cannot be deleted.');
+      const { context } = await this.base.request({ method: 'GET', path: '/api/companies/context' }) as { context: CompanyContextSnapshot };
+      const company = context.companies.find((candidate) => candidate.id === companyId);
+      if (!company) throw new Error(`Company not found: ${companyId}`);
+      const counts = [
+        ['Project', company.projectIds.length],
+        ['connection', company.connectionIds.length],
+        ['conversation', company.sessionIds.length]
+      ] as const;
+      const blockers = counts.filter(([, count]) => count > 0)
+        .map(([label, count]) => `${count} ${label}${count === 1 ? '' : 's'}`);
+      if (blockers.length > 0) {
+        throw new Error(`Delete or move ${blockers.join(', ')} before deleting ${company.name}.`);
+      }
+      const deleted = this.companies.deleteCompany(companyId);
+      this.active.resetIfActive(companyId);
+      return { deleted: true, company: deleted };
     }
 
     if (pathname === '/projects' && method === 'GET') {
