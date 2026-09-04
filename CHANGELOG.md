@@ -2,6 +2,17 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.24.1] - 2026-09-04
+
+### Fixed
+- Repaired the Project overview without changing Axis Project pin semantics: the existing pin remains persistent, the composer/context folder controls open the real folder picker, instruction cancellation restores the saved value, and project rename/archive/delete actions are now reachable from the header menu.
+- Replaced the Project-only Model & connections dialog with the same inline model-selector presentation used by New Chat. Project model choices now come from the Project catalog and open as the existing composer popover instead of exposing the Connection-policy matrix from the overview.
+- Removed decorative Context search and Scheduled-task controls from the overview instead of shipping a client-only scheduler that bypasses the planned local Automation architecture.
+- Stabilized the Company/Work Hub visual smoke by waiting for the global Company filter transition before opening Sources.
+
+### Added
+- Added real-Electron Project overview smoke coverage for the existing pin, shared composer, inline model selector, compact rail, project action menu, light/dark themes, and narrow-window overflow behavior.
+
 ## [0.24.0] - 2026-09-03
 
 ### Added
@@ -143,129 +154,192 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added `process_which` diagnostics for the exact executable PATH visible to Axis plus a `createProcessTools()` suite so Git, validation and later runtime composition can reuse one policy/environment/registry boundary instead of inventing process execution separately.
 - Added process runtime coverage for successful and non-zero commands, timeout, tree cancellation, cwd escapes, environment filtering, exact execution-target selection, command lifecycle, permission denial, mutation status, read-only fail-closed policy, provider/auth independence, background process isolation, cursored/truncated logs, wait cancellation, stdin, signals and session cleanup.
 - Added provider-neutral Project Memory capture from the canonical `AgentLifecycleSink`, with structured session handoffs for goals, repository reads and mutations, commands, validations, decisions, failures, cancellations and current work state.
-- Added local atomic persistence and bounded task-ranked recovery partitioned by Company + Project + repository/root identity, so a later authorized agent or provider can continue the same Project without replaying a full transcript.
-- Added a Project Memory retrieval API that composes lifecycle handoff state with the existing evidence-backed Repo Intelligence capsule instead of creating a second durable repository-knowledge system.
-- Added retention and compaction for completed history while preserving active and paused sessions, plus restart, cross-provider sharing, multi-root isolation and structured-handoff coverage.
-- Added a provider-agnostic Axis MCP host that discovers Company/Project-bound MCP servers and exposes their tools as canonical `AxisTool` definitions guarded by `axis.mcp.invoke` plus read/mutation permissions.
-- Added native MCP JSON-RPC clients for local stdio, Streamable HTTP, and legacy SSE transports, including initialize lifecycle, paginated tool/resource discovery, invocation, progress notifications, cancellation, timeout propagation, session cleanup, and safe stdio environment construction.
-- Added a bridge from the existing Claude/Codex MCP connector discovery model into Axis-owned MCP server configuration without routing execution back through either provider loop.
-- Added MCP runtime tests covering successful invocation, resources, unavailable capability refusal, Company isolation, source Connection ownership, provider-independent auth provenance, timeout/cancellation, mutation status/lifecycle, secret-safe configuration, and canonical MCP error mapping.
+- Added local atomic persistence and bounded task-ranked recovery partitioned by Company + Project + repository root fingerprint, with path/value sanitization, shared transversal secret redaction, retention limits, deterministic recent/trigram ranking and compact prompt-ready handoffs.
+- Added explicit memory root-binding persistence keyed by Company + Project + repository fingerprint so later Project-scoped runs can recover prior root-specific handoffs before the current workspace has been read again.
+- Added Project Memory regression coverage for Company/Project/root isolation, exact-root binding, redaction, retention, malformed-state fail-closed behavior, serialization bounds, retrieval ranking and semantic round-trip across process restart.
+- Added provider-neutral browser/web search, file/URL attachment metadata, and document/image understanding contracts to `AgentRuntime`, with capability negotiation and explicit fail-closed behavior when unsupported.
+- Added canonical web-search provenance metadata (`source=web`, URL, title, retrieved-at timestamp) so downstream assistant context can preserve that external content is data rather than authority.
+- Added provider adapter coverage for built-in web search and attachment capability negotiation across OpenAI API Key, Anthropic API Key and account-style adapters, without provider-specific branches in `AgentRuntime`.
+- Added MCP-backed browser search as a first-class runtime implementation alongside provider-native search, including timeout/cancellation-safe MCP calls, canonical normalized result validation, provider-neutral source preference/fallback order, and optional result-title/summary mapping from generic MCP content.
+- Added a runtime UI `RuntimeEvidencePane` for structured Web / Images / Files provenance with safe external-link handling, compact hostname/media metadata, and no raw binary/base64 rendering.
+- Added regression coverage for native-vs-MCP web-search preference, MCP-backed search execution, explicit unsupported search, attachment image/file capability negotiation, capability-only attachment fallback behavior and Runtime UI source projection.
+- Added provider-agnostic stdio and HTTP MCP clients plus namespaced `axis.mcp.<server>.<tool>` wrappers so enabled MCP server tools can be exposed to `AgentRuntime` through the canonical `AxisTool` registry rather than provider-native MCP tool execution.
+- Added `createMcpTools()` composition with per-session Company allowlists, exact server/tool/schema filtering, bounded outputs, cancellation, timeout and deterministic collision refusal across configured MCP servers.
+- Added MCP tool discovery/call coverage for stdio and Streamable HTTP servers, notification handling, timeout/cancellation, canonical error propagation, malicious-name/schema rejection, cross-Company isolation, disabled-tool exclusion and provider-neutral execution through multiple adapters.
+- Added Company/project-aware MCP resource registry storage for bearer tokens, OAuth references, custom headers, selected resources, access profiles, capability overrides, and project-level narrowed subsets without serializing secret values into runtime session metadata.
+- Added operational MCP settings UI with create/edit/delete/enable flows for stdio, Streamable HTTP and SSE transports, plus Company-scoped server ownership, tool/resource selection, project access narrowing, runtime settings reload and safe inline status/error handling.
+- Added Claude Desktop local MCP import using its canonical configuration path and `mcpServers` schema, preserving imported server names/commands/args/env as Axis MCP server definitions under explicit Company ownership without importing plaintext env secrets into project/runtime metadata.
+- Added ChatGPT/Codex remote MCP import using Codex `config.toml` discovery and a bounded `[mcp_servers.*]` parser for remote URLs, bearer-token env references, custom HTTP headers and enablement, again requiring explicit Axis Company ownership.
+- Added manual MCP configuration for local command servers and remote URL servers with configurable timeout, environment variables, bearer-token env references and custom headers so users can connect additional MCPs that are not discovered automatically.
+- Added focused MCP settings regression coverage for desktop bridge discovery, Claude import, Codex import, manual create/edit/delete, Company ownership and secret-reference handling.
+- Added MCP request-header secret references resolved from process environment or the existing credential vault at client composition time, allowing remote bearer/custom-header auth without writing resolved secrets to runtime metadata.
+- Added Project MCP access-profile settings so enabled Company MCP tools/resources can be narrowed per Project through the canonical `project-mcp-access` policy map while Company ownership remains authoritative.
+- Added one canonical `ProjectMcpPolicyStore` plus one canonical `mcp-access` lifecycle: project MCP access is stored once, surfaced through `/api/projects/:id/mcp-access`, and exposed in the Project UI without a second renderer-only copy.
+- Added Company-owned MCP configuration in Company Hub with grouped Connected/Available server rows, server-kind/provider identity icons, explicit health/auth status, Add MCP discovery/import, refresh, reconnect and remove controls.
+- Added real-Electron MCP visual smoke coverage for initial Project MCP state, persisted narrowing after save, and restored state after page reload.
+- Added local-first automated regression gates for project-scoped MCP policy composition, settings lifecycle, desktop contract and MCP UI persistence.
 
 ### Changed
-- The renderer can enter an isolated `runtime-ui-preview` fixture surface for visual verification; normal Chat/Cowork composition and runtime transport installation are unchanged when the preview is not requested.
+- Project-level MCP access is now edited from the Project overview beside other Project controls while MCP server administration stays Company-scoped.
+- Company-scoped MCP access composes monotonically with Project MCP access: Project selection may only narrow the Company allowlist, resource set and access profile; it cannot widen Company authority.
+- MCP request policy now rejects unsafe remote URLs (credentials in URL, non-HTTP(S), and non-local plaintext HTTP), validates custom headers, keeps bearer tokens out of persisted runtime metadata, and re-authorizes redirect-derived endpoints before use.
 
 ### Security
-- Filesystem execution now resolves only explicit `AgentSessionContext.roots`, canonicalizes real paths, rejects root/path scope mismatches, prevents path traversal and symlink escapes, and never follows symlink directories during recursive search.
-- File creation uses atomic no-clobber commit semantics, while replacement/edit operations use atomic rename plus optional or internally captured SHA-256 preconditions to avoid silently overwriting externally changed content.
-- Process commands no longer inherit the application environment wholesale: only a small toolchain/system allowlist is inherited, secret-shaped variables are dropped, explicit secret-shaped overrides are rejected, shell interpreters/scripts are blocked by the default policy, and executable selection is allowlisted.
-- Mutating process calls require a write-authorized session root. Successful workspace mutation is marked committed only after a clean exit; non-zero exits, cancellation and timeout retain uncertain mutation state so the runtime will not retry them as safe mutations.
-- Background process handles are bound to the immutable Axis session identity, including Company, Project, connection, model and execution target. A leaked process ID cannot be polled, fed, signalled or terminated by another session, and the registry exposes `terminateSession()` for future cancellation/restart composition.
-- Claude Account AgentRuntime calls now execute in an Axis-owned empty temporary working directory with Claude Code `--bare`, an empty built-in tool catalog, explicit MCP denial, no session persistence, and sanitized environment inheritance, so filesystem/shell/MCP execution cannot occur behind the canonical Axis tool host.
-- Direct inference adapters reject provider-returned tool names that were not exposed by Axis for the exact model cycle and independently re-check provider family, connection, model, and bound Company identity.
-- ChatGPT/Codex Account remains fail-closed for the canonical runtime: current `codex exec` has no proven all-tools-disabled mode, and `read-only` plus `shell_tool=false` does not prove model-dependent core tools such as `apply_patch` are absent. Axis will not route Codex Account work through the unsafe generic bridge until tool calls can be intercepted before provider execution.
-- Project Memory ownership never includes provider, model, authentication method, API key or conversation identity; those values are retained only as non-secret provenance inside a scoped handoff.
-- Lifecycle persistence is allowlisted and redacted: tool arguments and result payloads, provider progress payloads and reasoning fields are not stored, while common secret/token/private-key patterns are removed from retained text.
-- The same physical repository remains isolated across Companies and Projects, and ambiguous multi-root tool activity is not copied into another root's memory.
-- MCP authority is resolved from the immutable session Company/Project resource set and canonical source Connection ownership; an MCP source may differ from the inference Connection but cannot cross Company or Project boundaries.
-- Sensitive MCP headers and environment variables must be stored as secret references. Ambient sensitive process environment variables are not inherited by stdio MCP servers, and arbitrary persisted cwd paths are replaced by session-authorized root IDs.
-- MCP tools without an explicit read-only annotation are treated as potentially mutating, and failed or uncertain mutations remain non-retryable without confirmation through the common runtime mutation-safety contract.
-- Browser state is isolated by immutable Company + Project + Axis session + execution-target context, with a Company + Project + target storage partition key prepared for future persistent profiles; provider/account identity cannot broaden or merge browser scope and state tools do not expose cookie/localStorage values.
-- External browser content is marked as untrusted data with a `treat-as-data` instruction policy and defensive prompt-injection signals; the detector is advisory and does not elevate web content into instructions.
-- External navigation, developer diagnostics, screenshots and DOM interaction use explicit canonical permissions. Redirect destinations are re-checked against policy, HTTP(S) URLs reject embedded credentials, reads are bounded, and unsupported interaction/CDP/screenshot operations never fall back to another browser backend, shell, screen capture or Computer Use.
+- MCP tools are exposed only after canonical Company ownership resolution and explicit server/tool allowlisting; Project scope may remove authority but cannot widen Company MCP capability.
+- Provider-side MCP execution is not trusted as a policy boundary. Axis composes MCP tools itself and passes only the resulting canonical tool definitions through provider adapters.
+- Imported MCP configuration never promotes source-file env values to Axis-owned plaintext secrets: sensitive auth stays as an environment or credential-vault reference resolved at request time.
+- Remote MCP redirects cannot escape the original network authorization boundary; unauthorized redirect targets fail before credentials or custom headers are forwarded.
 
-## [0.19.0] - 2026-09-03
+## [0.19.0] - 2026-09-02
 
 ### Added
-- Added the canonical provider-agnostic agent runtime boundary for model/tool/result loops, immutable multi-company session context, tool registration, execution targets, permission gates, effective capability negotiation, progress, cancellation, timeout, lifecycle events, retry eligibility and mutation status.
-- Added a common provider adapter protocol plus a structured-output compatibility adapter so existing Account and API-key `InferenceProvider` connections can participate in the same runtime without provider-specific tool implementations.
-- Added architecture tests covering provider/auth/tool independence, Company isolation, capability refusal, provider-independent lifecycle observation, cancellation, timeout/mutation safety and exact no-fallback provider/model/execution-target selection.
-- Added the Parallel Development Handoff that freezes the runtime contracts and assigns independent ownership boundaries for filesystem, process, Git, Project Memory, MCP, browser, provider-adapter and UI workstreams.
+- Added a provider-neutral `AgentRuntime` with immutable session authority over Company, optional Project, exact Connection/model, execution target, roots, enabled MCP resources, capabilities, permissions, rules, and attached resource metadata.
+- Added a typed canonical conversation/tool protocol with normalized messages, tool definitions/calls/results, lifecycle events, structured decisions, permission requests, validation events, cancellation, and session-scoped approval tokens.
+- Added a minimal `AgentProviderAdapter` contract that exposes only provider/model/capability identity plus `runTurn()`, with a deterministic in-memory adapter proving the runtime is not coupled to Claude, OpenAI, Ollama, or Account transport details.
+- Added deny-by-default `ToolRegistry` composition that omits unauthorized tools from the model-visible catalog, validates model tool calls against the exact session registry, enforces per-tool permissions before dispatch, and requires exact one-shot approval tokens before a gated tool can execute.
+- Added a base runtime permission gate and a filesystem-root tool with canonical path containment checks, plus regression coverage for traversal and out-of-root access denial.
+- Added deterministic automated coverage for normal conversation, tool execution, decision pauses/resume, permission pauses/resume, timeout, user cancellation, provider error, tool error, session isolation, and immutability.
+- Added `docs/AGENT_RUNTIME.md` documenting ownership boundaries, provider-neutral contracts, lifecycle events, pause/resume semantics, tool safety, timeout/cancellation, failure rules, and extension points.
 
-### Security
-- Agent sessions now have a fail-closed canonical scope contract: Company-owned Projects, connections, roots and resources must match the immutable session Company, and missing execution targets or unavailable capabilities fail explicitly instead of selecting a broader or alternate context.
-- Potentially mutating tool failures remain `mutationStatus: unknown` unless the tool proves a safer state, preventing the common runtime from treating an uncertain local mutation as automatically retryable.
-
-## [0.18.0] - 2026-09-03
+## [0.18.0] - 2026-09-02
 
 ### Added
-- Added a canonical company-context graph that represents `Company → connections/resources → Projects → sessions` without treating workspace paths, account display labels, or the local execution runtime as company identities.
-- Added persistent one-time migration bindings for existing Account/API-key connections so legacy organization metadata can seed company ownership without allowing a later label rename to silently move a connection between companies.
-- Added local Company lifecycle management in Settings: create, edit, archive, restore, search, explicit ordering, stable generated IDs, color, icon and description.
-- Added an explicit active-Company selector to the desktop chrome, composer, approval flow and completed results. The selected Company is persisted locally and switching scope deliberately reloads the shell after clearing stale navigation IDs.
-- Added real-Electron visual smoke coverage for Company settings plus active-Company controls in the composer, approval and result surfaces.
-- Added read-only repository context to Project Chat. Each Chat turn can rank and read bounded source excerpts plus a repository map from the Project-owned folder without granting Chat mutation or command execution capabilities.
-- Added provider-neutral Project Memory retrieval to Project Chat by reusing the existing Repo Intelligence store under the same Company + Project + repository identity used by Cowork. Validated durable facts learned through one authorized connection can therefore inform another model/connection in the same Project without crossing a Company or Project boundary.
-- Added a structured Last-turn diff review for Cowork results with changed-file navigation, collapsible per-file hunks, old/new line numbers, addition/removal highlighting and access to the raw unified diff.
-- Added Company-scoped Project Git review for Unstaged, Staged and Branch changes. Git state is read only from the active Project-owned folder, with Branch comparison resolving upstream/main/master locally and the same structured file/hunk review used by Cowork results.
+- Added the canonical Project Company-ownership contract: `companyId` is now the source of truth, creation requires an explicit non-archived Company, legacy organization metadata is mapped only through deterministic id equality, and projects reconcile fail-closed when ownership is ambiguous or missing.
+- Added Company-tagged run summaries, run detail, conversation navigation, archived surfaces, and dashboard activity so Project-originated history exposes its owning Company across primary renderer views.
+- Added local-automation parity foundations: a canonical versioned schedule/task store with typed recurrence, timezone/model/Connection/policy snapshot, task-pinned Company/Project execution, attempt/run history, missed-run handling, retry/backoff, deterministic `nextRunAt`, atomic writes, and migration seams.
+- Added a serialized local automation runner with startup recovery, explicit Run now, pause/resume, overlap prevention, availability checks, transient-only retry, bounded exponential backoff with jitter, per-Company circuit breaker, wake-from-sleep detection, run-history retention, Company/Project/Connection/model/policy drift blocking, and structured notification events.
+- Added read-only local Automation runtime/status endpoints plus task create/update/delete/pause/resume/run-now routes that keep schedule state Company/Project-owned rather than renderer-owned.
+- Added project-scoped Automation settings UI for create/edit/delete, manual/hourly/daily/weekdays/weekly recurrence, timezone/model/Connection/policy capture, pause/resume, Run now, status, next/last run, retry/error visibility, and real runtime history while preserving the existing Project workspace surface.
+- Added targeted Automation unit/runtime/UI coverage for recurrence, migration, ownership isolation, policy enforcement, missed-run startup semantics, retry/backoff, overlap prevention, invalid-recurring auto-pause, startup recovery, stale attempts, retention, notifications, CRUD/Run-now routing, restart persistence, Project UI controls, and concurrent mutation ordering.
 
 ### Changed
-- Ollama/local execution is represented as a shared execution capability in the canonical context instead of the former synthetic `local` organization.
-- Projects now select canonical Companies rather than inventing organization IDs from free text; archived Companies retain existing references but cannot receive new Projects.
-- Personal Chat no longer exposes organization-scoped API keys or Claude/ChatGPT subscription Accounts. Corporate identities require an explicitly compatible Project boundary.
-- Model names are shorter and current recommendations stay visible while older OpenAI and Claude models are grouped under More models.
-- Jobs and Projects exposed by the standalone desktop are filtered by the server-owned active Company. Cross-company job and Project actions fail closed, and corporate Company scope currently requires selecting one of that Company's Projects before starting a conversation.
-- Company Connections now use a quieter, narrower information hierarchy: redundant helper copy and security callouts are removed from the primary scan path, runtimes and connections render as lightweight rows instead of stacked cards, and semantic accent/status colors distinguish actions, providers, healthy states and attention states.
-- Company Overview, Projects, MCPs, Skills and Settings now follow the same quieter hierarchy: implementation terminology and dashboard-like metric cards are removed from the primary scan path, project and MCP content uses lightweight rows, empty states are action-oriented, and Settings keeps only the fields a user can actually change.
-- Project surfaces now keep the owning Company and Chat/Cowork mode explicit in navigation and recent conversations. When a Project folder exists, the UI states the operational boundary directly: Chat reads bounded repository context while Cowork may inspect, edit and validate it.
+- Cloud/Account Project connections now require exact Company ownership, while local Connections remain the only intentional shared exception and never imply shared Company authority.
+- Project execution now resolves runtime Connection/model policy through canonical Company-owned project policy instead of treating legacy Organization labels as ownership authority.
+- Project scheduling no longer depends on the Axis window being open; the local main-process scheduler owns execution while the desktop app process is running, catches bounded missed runs after restart/wake, and surfaces stale/overlap/drift outcomes explicitly.
 
 ### Security
-- Company-context persistence stores only company metadata and stable resource bindings; it does not persist workspace paths, provider secrets, MCP payloads, or mutable account labels.
-- Personal context no longer implicitly inherits corporate Accounts, API keys, account-scoped MCP resources or projectless history; legacy jobs without explicit Company metadata are resolved through their Project before they can be exposed.
-- The renderer never supplies a trusted Company ID when creating work. Active Company selection is validated and persisted by the desktop runtime, and switching scope is an explicit user action.
-- Project Chat repository indexes are partitioned by Company before workspace hashing, so reusable code-intelligence metadata cannot be shared across Company boundaries even if two Projects reference the same physical path.
-- Shared Project Memory keys include the canonical Company and Project before Repo Intelligence adds repository/workspace identity. The same physical Git repository therefore cannot cause automatic memory sharing across either Company or Project boundaries.
-- Project Git review cannot accept a renderer-supplied filesystem path: the Company-scoped runtime resolves and validates the active Project first, then runs read-only Git commands against that Project's configured workspace.
-
-## [0.17.1] - 2026-09-02
-
-### Added
-- Added a source-backed, P1–P4 parity checklist for a local-first, multi-company AI control plane: first-class parity between Account and API Key connections, multiple models, Ollama, the Windows Local Worker specialization, connection/model-specific MCPs, skills, plugins and agents, provider-managed constraints, strict company isolation, and company-scoped memory, automation, usage and policies—without a hosted Axis database or backend.
-- Added repository-wide visual-change instructions requiring agents to preserve the established Axis and Claude Desktop interface language, reuse the three-layer CSS architecture, and render and inspect affected states before completing UI work.
+- Cross-Company Project/Connection reuse fails closed during project creation, runtime policy resolution, and project policy edits; local Connections are still permitted across Companies only as shared compute and remain scoped by the active Project/Company policy.
+- Local Automation revalidates exact Company, Project, Connection, model, execution target, immutable schedule policy snapshot and current Project runtime authority before each attempt; cross-Company drift, missing resources, unsafe policy widening and unapproved Connection changes block execution instead of silently falling back.
 
 ## [0.17.0] - 2026-09-02
 
 ### Added
-- Cloud model selectors now refresh available models from provider catalogs when opened, so newly released API models can appear without an Axis update.
-- Claude subscription-account aliases show the currently resolved family version, such as `Opus 5 · latest alias`, and completed responses retain the canonical model actually reported by Claude Code.
-- Work Hub now has a full-size app surface with dedicated Messages, Work Board, Overview, Calendar, and Sources sections.
-- Work Hub messages can be marked as read or dismissed locally, and ticket cards expose direct links from the Work Board.
+- Added Company as the canonical tenancy/context primitive, with persistent Company definitions, explicit Personal context, migration from legacy Organization metadata, archived lifecycle state, and deterministic ownership resolution for Projects, Connections, MCP servers, Skills, memory, runs, credentials, and Work Hub sources.
+- Added a top sidebar Contexts switcher for Personal + active Companies, persisted current Company selection, dedicated Company Hub surfaces, and Company-scoped Projects, Connections, MCPs, Skills, and Settings with shared UI primitives.
+- Added Work Hub as a global read-only operational aggregation across Companies, with Company filters and compact Today, Calendar, My Work, Inbox, and Sources views that preserve Company provenance on every row/item.
+- Added a canonical Company-owned Work Hub source registry and local normalized cache for calendar, ticket/work, and message/inbox items, including durable per-source sync health/state, source removal, message read/dismiss state, retention policy, and Company reassignment checks.
+- Added Claude-account Work Hub collection through the existing Claude CLI bridge for Company-owned calendar, ticket, and message sources, with strict JSON parsing, provenance tagging, and prompt/output-size bounds.
+- Added source administration inside Company Connections, including Add source, Sync, Remove, Company ownership display, and Work Hub aggregation that cannot mutate or reassign source ownership.
+- Added Company CRUD and lifecycle API routes plus `/api/companies/context`, Work Hub desktop bridge operations, and deterministic Company reconciliation during app startup/project/Connection/MCP lifecycle changes.
+- Added product runtime Company resolution that fails closed for ambiguous/mismatched Project/Connection ownership and carries canonical Company identity into runtime sessions.
+- Added Company-first Agent Runtime UI support and regression coverage showing Company/model/execution-target provenance in effective context, activity, permission decisions, evidence panes, chat messages, and multi-Company fixture states.
+- Added real-Electron visual smoke coverage for Company navigation, Company Hub, Company-owned Work Hub source administration, Company→global Work Hub deep-linking, global source aggregation, Personal/Company filtering, and app-wide Settings isolation.
 
 ### Changed
-- Projectless Chat now distinguishes API-key connections from ChatGPT and Claude subscription accounts, including personal and organization account identities.
-- Model names are shorter and current recommendations stay visible while older OpenAI and Claude models are grouped under More models.
-- Messages sources now stay focused on comments from assigned Jira tickets and actionable Slack messages instead of collecting unrelated GitHub or other connector activity.
-
-### Fixed
-- Removed duplicate generic provider entries when the same configured API credentials were already represented as named connections.
-- Account-backed model choices no longer hide the selected model family or make different authentication and billing paths look interchangeable.
-- Jira ticket and comment links now preserve MCP-returned permalinks and use the configured Jira MCP origin when that server omits browser URLs, avoiding incorrect guessed Atlassian hostnames.
-
-## [0.16.2] - 2026-09-02
-
-### Fixed
-- Packaged macOS builds now pin their process working directory to a private Axis-owned folder under `~/.local-coder/runtime-cwd` before Claude Code, Codex, or other provider subprocesses can start. This prevents a Finder/Dock launch directory from becoming an accidental filesystem scope for child CLIs.
-- Work Hub no longer starts a source-less bulk refresh when the UI mounts. Reading the Work Hub snapshot is passive; provider CLIs are launched only by an explicit source-specific Sync action.
-- The macOS privacy boundary now avoids attributing unexpected protected-folder access from automatic provider startup to Axis.
+- Project Memory now uses canonical `companyId` internally (with a deprecated Organization alias only for compatibility) and memory storage/retrieval remains Company + Project + repository-root scoped.
+- Existing personal Project records are migrated into the Personal Company when ownership is deterministic; ambiguous legacy ownership fails closed instead of guessing a Company.
+- Project/Connection UI labels still expose legacy Organization wording where needed for compatibility, but runtime and persistence authority comes from Company.
+- Global Settings is restricted to app-wide General, Appearance, and Usage; Company-specific administration lives inside each Company Hub.
 
 ### Security
-- Users should not need to grant Axis broad access to Music, Photos, Downloads, or mounted volumes merely to open the app. Source-specific integrations may still request permissions that are genuinely required by the provider or MCP being invoked.
+- Company boundaries are explicit authority boundaries: resources from one Company cannot be reused by another except for intentionally shared local compute, and labels/names never grant access.
+- Work Hub aggregation is read-only and provenance-preserving; source add/remove/reassignment remains Company-scoped and cannot be performed from the global Hub.
 
-## [0.16.1] - 2026-09-02
-
-### Fixed
-- Packaged macOS builds now discover Claude Code, Codex, and other user-installed CLIs from common Homebrew, local-bin, Volta, npm, pnpm, Bun, asdf, mise, nvm, and fnm locations instead of relying on the minimal Finder/Dock `PATH`.
-- The automatic updater now targets the renamed `gustavolbs/axis` repository.
-- The package repository metadata now points to `gustavolbs/axis`.
-
-## [0.16.0] - 2026-09-02
+## [0.16.0] - 2026-09-01
 
 ### Added
-- Automatic macOS updates using the official `update-electron-app` client and GitHub Releases.
-- Stable self-signed macOS release signing so Squirrel.Mac can validate updates without a paid Apple Developer ID.
-- The current Axis version is now visible in the app sidebar.
-- Release metadata validation that requires `package.json` and the newest changelog entry to agree.
-- Agent instructions requiring every mergeable change to bump the app version and update this changelog.
+- Added one shared local HTTP runtime for the existing browser app and new Electron desktop shell, keeping existing API routes while exposing the same backend inside the standalone app.
+- Added an Electron `BrowserWindow` + preload bridge with context isolation, sandboxing, hidden native menu, external-link delegation, restored bounds, persisted appearance, native folder selection, OS keyboard shortcuts, and no remote Node access in renderer.
+- Added a Claude Desktop-inspired standalone shell with macOS-style titlebar/sidebar treatment, compact New chat / Projects / Runs / Archived navigation, profile footer, global search, notifications, create-project flow, Settings modal, project edit flow, and conversation unread/running states.
+- Added GitHub Actions macOS packaging for Apple Silicon and Intel with unsigned `.app`, `.dmg`, and `.zip` artifacts plus gated release-time signing/notarization when Apple secrets are available.
+- Added deterministic macOS artifact verification for Info.plist metadata, signing state, architecture, ASAR payload, DMG contents, and ZIP bundle structure.
+- Added renderer/native-shell regression tests and real-Electron visual smoke coverage for the shell, project management, settings, profile, and application startup.
 
 ### Changed
-- macOS releases are created automatically from `main` after validation, tests, packaging, signature verification, and changelog extraction.
-- Release notes are generated from the matching version section in this file.
+- The existing web server is now an optional diagnostics/dev wrapper around the shared runtime instead of the only product shell, and desktop launch is now the default `npm run app` entrypoint.
+- Browser mode keeps fetch-based runtime transport; standalone Electron routes `/api/*` and `/api/events` through the preload bridge to the in-process runtime instead of binding a localhost control plane.
+- macOS CI now builds/tests on ARM64 and also packages a separate Intel artifact for distribution.
+
+## [0.15.0] - 2026-09-01
+
+### Added
+- Added a production OpenAI Responses adapter with configurable endpoint/API key/model/headers, normalized request mapping for text/file/image inputs, JSON-schema tools, tool-call/result messages, reasoning summaries, timeouts, cancellation, and canonical usage/finish/error metadata.
+- Added a production Anthropic Messages adapter with configurable endpoint/API key/model/version/beta/max-token settings, normalized content/tool blocks, image/document inputs, `tool_use`/`tool_result` round-tripping, thinking blocks, usage/stop-reason mapping, and provider-native web-search capability negotiation.
+- Added secure HTTP provider transports with loopback/private/credentialed-URL blocking, redirect revalidation, bounded response reads, timeout/user-cancel distinction, and upstream error normalization.
+- Added focused adapter coverage for OpenAI and Anthropic request/response mapping, tools, attachments, reasoning, web search, provider errors, timeout, cancellation, network policy, and capability reporting.
+
+## [0.14.0] - 2026-09-01
+
+### Added
+- Added P1 foundations for provider-neutral tool-calling Agent Runtime: a canonical runtime event protocol, normalized provider requests/responses, explicit Company/Project/Connection/model/session authority, and deny-by-default tool exposure.
+- Added first-party tool capability contracts, permission gates, deterministic no-fallback routing, exact provider/model selection, and isolated run/session state needed for later runtime tools.
+- Added Project Memory foundations with Company/Project/root scoped storage, lifecycle event capture, redaction, retention and bounded retrieval.
+- Added base desktop UI for live Agent Runtime activity, provider-neutral evidence, decisions/approvals, and error/cancellation states.
+
+## [0.13.0] - 2026-09-01
+
+### Added
+- Added canonical Company foundations and migration seams for replacing Organization as the tenancy primitive across Projects, Connections, Runs, Memory, MCPs, Skills and Work Hub.
+- Added Company-scoped connection policy and provider routing with local compute as the only intentional shared exception.
+- Added initial Company Hub and Work Hub navigation primitives behind the standalone desktop shell.
+
+## [0.12.0] - 2026-08-31
+
+### Added
+- Added persistent desktop shell navigation, project gallery, project detail, runs, archived items, global search, settings, and profile surfaces on top of the existing local runtime.
+- Added project-scoped Chat/Cowork entry, recent conversations, instructions, context folder, model routing, Connection policy editing, and Git review primitives.
+
+## [0.11.0] - 2026-08-31
+
+### Added
+- Added the first standalone Electron shell for Axis with a local in-process runtime, preload bridge, sandboxing, context isolation, native folder picker, persistent appearance and window bounds, and macOS packaging foundations.
+
+## [0.10.0] - 2026-08-31
+
+### Added
+- Added the initial React/Vite desktop renderer and local app runtime bridge used by the standalone Axis shell.
+
+## [0.9.0] - 2026-08-30
+
+### Added
+- Added multi-provider model routing foundations for OpenAI, Anthropic, Ollama, Claude Account, and ChatGPT Account connections.
+
+## [0.8.0] - 2026-08-29
+
+### Added
+- Added persistent Project configuration for workspace, instructions, routing, privacy, Connection policy, budgets, and concurrency.
+
+## [0.7.0] - 2026-08-28
+
+### Added
+- Added first Project and job persistence stores plus local runtime APIs.
+
+## [0.6.0] - 2026-08-27
+
+### Added
+- Added the initial local-first worker/runtime skeleton.
+
+## [0.5.0] - 2026-08-26
+
+### Added
+- Added provider adapter and routing foundations.
+
+## [0.4.0] - 2026-08-25
+
+### Added
+- Added initial app settings, credentials, and runtime state persistence.
+
+## [0.3.0] - 2026-08-24
+
+### Added
+- Added early project/workspace concepts and basic API surfaces.
+
+## [0.2.0] - 2026-08-23
+
+### Added
+- Added the first web UI scaffolding for local project/job workflows.
+
+## [0.1.0] - 2026-08-22
+
+### Added
+- Initial Axis repository and local development setup.
