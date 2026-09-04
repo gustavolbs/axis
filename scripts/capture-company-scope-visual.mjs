@@ -17,13 +17,13 @@ const now = new Date().toISOString();
 fs.mkdirSync(outputDir, { recursive: true });
 
 const store = new CompanyContextStore(companyContextFile);
-store.createCompany({
+const acme = store.createCompany({
   name: 'Acme Engineering',
   description: 'Product engineering and developer experience',
   color: '#2563EB',
   icon: 'code-2'
 });
-store.createCompany({
+const northstar = store.createCompany({
   name: 'Northstar Health',
   description: 'Clinical platform and operations',
   color: '#16A34A',
@@ -150,22 +150,56 @@ async function screenshot(cdp, name) {
   console.log(`captured ${path.relative(root, targetPath)}`);
 }
 
-async function assertSelector(cdp, placement) {
-  const geometry = await evaluate(cdp, `(() => {
-    const item = document.querySelector('.axis-company-scope[data-placement="${placement}"]');
-    const rect = item?.getBoundingClientRect();
-    const select = item?.querySelector('select');
+async function assertContextNavigation(cdp) {
+  const state = await evaluate(cdp, `(() => {
+    const heading = document.querySelector('.lc-shell-company-nav-heading');
+    const title = heading?.querySelector(':scope > span');
+    const add = heading?.querySelector(':scope > button');
+    const titleRect = title?.getBoundingClientRect();
+    const addRect = add?.getBoundingClientRect();
+    const titleStyle = title ? getComputedStyle(title) : undefined;
+    const buttonStyle = add ? getComputedStyle(add) : undefined;
+    const after = add ? getComputedStyle(add, '::after') : undefined;
     return {
-      exists: Boolean(item),
-      value: select?.value,
-      text: item?.textContent?.replace(/\\s+/g, ' ').trim(),
-      withinViewport: Boolean(rect && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight)
+      title: title?.textContent?.trim(),
+      titleFontSize: titleStyle?.fontSize,
+      titleWeight: titleStyle?.fontWeight,
+      buttonHeight: addRect?.height,
+      buttonFontSize: buttonStyle?.fontSize,
+      buttonLabel: after?.content,
+      buttonBelowTitle: Boolean(titleRect && addRect && addRect.top >= titleRect.bottom - 1)
     };
   })()`);
-  if (!geometry?.exists || geometry.value !== 'personal' || !geometry.withinViewport) {
-    throw new Error(`Company selector ${placement} is invalid: ${JSON.stringify(geometry)}`);
+  if (state?.title !== 'Contexts' || state.titleFontSize !== '12px' || state.buttonFontSize !== '13px' || !state.buttonBelowTitle || !String(state.buttonLabel).includes('New context')) {
+    throw new Error(`Context navigation hierarchy is invalid: ${JSON.stringify(state)}`);
   }
-  console.log(`company-selector-${placement} ${JSON.stringify(geometry)}`);
+}
+
+async function assertContextRow(cdp, companyId, expectedName) {
+  const state = await evaluate(cdp, `(() => {
+    const row = document.querySelector('.lc-shell-company-row[data-company-id="${companyId}"]');
+    const rect = row?.getBoundingClientRect();
+    const icon = row?.querySelector('.lc-shell-company-icon svg');
+    return {
+      exists: Boolean(row),
+      text: row?.textContent?.replace(/\\s+/g, ' ').trim(),
+      hasIcon: Boolean(icon),
+      active: row?.classList.contains('active') ?? false,
+      visible: Boolean(rect && rect.width > 0 && rect.height > 0)
+    };
+  })()`);
+  if (!state?.exists || !state.visible || !state.hasIcon || !state.text?.includes(expectedName)) {
+    throw new Error(`Context row ${companyId} is invalid: ${JSON.stringify(state)}`);
+  }
+  return state;
+}
+
+async function activeCompany(cdp) {
+  return await evaluate(cdp, `(async () => {
+    const response = await fetch('/api/companies/active', { headers: { accept: 'application/json' } });
+    const payload = await response.json();
+    return payload.scope?.activeCompanyId;
+  })()`);
 }
 
 let cdp;
@@ -175,35 +209,41 @@ try {
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
   await waitFor(cdp, `document.querySelector('.lc-shell-sidebar') !== null`, 'Axis shell');
-  await waitFor(cdp, `document.querySelector('.axis-company-scope[data-placement="chrome"]') !== null`, 'chrome Company selector');
-  const composerVisible = await evaluate(cdp, `document.querySelector('.axis-company-scope[data-placement="composer"]') !== null`);
-  if (!composerVisible) {
-    await evaluate(cdp, `(() => {
-      const button = [...document.querySelectorAll('.lc-shell-primary-nav button')]
-        .find((item) => item.getAttribute('aria-label') === 'New chat' || item.textContent?.trim() === 'New chat');
-      if (!button) throw new Error('New chat button not found');
-      button.click();
-      return true;
-    })()`);
-  }
-  await waitFor(cdp, `document.querySelector('.axis-company-scope[data-placement="composer"]') !== null`, 'composer Company selector');
-  await assertSelector(cdp, 'chrome');
-  await assertSelector(cdp, 'composer');
-  await screenshot(cdp, 'company-scope-composer');
+  await waitFor(cdp, `document.querySelectorAll('.lc-shell-company-row').length >= 3`, 'Context rows');
+
+  const duplicateSelectors = await evaluate(cdp, `document.querySelectorAll('.axis-company-scope').length`);
+  if (duplicateSelectors !== 0) throw new Error(`Unexpected duplicate Company selectors: ${duplicateSelectors}`);
+
+  await assertContextNavigation(cdp);
+  const personalState = await assertContextRow(cdp, 'personal', 'Personal');
+  await assertContextRow(cdp, acme.id, 'Acme Engineering');
+  await assertContextRow(cdp, northstar.id, 'Northstar Health');
+  if (!personalState.active) throw new Error('Personal should be the selected Context on first launch.');
+  if (await activeCompany(cdp) !== 'personal') throw new Error('Sidebar and runtime Company scope are not synchronized.');
+  await screenshot(cdp, 'company-contexts-expanded');
+
+  await evaluate(cdp, `document.querySelector('.lc-shell-company-nav-heading > button')?.click(); true`);
+  await waitFor(cdp, `document.querySelector('.nested-settings-dialog h2')?.textContent?.includes('Add context') === true`, 'Add Context dialog');
+  await screenshot(cdp, 'company-context-add');
+  await evaluate(cdp, `document.querySelector('.nested-settings-dialog button[aria-label="Close"]')?.click(); true`);
+  await waitFor(cdp, `document.querySelector('.nested-settings-dialog') === null`, 'closed Add Context dialog');
+
+  await evaluate(cdp, `document.querySelector('.lc-shell-company-row[data-company-id="${acme.id}"]')?.click(); true`);
+  await waitFor(cdp, `document.querySelector('.lc-shell-company-row[data-company-id="${acme.id}"]')?.classList.contains('active') === true`, 'Acme Context selection');
+  await waitFor(cdp, `(async () => (await (await fetch('/api/companies/active')).json()).scope?.activeCompanyId === '${acme.id}')()`, 'canonical Acme runtime scope');
+  await screenshot(cdp, 'company-contexts-acme');
 
   await evaluate(cdp, `(() => {
-    const textarea = document.querySelector('.lc-agent-prompt-input');
-    if (!textarea) throw new Error('Task prompt not found');
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-    setter?.call(textarea, '/mock-decision');
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    const button = [...document.querySelectorAll('.lc-shell-primary-nav button')]
+      .find((item) => item.getAttribute('aria-label') === 'New chat' || item.textContent?.trim() === 'New chat');
+    if (!button) throw new Error('New chat button not found');
+    button.click();
     return true;
   })()`);
-  await waitFor(cdp, `!document.querySelector('.lc-agent-send-button')?.disabled`, 'enabled send button');
-  await evaluate(cdp, `document.querySelector('.lc-agent-send-button')?.click(); true`);
-  await waitFor(cdp, `document.querySelector('.axis-company-scope[data-placement="approval"]') !== null`, 'approval Company selector');
-  await assertSelector(cdp, 'approval');
-  await screenshot(cdp, 'company-scope-approval');
+  await waitFor(cdp, `document.querySelector('.lc-shell-company-row[data-company-id="personal"]')?.classList.contains('active') === true`, 'Personal Context after New Chat');
+  if (await activeCompany(cdp) !== 'personal') throw new Error('New Chat must be projectless Personal scope.');
+  if (await evaluate(cdp, `document.querySelectorAll('.axis-company-scope').length`) !== 0) throw new Error('New Chat exposed a duplicate Company selector.');
+  await screenshot(cdp, 'company-context-new-chat');
 
   await evaluate(cdp, `(() => {
     const button = [...document.querySelectorAll('button')]
@@ -212,9 +252,9 @@ try {
     button.click();
     return true;
   })()`);
-  await waitFor(cdp, `document.querySelector('.axis-company-scope[data-placement="result"]') !== null`, 'result Company selector');
-  await assertSelector(cdp, 'result');
-  await screenshot(cdp, 'company-scope-result');
+  await waitFor(cdp, `document.body.textContent?.includes('Completed result for Company scope visual verification.')`, 'completed result');
+  if (await evaluate(cdp, `document.querySelectorAll('.axis-company-scope').length`) !== 0) throw new Error('Completed result exposed a duplicate Company selector.');
+  await screenshot(cdp, 'company-context-result');
 } finally {
   cdp?.close();
   child.kill('SIGTERM');

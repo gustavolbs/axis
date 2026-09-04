@@ -89,6 +89,31 @@ test('archive and restore preserve identity without deleting referenced company 
   assert.equal(restored.id, company.id);
 });
 
+test('empty companies can be permanently deleted and remain gone after restart', () => {
+  const file = tempFile();
+  const store = new CompanyContextStore(file);
+  const company = store.createCompany({ name: 'Temporary Context' });
+
+  const deleted = store.deleteCompany(company.id);
+  assert.equal(deleted.id, company.id);
+  assert.throws(() => store.getCompany(company.id), /Company not found/);
+  assert.deepEqual(new CompanyContextStore(file).listCompanies({ includeArchived: true }), []);
+});
+
+test('company deletion refuses persisted connection ownership and Personal', () => {
+  const file = tempFile();
+  const store = new CompanyContextStore(file);
+  const company = store.createCompany({ name: 'Bound Context' });
+  store.reconcile({
+    projects: [],
+    connections: [{ id: 'claude-work', label: 'Claude Work', auth: 'claude-account', companyId: company.id }],
+    sessions: []
+  });
+
+  assert.throws(() => store.deleteCompany(company.id), /still owns 1 connection/);
+  assert.throws(() => store.deleteCompany('personal'), /cannot be deleted/);
+});
+
 test('company order is explicit, persistent and requires the complete active set', () => {
   const file = tempFile();
   const store = new CompanyContextStore(file);
@@ -137,10 +162,11 @@ test('legacy company records migrate metadata defaults without changing their st
   assert.equal(company.order, 0);
 });
 
-test('Personal remains reserved and cannot be edited, archived or recreated as a normal company', () => {
+test('Personal remains reserved and cannot be edited, archived, deleted or recreated as a normal company', () => {
   const store = new CompanyContextStore(tempFile());
   assert.throws(() => store.updateCompany('personal', { name: 'Work' }), /reserved context/);
   assert.throws(() => store.setCompanyArchived('personal', true), /cannot be archived/);
+  assert.throws(() => store.deleteCompany('personal'), /cannot be deleted/);
   assert.throws(() => store.createCompany({ name: '' }), /Company name/);
   assert.throws(() => store.createCompany({ name: 'personal' }), /reserved company name/);
   assert.throws(() => store.createCompany({ name: 'PERSONAL' }), /reserved company name/);

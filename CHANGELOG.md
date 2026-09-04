@@ -2,6 +2,13 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.24.0] - 2026-09-03
+
+### Added
+- Added permanent Company-context deletion with confirmation and fail-closed resource checks, plus Company-scoped Add Project actions and project ownership reconciliation.
+- Added searchable MCP management in each Company, including connector identity marks, explicit health/auth status, refresh/reconnect actions, and custom remote MCP registration for Claude and ChatGPT/Codex accounts.
+- Added Company / Project / conversation breadcrumbs for Project chats while keeping Project and Company scope owned by shell navigation rather than duplicated composer selectors.
+
 ## [0.23.4] - 2026-09-03
 
 ### Fixed
@@ -26,13 +33,14 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 ## [0.23.2] - 2026-09-03
 
 ### Changed
-- Re-audited `docs/CODEX_CLAUDE_DESKTOP_PARITY.md` against merged PRs #75–#88 so the unified AgentRuntime, filesystem, process, Git, MCP, browser, Project Memory and runtime-security work is no longer mislabeled as absent.
-- Replaced the stale pre-AgentRuntime diagnosis and implementation order with the real P1 Gate state: stabilization first, then product worktree orchestration, durable restart checkpoints, a real Local Worker execution target, the accepted Codex Account blocker/live evidence, and only then the remaining P2–P4 roadmap.
-- Clarified checklist semantics with explicit BASE, PARCIAL, BLOCKER and intentional architectural-decision states while keeping live-provider, UI and product-orchestration gaps open rather than overclaiming completion.
-- Work Hub Sources now reuses the established Work Hub list, source icon, semantic status, Company provenance, retry, and contained error patterns instead of maintaining an unstyled parallel row treatment.
+- Sidebar Contexts now use each Company’s configured icon and color and switching a Context updates the canonical desktop Company scope before Projects and conversations are loaded.
+- New Chat is always projectless Personal Chat; Project conversations are started from their Project surface and no longer expose a redundant Project selector in the composer.
+- Company Project pages now render Projects using canonical Company ownership and expose Add Project directly from Overview and Projects.
 
 ### Fixed
-- Restored the Work Hub Sources visual hierarchy after the multi-company refactor left the renderer on class names with no matching shared styles, fixing collapsed metadata, uncontained sync-error strips, and inconsistent source status/action alignment.
+- Fixed project creation being silently forced into a stale Personal scope, which could produce the “workspace is already assigned” cross-Company conflict when the UI appeared to target a Company.
+- Removed duplicate Company selectors from the titlebar, composer, approval flow, and assistant results.
+- Wired chat and Project pin actions to persistent local pin state and sort pinned items first in sidebar/project listings.
 
 ## [0.23.1] - 2026-09-03
 

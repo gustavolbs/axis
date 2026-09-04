@@ -88,13 +88,16 @@ test('desktop runtime filters projects and jobs by active Company and blocks cro
   });
 });
 
-test('Company selector is rendered in chrome, composer, approvals and results and switches explicitly', () => {
-  const source = fs.readFileSync('app/src/main.tsx', 'utf8');
-  assert.match(source, /chrome: document\.querySelector<HTMLElement>\('\.lc-shell-window-chrome'\)/);
-  assert.match(source, /composer: document\.querySelector<HTMLElement>\('\.composer-toolbar-left'\)/);
-  assert.match(source, /approval: document\.querySelector<HTMLElement>\('\.decision-picker-head'\)/);
-  assert.match(source, /result: lastElement\('\.lc-agent-thread \.assistant-result-message'\)/);
-  assert.match(source, /fetch\('\/api\/companies\/active', \{\s*method: 'PUT'/);
-  assert.match(source, /window\.location\.reload\(\)/);
-  assert.match(source, /localStorage\.removeItem\('local-coder\.open-job'\)/);
+test('sidebar Context rows are the only Company scope selector and synchronize the runtime explicitly', () => {
+  const root = fs.readFileSync('app/src/AppRoot.tsx', 'utf8');
+  const main = fs.readFileSync('app/src/main.tsx', 'utf8');
+  assert.match(root, /className="lc-shell-company-nav-heading"/);
+  assert.match(root, /activeCompanies\.map/);
+  assert.match(root, /data-company-id=\{company\.id\}/);
+  assert.match(root, /await activateCompany\(company\.id\)/);
+  assert.match(root, /method: 'PUT', body: \{ companyId \}/);
+  assert.match(root, /localStorage\.removeItem\('local-coder\.open-job'\)/);
+  assert.match(root, /localStorage\.removeItem\('local-coder\.project'\)/);
+  assert.doesNotMatch(main, /axis-company-scope/);
+  assert.doesNotMatch(root, /axis-company-scope/);
 });

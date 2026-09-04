@@ -1,7 +1,7 @@
 {
   "name": "axis",
   "productName": "Axis",
-  "version": "0.23.4",
+  "version": "0.24.0",
   "private": true,
   "description": "Local-first, provider-agnostic AI engineering and work command center for macOS.",
   "type": "module",
