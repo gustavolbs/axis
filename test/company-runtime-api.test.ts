@@ -27,7 +27,7 @@ test('reserved Company collection routes cannot be captured as company ids', () 
 test('Company deletion is guarded by active scope and the Company store', () => {
   const scopedRuntime = fs.readFileSync('src/company-scoped-desktop-runtime.ts', 'utf8');
   const store = fs.readFileSync('src/company-context.ts', 'utf8');
-  assert.match(scopedRuntime, /const companyDeleteMatch = \/\^\\\/companies\\\/\(\[\^\/\]\+\)\$\//);
+  assert.ok(scopedRuntime.includes("const companyDeleteMatch = /^\\/companies\\/([^/]+)$/.exec(pathname);"));
   assert.match(scopedRuntime, /companyDeleteMatch && method === 'DELETE'/);
   assert.match(scopedRuntime, /if \(companyId === PERSONAL_COMPANY_ID\) throw new Error\('Personal cannot be deleted\.'\)/);
   assert.match(scopedRuntime, /context\.companies\.find\(\(candidate\) => candidate\.id === companyId\)/);
