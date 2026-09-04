@@ -79,7 +79,16 @@ try {
     return { cardCount: cards.length, cardCompanies: cards.map((card) => card.dataset.companyId), cardTexts: cards.map((card) => card.textContent?.replace(/\\s+/g, ' ').trim() ?? ''), rawCount: rawConnections.length, leakedNorthstar: cards.some((card) => card.textContent?.includes('Northstar Health')), leakedPersonal: cards.some((card) => card.textContent?.includes('Company: Personal')), apiKeyCount: cards.filter((card) => card.textContent?.includes('API Key')).length, accountCount: cards.filter((card) => card.textContent?.includes('Claude Account')).length, bodyOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth, cardsOverflow: cards.some((card) => card.scrollWidth > card.clientWidth + 1) };
   })()`);
   if (!inventory || inventory.cardCount !== 3 || inventory.rawCount !== 5 || inventory.cardCompanies.some((id) => id !== acme.id) || inventory.leakedNorthstar || inventory.leakedPersonal || inventory.apiKeyCount !== 2 || inventory.accountCount !== 1 || inventory.bodyOverflow || inventory.cardsOverflow) throw new Error(`Company-scoped connection inventory failed: ${JSON.stringify(inventory)}`);
-  console.log(`inventory ${JSON.stringify(inventory)}`); await screenshot(cdp, 'inventory-acme-wide');
+
+  const typography = await evaluate(cdp, `(() => {
+    const buttons = [...document.querySelectorAll('.connection-center-settings button')].filter((button) => {
+      const rect = button.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    return [...new Set(buttons.map((button) => getComputedStyle(button).fontSize))];
+  })()`);
+  if (!Array.isArray(typography) || typography.some((size) => size !== '11.5px')) throw new Error(`Connection button typography drifted: ${JSON.stringify(typography)}`);
+  console.log(`inventory ${JSON.stringify(inventory)} typography=${JSON.stringify(typography)}`); await screenshot(cdp, 'inventory-acme-wide');
 
   await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.connection-center-settings button')].find((item) => item.textContent?.includes('Add connection')); if (!button) throw new Error('Add connection button not found'); button.click(); return true; })()`);
   await waitFor(cdp, "document.querySelector('.connection-create-dialog') !== null", 'add connection dialog');
@@ -90,8 +99,20 @@ try {
 
   await evaluate(cdp, `(() => { const button = [...document.querySelectorAll('.company-hub-rail > button')].find((item) => item.textContent?.trim() === 'MCPs'); if (!button) throw new Error('MCPs section missing'); button.click(); return true; })()`);
   await waitFor(cdp, `document.querySelector('[data-connection-id=${JSON.stringify(claudeAcmeId)}]') !== null`, 'Acme MCP account surface');
-  const mcpScope = await evaluate(cdp, `(() => ({ accountCards: [...document.querySelectorAll('.company-mcp-list [data-connection-id]')].map((item) => item.dataset.connectionId), text: document.querySelector('.company-hub-content')?.textContent?.replace(/\\s+/g, ' ').trim() }))()`);
-  if (mcpScope?.accountCards.length !== 1 || mcpScope.accountCards[0] !== claudeAcmeId || mcpScope.text?.includes('ChatGPT Personal')) throw new Error(`Company MCP surface leaked another context: ${JSON.stringify(mcpScope)}`);
+  const mcpScope = await evaluate(cdp, `(() => {
+    const toolbar = document.querySelector('.company-mcp-toolbar');
+    const search = toolbar?.querySelector('input[aria-label="Search MCPs"]');
+    const add = [...(toolbar?.querySelectorAll('button') ?? [])].find((button) => button.textContent?.includes('Add MCP'));
+    const accountCards = [...document.querySelectorAll('.company-mcp-list [data-connection-id]')];
+    return {
+      accountCards: accountCards.map((item) => item.dataset.connectionId),
+      text: document.querySelector('.company-hub-content')?.textContent?.replace(/\\s+/g, ' ').trim(),
+      hasSearch: Boolean(search),
+      hasAdd: Boolean(add),
+      addFontSize: add ? getComputedStyle(add).fontSize : undefined
+    };
+  })()`);
+  if (mcpScope?.accountCards.length !== 1 || mcpScope.accountCards[0] !== claudeAcmeId || mcpScope.text?.includes('ChatGPT Personal') || !mcpScope.hasSearch || !mcpScope.hasAdd || mcpScope.addFontSize !== '11.5px') throw new Error(`Company MCP surface failed: ${JSON.stringify(mcpScope)}`);
   console.log(`mcp-scope ${JSON.stringify(mcpScope)}`); await screenshot(cdp, 'mcps-acme-scoped');
 } finally {
   cdp?.close(); child.kill('SIGTERM'); await Promise.race([new Promise((resolve) => child.once('exit', resolve)), sleep(3_000).then(() => child.kill('SIGKILL'))]);
