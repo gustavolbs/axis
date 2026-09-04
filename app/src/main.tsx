@@ -10,6 +10,7 @@ import { AgentRuntimeTimeline } from './AgentRuntimeActivity.js';
 import { AppRoot } from './AppRoot.js';
 import { installChatPlatformEnhancements } from './chat-platform.js';
 import { installDiffReviewEnhancements } from './diff-review.js';
+import { installProjectScheduleRunner } from './project-schedule-runner.js';
 import { installRuntimeTransport } from './runtime-shim.js';
 // Import order is the cascade. Keep it: tokens/base, then components, then the
 // corrections layer. Do not add a fifth stylesheet — fold changes into these.
@@ -280,6 +281,7 @@ if (runtimeUiPreview) {
   });
 } else {
   installRuntimeTransport();
+  installProjectScheduleRunner();
   installChatPlatformEnhancements();
   installDiffReviewEnhancements();
   root.render(
