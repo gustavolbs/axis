@@ -15,6 +15,19 @@ test('Project overview preserves the canonical Axis pin and current main Project
   assert.doesNotMatch(source, /Choose a default Chat connection and model/);
 });
 
+test('Project overview reuses the New Chat composer presentation instead of maintaining a second styled composer', () => {
+  assert.match(source, /className="lc-agent-composer-wrap"/);
+  assert.match(source, /className="lc-agent-composer"/);
+  assert.match(source, /className="lc-agent-prompt-input"/);
+  assert.match(source, /className="composer-toolbar"/);
+  assert.match(source, /className="composer-mode-switch"/);
+  assert.match(source, /className="model-effort-trigger"/);
+  assert.match(source, /className="lc-agent-send-button"/);
+  assert.doesNotMatch(source, /project-detail-composer/);
+  assert.match(source, /function onComposerKeyDown\(event: KeyboardEvent<HTMLTextAreaElement>\)/);
+  assert.match(source, /Math\.min\(element\.scrollHeight, Math\.min\(320, window\.innerHeight \* 0\.4\)\)/);
+});
+
 test('Project overview wires existing controls instead of inventing a scheduler', () => {
   assert.match(source, /pickDirectory\(props\.project\.workspace \|\| undefined\)/);
   assert.match(source, /method: 'PATCH', body: \{ workspace: selected \}/);
