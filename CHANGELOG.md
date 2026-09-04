@@ -2,6 +2,13 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.23.3] - 2026-09-03
+
+### Fixed
+- Fixed Anthropic API-key AgentRuntime turns failing with HTTP 400 on Claude Haiku 4.5 and other structured-output models because the canonical open `toolCalls[].arguments` object was sent directly as `additionalProperties: true`.
+- Added an Anthropic-only wire adaptation that closes every object schema as required by Claude structured outputs while JSON-encoding open tool arguments and restoring them to canonical objects before Axis tool dispatch, preserving provider-neutral runtime semantics and arbitrary tool arguments.
+- Added regression coverage that verifies the Anthropic agent schema contains no open object schemas and that tool arguments round-trip back into the canonical Axis contract.
+
 ## [0.23.2] - 2026-09-03
 
 ### Changed
