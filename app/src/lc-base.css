@@ -946,3 +946,261 @@ button {
     gap: 8px;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Context navigation, Connection controls and MCP inventory consistency.
+   ----------------------------------------------------------------------- */
+
+.lc-shell-primary-nav .lc-shell-company-nav-heading {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1px;
+  margin-top: 6px;
+}
+
+.lc-shell-primary-nav .lc-shell-company-nav-heading > span {
+  display: flex;
+  height: 30px;
+  align-items: center;
+  padding: 0 10px;
+  color: var(--lc-muted);
+  font-family: var(--lc-font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.lc-shell-primary-nav .lc-shell-company-nav-heading > button {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 32px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 10px 0 42px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lc-text-soft);
+  font-family: var(--lc-font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+}
+
+.lc-shell-primary-nav .lc-shell-company-nav-heading > button::before {
+  position: absolute;
+  left: 10px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--lc-accent) 16%, transparent);
+  content: '';
+}
+
+.lc-shell-primary-nav .lc-shell-company-nav-heading > button::after {
+  content: 'New context';
+}
+
+.lc-shell-primary-nav .lc-shell-company-nav-heading > button svg {
+  position: absolute;
+  z-index: 1;
+  left: 14px;
+  color: var(--lc-accent);
+}
+
+.lc-shell-primary-nav .lc-shell-company-nav-heading > button:hover {
+  background: var(--lc-hover);
+  color: var(--lc-text);
+}
+
+.sidebar-collapsed .lc-shell-company-nav-heading > span,
+.sidebar-collapsed .lc-shell-company-nav-heading > button::after {
+  display: none;
+}
+
+.sidebar-collapsed .lc-shell-primary-nav .lc-shell-company-nav-heading > button {
+  justify-content: center;
+  padding: 0;
+}
+
+.sidebar-collapsed .lc-shell-primary-nav .lc-shell-company-nav-heading > button::before {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.sidebar-collapsed .lc-shell-primary-nav .lc-shell-company-nav-heading > button svg {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.connection-center-settings.connections-settings-page button,
+.company-hub .connection-center-settings button,
+.company-source-settings button,
+.connection-center-legacy-connectors button,
+.context-settings-page button {
+  font-family: var(--lc-font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.15;
+}
+
+.company-mcp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.company-mcp-toolbar .connector-search {
+  width: min(270px, 36vw);
+  height: 34px;
+  margin: 0;
+  background: color-mix(in srgb, var(--lc-surface-2) 52%, transparent);
+}
+
+.company-mcp-toolbar > .btn-primary {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding-inline: 11px;
+  font-family: var(--lc-font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.company-hub-content .company-mcp-account {
+  padding: 0;
+}
+
+.company-hub-content .company-mcp-account-header {
+  min-height: 44px;
+  margin: 0;
+  padding: 0 4px;
+}
+
+.company-hub-content .company-mcp-account-header strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.company-hub-content .company-mcp-account-header small {
+  font-size: 10px;
+}
+
+.company-hub-content .company-mcp-account-header > button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  font-family: var(--lc-font-sans);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.company-hub-content .company-mcp-connectors {
+  border-top: 1px solid var(--lc-border-soft);
+}
+
+.company-hub-content .company-mcp-connectors .company-mcp-card {
+  display: grid;
+  min-height: 64px;
+  grid-template-columns: 36px minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 6px;
+}
+
+.company-hub-content .company-mcp-logo {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--lc-blue) 28%, var(--lc-border));
+  border-radius: 10px;
+  background: var(--lc-blue-soft);
+  color: var(--lc-blue);
+  font-family: var(--lc-font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.company-hub-content .company-mcp-card .work-hub-item-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.company-hub-content .company-mcp-card .work-hub-item-copy small {
+  margin-top: 3px;
+  font-size: 10px;
+}
+
+.company-hub-content .company-mcp-status {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-family: var(--lc-font-sans);
+  font-size: 10px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.company-hub-content .company-mcp-status.connected {
+  background: var(--lc-positive-soft);
+  color: var(--lc-positive);
+}
+
+.company-hub-content .company-mcp-status.warning {
+  background: var(--lc-warning-soft);
+  color: var(--lc-warning);
+}
+
+.company-hub-content .company-mcp-status.muted {
+  background: var(--lc-surface-2);
+  color: var(--lc-muted);
+}
+
+.company-hub-content .company-mcp-card > .btn-secondary {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px !important;
+  font-family: var(--lc-font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.company-hub-content .company-mcp-empty {
+  min-height: 48px;
+  padding: 14px 6px;
+  font-size: 11px;
+}
+
+@media (max-width: 760px) {
+  .company-mcp-toolbar {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .company-mcp-toolbar .connector-search {
+    width: 100%;
+  }
+
+  .company-hub-content .company-mcp-connectors .company-mcp-card {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+  }
+
+  .company-hub-content .company-mcp-card > .btn-secondary {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+}
