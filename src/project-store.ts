@@ -370,6 +370,23 @@ function parseProject(value: unknown): ProjectDefinition | undefined {
   }
 }
 
+function assertWorkspaceOrganizationIsolation(
+  projects: ProjectDefinition[],
+  candidate: ProjectDefinition,
+  ignoreProjectId?: string
+): void {
+  if (!candidate.workspace) return;
+  const conflict = projects.find((project) =>
+    project.id !== ignoreProjectId && Boolean(project.workspace) &&
+    project.workspace === candidate.workspace && project.organizationId !== candidate.organizationId
+  );
+  if (conflict) {
+    throw new Error(
+      `Workspace ${candidate.workspace} is already assigned to organization ${conflict.organizationId}; it cannot also be assigned to ${candidate.organizationId}.`
+    );
+  }
+}
+
 export function projectStorePath(): string {
   return process.env.LOCAL_CODER_PROJECTS_PATH?.trim() || path.join(os.homedir(), '.local-coder-mcp', 'projects.json');
 }
@@ -439,6 +456,7 @@ export class ProjectStore {
     const state = this.read();
     const project = normalizeProject(input);
     if (state.projects.some((entry) => entry.id === project.id)) throw new Error(`Project already exists: ${project.id}`);
+    assertWorkspaceOrganizationIsolation(state.projects, project);
     state.projects.unshift(project);
     state.updatedAt = project.updatedAt;
     this.write(state);
@@ -467,6 +485,7 @@ export class ProjectStore {
       budgets: mergedBudgets,
       concurrency: patch.concurrency ?? current.concurrency
     }, current);
+    assertWorkspaceOrganizationIsolation(state.projects, project, projectId);
     state.projects = state.projects.map((entry) => entry.id === projectId ? project : entry);
     state.updatedAt = project.updatedAt;
     this.write(state);
