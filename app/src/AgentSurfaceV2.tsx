@@ -3,7 +3,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent
 } from 'react';
 import {
@@ -295,48 +294,6 @@ function providerAuthLabel(provider: CatalogProvider): string {
   if (provider.auth === 'claude-account' || provider.auth === 'chatgpt-account') return 'ACCOUNT';
   if (provider.auth === 'local' || provider.kind === 'local') return 'LOCAL';
   return 'PROVIDER';
-}
-function authBadgeStyle(auth: CatalogProvider['auth']): CSSProperties {
-  const shared: CSSProperties = {
-    display: 'inline-flex',
-    flex: '0 0 auto',
-    alignItems: 'center',
-    marginLeft: 7,
-    padding: '2px 6px',
-    border: '1px solid',
-    borderRadius: 999,
-    fontSize: 8,
-    fontStyle: 'normal',
-    fontWeight: 700,
-    letterSpacing: '.06em',
-    lineHeight: 1.35,
-    textTransform: 'uppercase'
-  };
-  if (auth === 'api-key') {
-    return {
-      ...shared,
-      borderColor: 'color-mix(in srgb, var(--lc-blue) 42%, var(--lc-border))',
-      background: 'var(--lc-blue-soft)',
-      color: 'var(--lc-blue)'
-    };
-  }
-  if (auth === 'claude-account' || auth === 'chatgpt-account') {
-    return {
-      ...shared,
-      borderColor: 'color-mix(in srgb, var(--lc-accent) 42%, var(--lc-border))',
-      background: 'var(--lc-accent-soft)',
-      color: 'var(--lc-accent)'
-    };
-  }
-  if (auth === 'local') {
-    return {
-      ...shared,
-      borderColor: 'color-mix(in srgb, var(--lc-positive) 42%, var(--lc-border))',
-      background: 'color-mix(in srgb, var(--lc-positive) 11%, var(--lc-surface))',
-      color: 'var(--lc-positive)'
-    };
-  }
-  return { ...shared, borderColor: 'var(--lc-border)', color: 'var(--lc-muted)' };
 }
 function modelDescription(provider: CatalogProvider, model: CatalogModel): string {
   const identity = `${model.id} ${model.displayName}`.toLowerCase();
@@ -1346,7 +1303,7 @@ function ModelMenu(props: {
         ? 'Requires a project'
         : ready ? '' : mode.reason ?? 'Unavailable';
       return <button key={mode.id} className={selectedMode === mode.id ? 'selected' : ''} disabled={!ready} title={!ready ? mode.reason : undefined} onClick={() => chooseProviderMode(mode)}>
-        <span><strong>{mode.label}{mode.authLabel ? <em style={authBadgeStyle(mode.authKind)}>{mode.authLabel}</em> : null}</strong>{unavailable ? <small>{unavailable}</small> : null}</span>
+        <span><strong>{mode.label}{mode.authLabel ? <em className="model-auth-badge" data-auth={mode.authKind ?? 'provider'}>{mode.authLabel}</em> : null}</strong>{unavailable ? <small>{unavailable}</small> : null}</span>
         {ready ? <ChevronRight size={16} /> : null}
       </button>;
     })}
@@ -1897,7 +1854,7 @@ function ResultMessage({ result }: { result: EngineerResult }) {
   return <div className="assistant-result-message">
     <p className="assistant-result-copy">{result.summary}</p>
     {result.changedFiles.length ? <div className="result-chip-row"><span>{result.changedFiles.length} file{result.changedFiles.length === 1 ? '' : 's'} changed</span><span>{result.validation.filter((item) => item.ok).length}/{result.validation.length} checks passed</span>{result.repairRounds ? <span>{result.repairRounds} repair round{result.repairRounds === 1 ? '' : 's'}</span> : null}</div> : null}
-    {result.changedFiles.length ? <details className="assistant-details"><summary>Changed files</summary><ul>{result.changedFiles.map((file) => <li key={file}><code>{file}</code></li>)}</ul></details> : null}
+    {result.changedFiles.length ? <details className="assistant-details"><summary>Changed files</summary><ul>{result.changedFiles.map((file) => <li key={file}><code>{file}</code></li>)}</details> : null}
     {result.validation.length ? <details className="assistant-details"><summary>Validation</summary><div className="validation-list">{result.validation.map((check, index) => <div key={`${check.command}-${index}`}><span className={check.ok ? 'validation-ok' : 'validation-fail'}>{check.ok ? '✓' : '×'}</span><code>{check.command} {check.args.join(' ')}</code></div>)}</div></details> : null}
     {result.diff ? <details className="assistant-details"><summary>Diff</summary><pre className="thread-diff">{result.diff}</pre></details> : null}
   </div>;
