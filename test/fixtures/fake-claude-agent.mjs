@@ -9,7 +9,8 @@ const prompt = valueAfter('-p') ?? '';
 const selectedModel = valueAfter('--model') ?? '';
 const toolsValue = valueAfter('--tools');
 const disallowed = valueAfter('--disallowedTools');
-const hasIsolation = args.includes('--bare') && toolsValue === '' && disallowed === 'mcp__*';
+const hasIsolation = args.includes('--safe-mode') && args.includes('--strict-mcp-config')
+  && toolsValue === '' && disallowed === 'mcp__*';
 
 if (!hasIsolation) {
   process.stderr.write('unsafe Claude agent invocation: provider-managed tools were not fully disabled');

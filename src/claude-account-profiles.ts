@@ -342,19 +342,41 @@ function statusSummary(raw: string): Pick<ClaudeAccountStatus, 'email' | 'authMe
   };
 }
 
+/**
+ * Locate the CLI's `type: "result"` JSON envelope in stdout. MCP servers and
+ * other CLI subsystems may print diagnostic lines around it, so whole-stdout
+ * JSON.parse is not reliable.
+ */
+export function parseClaudeResultEnvelope(stdout: string): Record<string, unknown> | undefined {
+  const candidates = [stdout, ...stdout.split(/\r?\n/).filter((line) => line.trimStart().startsWith('{'))];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
+        (parsed as Record<string, unknown>).type === 'result') {
+        return parsed as Record<string, unknown>;
+      }
+    } catch { /* try the next candidate line */ }
+  }
+  return undefined;
+}
+
+export function claudeResultEnvelopeError(envelope: Record<string, unknown> | undefined): string | undefined {
+  if (!envelope || envelope.is_error !== true) return undefined;
+  const message = typeof envelope.result === 'string' && envelope.result.trim()
+    ? envelope.result.trim()
+    : 'Claude account invocation failed.';
+  return /not logged in/i.test(message)
+    ? `${message} — reconnect this Claude account in Settings → Connections.`
+    : message;
+}
+
 function unwrapClaudeResult(
   result: ClaudeCommandResult,
   requestedModel?: string
 ): ClaudeCommandResult {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(result.stdout) as unknown;
-  } catch {
-    return result;
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return result;
-  const envelope = parsed as Record<string, unknown>;
-  if (envelope.type !== 'result') return result;
+  const envelope = parseClaudeResultEnvelope(result.stdout);
+  if (!envelope) return result;
 
   const modelUsage = envelope.modelUsage;
   const candidates: Array<{ id: string; cost: number }> = [];
@@ -536,7 +558,14 @@ export class ClaudeAccountRuntime {
       signal: options.signal,
       stopOnValidJson: options.stopOnValidJson
     });
-    return options.captureResultMetadata ? unwrapClaudeResult(result, options.model) : result;
+    if (!options.captureResultMetadata) return result;
+    // The CLI exits 0 for turn-level failures (e.g. "Not logged in") and only
+    // marks them inside the result envelope, so surface those as real errors.
+    const envelopeError = claudeResultEnvelopeError(parseClaudeResultEnvelope(result.stdout));
+    if (envelopeError && result.exitCode === 0 && !result.cancelled && !result.timedOut) {
+      throw new Error(envelopeError);
+    }
+    return unwrapClaudeResult(result, options.model);
   }
 
   async listMcp(profileId: string, options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<ClaudeCommandResult> {

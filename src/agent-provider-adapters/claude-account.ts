@@ -12,7 +12,11 @@ import {
   type AgentProviderResponse
 } from '../agent-runtime/index.js';
 import { OperationCancelledError } from '../cancellation.js';
-import { ClaudeAccountProfileStore } from '../claude-account-profiles.js';
+import {
+  ClaudeAccountProfileStore,
+  claudeResultEnvelopeError,
+  parseClaudeResultEnvelope
+} from '../claude-account-profiles.js';
 import { ProviderError } from '../providers/types.js';
 import {
   assertExpectedProviderFamily,
@@ -78,16 +82,11 @@ function appendBounded(current: string, chunk: Buffer | string, limit: number): 
   return `${current}${String(chunk)}`.slice(0, limit);
 }
 
-function servedModel(stdout: string): { content: string; model?: string; responseId?: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout) as unknown;
-  } catch {
-    return { content: stdout };
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { content: stdout };
-  const envelope = parsed as Record<string, unknown>;
-  if (envelope.type !== 'result') return { content: stdout };
+function servedModel(stdout: string): { content: string; model?: string; responseId?: string; resultError?: string } {
+  const envelope = parseClaudeResultEnvelope(stdout);
+  if (!envelope) return { content: stdout };
+  const resultError = claudeResultEnvelopeError(envelope);
+  if (resultError) return { content: stdout, resultError };
 
   let model: string | undefined;
   let highestCost = Number.NEGATIVE_INFINITY;
@@ -134,9 +133,13 @@ function modelMatchesSelection(selected: string, served: string): boolean {
 
 /**
  * Claude Account adapter that executes Claude Code strictly as a model
- * transport. `--bare` removes project/user extensions and MCP loading,
- * `--tools ''` removes built-in tools, and `--disallowedTools mcp__*` is a
- * defense-in-depth MCP deny rule. Axis remains the only tool host.
+ * transport. `--safe-mode` disables project/user customizations (CLAUDE.md,
+ * hooks, plugins, skills) while keeping the profile's keychain OAuth readable
+ * (`--bare` restricts auth to ANTHROPIC_API_KEY, which breaks Account
+ * transports with "Not logged in"). `--strict-mcp-config` with no --mcp-config
+ * loads zero MCP servers, `--tools ''` removes built-in tools, and
+ * `--disallowedTools mcp__*` is a defense-in-depth MCP deny rule. Axis remains
+ * the only tool host.
  */
 export class ClaudeAccountAgentAdapter implements AgentProviderAdapter {
   readonly connectionId: string;
@@ -188,7 +191,8 @@ export class ClaudeAccountAgentAdapter implements AgentProviderAdapter {
       const prompt = buildStructuredAgentPrompt(request);
       const args = [
         ...this.commandPrefixArgs,
-        '--bare',
+        '--safe-mode',
+        '--strict-mcp-config',
         '--tools', '',
         '--disallowedTools', 'mcp__*',
         '-p', prompt,
@@ -215,6 +219,12 @@ export class ClaudeAccountAgentAdapter implements AgentProviderAdapter {
       }
 
       const envelope = servedModel(result.stdout);
+      if (envelope.resultError) {
+        throw new ProviderError(this.connectionId, envelope.resultError, {
+          code: 'claude_account_error',
+          retryable: false
+        });
+      }
       if (!envelope.model) {
         throw new AgentProviderProtocolError(
           `Claude Account did not report the served model for exact selection ${this.modelId}.`
