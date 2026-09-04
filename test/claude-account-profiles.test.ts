@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   ClaudeAccountProfileStore,
-  ClaudeAccountRuntime
+  ClaudeAccountRuntime,
+  claudeResultEnvelopeError,
+  parseClaudeResultEnvelope
 } from '../src/claude-account-profiles.js';
 import { DEFAULT_PROVIDER_CAPABILITIES } from '../src/provider-settings.js';
 
@@ -207,4 +209,34 @@ test('spike does not weaken the existing provider capability defaults', () => {
 
   const source = fs.readFileSync(fileURLToPath(new URL('../src/claude-account-profiles.ts', import.meta.url)), 'utf8');
   assert.doesNotMatch(source, /ProviderBudget|ProviderSettingsStore|ProviderCapabilityPolicyManager|ProjectStore/);
+});
+
+test('the result envelope is found even when MCP diagnostics pollute stdout', () => {
+  const noisy = 'Client.listTools() called but server does not advertise tools capability\n'
+    + JSON.stringify({ type: 'result', is_error: false, result: 'OK', modelUsage: {} })
+    + '\ntrailing diagnostic line';
+  const envelope = parseClaudeResultEnvelope(noisy);
+  assert.equal(envelope?.result, 'OK');
+  assert.equal(claudeResultEnvelopeError(envelope), undefined);
+});
+
+test('turn-level CLI failures inside a zero-exit result envelope surface as errors with reconnect guidance', async () => {
+  const root = tempRoot();
+  const failing = path.join(root, 'fake-claude-not-logged-in.mjs');
+  fs.writeFileSync(failing, [
+    "process.stdout.write('Client.listTools() warning noise\\n');",
+    "process.stdout.write(JSON.stringify({ type: 'result', is_error: true, result: 'Not logged in · Please run /login', modelUsage: {} }) + '\\n');",
+    'process.exit(0);'
+  ].join('\n'));
+  const store = new ClaudeAccountProfileStore(root);
+  const runtime = new ClaudeAccountRuntime(store, {
+    claudeBinary: process.execPath,
+    commandPrefixArgs: [failing],
+    terminationGraceMs: 50
+  });
+  store.create({ id: 'personal', name: 'Personal' });
+  await assert.rejects(
+    () => runtime.invoke('personal', 'OK', { captureResultMetadata: true }),
+    /Not logged in[\s\S]*Settings → Connections/
+  );
 });

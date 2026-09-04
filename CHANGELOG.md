@@ -10,6 +10,9 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Project Chat and Cowork receive the same Context-derived Connection visibility; mode differences remain capability concerns rather than Connection ownership boundaries.
 - Unified the connection picker presentation: the Project overview now shows the same colored auth badges (API Key blue, Account amber, Local green) as New Chat, and both surfaces show the connection description line.
 - Model catalogs (`/chat/catalog` and `/projects/:id/catalog`) are cached for 30 seconds with in-flight deduplication, so reopening the connection picker no longer re-runs live model discovery; any in-app mutation clears the cache immediately.
+- Fixed Claude Account chat failing with "Not logged in · Please run /login": the AgentRuntime transport invoked Claude Code with `--bare`, which never reads keychain OAuth credentials. It now uses `--safe-mode --strict-mcp-config`, which keeps the same customization/MCP isolation while allowing the profile's Account auth.
+- Turn-level Claude CLI failures reported inside a zero-exit result envelope (`is_error: true`) now surface as real errors with reconnect guidance instead of rendering the raw JSON envelope as a chat reply.
+- The Claude CLI result envelope is now located line-by-line, so MCP diagnostic output on stdout no longer breaks response parsing.
 
 ### Security
 - Delegating a Personal inference identity into a Company Project preserves the Project's canonical Company scope and never re-homes the Connection or permits sibling-Company access.
