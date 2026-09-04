@@ -1,3 +1,4 @@
+import { currentCancellationSignal } from './cancellation.js';
 import { ClaudeAccountProfileStore, ClaudeAccountRuntime } from './claude-account-profiles.js';
 import { CodexAccountProfileStore, CodexAccountRuntime } from './codex-account-profiles.js';
 import {
@@ -247,6 +248,7 @@ class ClaudeAccountInferenceProvider implements InferenceProvider {
     const startedAt = Date.now();
     const result = await this.runtime.invoke(this.profileId, accountPrompt(request), {
       timeoutMs: request.timeoutMs,
+      signal: currentCancellationSignal(),
       model: request.model,
       captureResultMetadata: true,
       allowedTools: ['mcp__*'],
@@ -298,6 +300,7 @@ class ChatGptAccountInferenceProvider implements InferenceProvider {
     const startedAt = Date.now();
     const result = await this.runtime.invoke(this.profileId, accountPrompt(request), {
       timeoutMs: request.timeoutMs,
+      signal: currentCancellationSignal(),
       model: request.model,
       outputSchema: request.output?.type === 'json_schema' ? request.output.schema : undefined
     });
