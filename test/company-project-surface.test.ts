@@ -2,34 +2,37 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-test('Project surface presents Company as identity and workspace only as a folder', () => {
+test('Project surface presents the active Company as identity and workspace only as a folder', () => {
   const source = fs.readFileSync('app/src/ProjectGallery.tsx', 'utf8');
-  assert.match(source, /<span>Company<\/span><UiSelect/);
-  assert.match(source, /Project company/);
-  assert.match(source, /folder never changes that ownership/);
-  assert.match(source, /project\.companyName \?\? project\.companyId/);
-  assert.doesNotMatch(source, /Company identifier/);
+  assert.match(source, /interface ActiveCompanyScope/);
+  assert.match(source, /activeCompany \? <p className="page-subtitle">\{activeCompany\.company\.name\}<\/p>/);
+  assert.match(source, /<span>Context<\/span><strong>\{activeCompany\.company\.name\}<\/strong>/);
+  assert.match(source, /<FolderField value=\{workspace\}/);
+  assert.match(source, /project\.companyName \?\? project\.organizationName/);
+  assert.doesNotMatch(source, /<UiSelect/);
   assert.doesNotMatch(source, /name="companyId"/);
   assert.doesNotMatch(source, /Organization boundary/);
 });
 
-test('Project surface selects an existing canonical Company instead of inventing an id from a label', () => {
+test('Project surface binds creation to the existing active canonical Company', () => {
   const source = fs.readFileSync('app/src/ProjectGallery.tsx', 'utf8');
   assert.match(source, /await api\('\/api\/companies\/context'\)/);
-  assert.match(source, /\/api\/companies\?archived=all/);
-  assert.match(source, /const selectedCompany = companies\.find\(\(company\) => company\.id === companyId\)/);
-  assert.match(source, /Choose an existing active company for this Project/);
-  assert.match(source, /Archived companies cannot receive new Projects/);
-  assert.match(source, /organizationId: companyId/);
-  assert.match(source, /organizationName: companyName/);
+  assert.match(source, /\/api\/companies\/active/);
+  assert.match(source, /if \(!activeCompany\)/);
+  assert.match(source, /companyId: activeCompany\.activeCompanyId/);
+  assert.match(source, /companyName: activeCompany\.company\.name/);
+  assert.match(source, /organizationId: activeCompany\.activeCompanyId/);
+  assert.match(source, /organizationName: activeCompany\.company\.name/);
   assert.doesNotMatch(source, /function slug\(/);
+  assert.doesNotMatch(source, /\/api\/companies\?archived=all/);
 });
 
-test('Project surface bridges existing legacy storage without exposing it as the product model', () => {
+test('Project surface bridges legacy ownership fields without exposing them as selectors', () => {
   const source = fs.readFileSync('app/src/ProjectGallery.tsx', 'utf8');
-  assert.match(source, /const companyFields = \{[\s\S]*companyId,[\s\S]*companyName,[\s\S]*organizationId: companyId,[\s\S]*organizationName: companyName/);
-  assert.match(source, /companyId = project\.companyId \|\| project\.organizationId \|\| 'personal'/);
+  assert.match(source, /const companyId = project\.companyId \|\| project\.organizationId \|\| 'personal'/);
   assert.match(source, /companyName: project\.companyName \?\? project\.organizationName/);
+  assert.match(source, /const companyFields = \{[\s\S]*companyId: activeCompany\.activeCompanyId,[\s\S]*companyName: activeCompany\.company\.name,[\s\S]*organizationId: activeCompany\.activeCompanyId,[\s\S]*organizationName: activeCompany\.company\.name/);
+  assert.doesNotMatch(source, /name="organizationId"/);
 });
 
 test('Project connection surface uses Company ownership while legacy runtime metadata remains an adapter concern', () => {
