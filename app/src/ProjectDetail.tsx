@@ -107,10 +107,6 @@ export function ProjectDetail(props: {
       setError('Choose a folder for this project before starting Cowork.');
       return;
     }
-    if (mode === 'chat' && !chatSelection) {
-      setError('Configure a default Chat connection and model for this Project first.');
-      return;
-    }
     setBusy(true);
     setError(undefined);
     try {
