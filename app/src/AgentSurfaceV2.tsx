@@ -1303,7 +1303,7 @@ function ModelMenu(props: {
         ? 'Requires a project'
         : ready ? '' : mode.reason ?? 'Unavailable';
       return <button key={mode.id} className={selectedMode === mode.id ? 'selected' : ''} disabled={!ready} title={!ready ? mode.reason : undefined} onClick={() => chooseProviderMode(mode)}>
-        <span><strong>{mode.label}{mode.authLabel ? <em className="model-auth-badge" data-auth={mode.authKind ?? 'provider'}>{mode.authLabel}</em> : null}</strong>{unavailable ? <small>{unavailable}</small> : null}</span>
+        <span><strong>{mode.label}{mode.authLabel ? <span className={`model-auth-badge status-pill ${mode.authKind === 'api-key' ? 'live' : mode.authKind === 'local' ? 'good' : mode.authKind === 'claude-account' || mode.authKind === 'chatgpt-account' ? 'warn' : ''}`}>{mode.authLabel}</span> : null}</strong>{unavailable ? <small>{unavailable}</small> : null}</span>
         {ready ? <ChevronRight size={16} /> : null}
       </button>;
     })}
