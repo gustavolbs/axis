@@ -75,32 +75,39 @@ export class AgentProviderProtocolError extends Error {
   }
 }
 
+/**
+ * Wire schema for strict Structured Outputs providers. OpenAI requires every
+ * declared object property to appear in `required`; optional Axis fields are
+ * therefore represented as nullable values on the wire and normalized back to
+ * `undefined` after parsing. Tool arguments are encoded as JSON text because a
+ * strict response schema cannot safely describe arbitrary per-tool object keys.
+ */
 const TOOL_LOOP_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
-  required: ['complete', 'toolCalls'],
+  required: ['complete', 'text', 'reasoningSummary', 'decisionRequest', 'toolCalls'],
   properties: {
     complete: { type: 'boolean' },
-    text: { type: 'string' },
-    reasoningSummary: { type: 'string' },
+    text: { type: ['string', 'null'] },
+    reasoningSummary: { type: ['string', 'null'] },
     decisionRequest: {
-      type: 'object',
+      type: ['object', 'null'],
       additionalProperties: false,
-      required: ['kind', 'prompt'],
+      required: ['id', 'kind', 'prompt', 'options'],
       properties: {
-        id: { type: 'string' },
+        id: { type: ['string', 'null'] },
         kind: { type: 'string' },
         prompt: { type: 'string' },
         options: {
-          type: 'array',
+          type: ['array', 'null'],
           items: {
             type: 'object',
             additionalProperties: false,
-            required: ['id', 'label'],
+            required: ['id', 'label', 'description'],
             properties: {
               id: { type: 'string' },
               label: { type: 'string' },
-              description: { type: 'string' }
+              description: { type: ['string', 'null'] }
             }
           }
         }
@@ -111,16 +118,36 @@ const TOOL_LOOP_SCHEMA: Record<string, unknown> = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'arguments'],
+        required: ['id', 'name', 'arguments'],
         properties: {
-          id: { type: 'string' },
+          id: { type: ['string', 'null'] },
           name: { type: 'string' },
-          arguments: { type: 'object', additionalProperties: true }
+          arguments: {
+            type: 'string',
+            description: 'JSON-encoded object containing arguments for the selected Axis tool.'
+          }
         }
       }
     }
   }
 };
+
+function canonicalArguments(value: unknown, index: number): Record<string, unknown> {
+  let candidate = value;
+  if (typeof value === 'string') {
+    try {
+      candidate = JSON.parse(value) as unknown;
+    } catch (error) {
+      throw new AgentProviderProtocolError(
+        `Provider tool call ${index} arguments must contain valid JSON: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    throw new AgentProviderProtocolError(`Provider tool call ${index} arguments must decode to an object.`);
+  }
+  return candidate as Record<string, unknown>;
+}
 
 function canonicalToolCalls(value: unknown): ToolCall[] {
   if (!Array.isArray(value)) throw new AgentProviderProtocolError('Provider toolCalls must be an array.');
@@ -131,21 +158,17 @@ function canonicalToolCalls(value: unknown): ToolCall[] {
     const record = item as Record<string, unknown>;
     const name = typeof record.name === 'string' ? record.name.trim() : '';
     if (!name) throw new AgentProviderProtocolError(`Provider tool call ${index} has no tool name.`);
-    const args = record.arguments;
-    if (!args || typeof args !== 'object' || Array.isArray(args)) {
-      throw new AgentProviderProtocolError(`Provider tool call ${index} arguments must be an object.`);
-    }
     const rawId = typeof record.id === 'string' ? record.id.trim() : '';
     return {
       id: rawId || `tool-${randomUUID()}`,
       name,
-      arguments: args as Record<string, unknown>
+      arguments: canonicalArguments(record.arguments, index)
     };
   });
 }
 
 function canonicalDecisionRequest(value: unknown): AgentDecisionRequest | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined || value === null) return undefined;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new AgentProviderProtocolError('Provider decisionRequest must be an object.');
   }
@@ -156,7 +179,7 @@ function canonicalDecisionRequest(value: unknown): AgentDecisionRequest | undefi
     throw new AgentProviderProtocolError('Provider decisionRequest requires kind and prompt.');
   }
   let options: AgentDecisionRequest['options'];
-  if (record.options !== undefined) {
+  if (record.options !== undefined && record.options !== null) {
     if (!Array.isArray(record.options)) {
       throw new AgentProviderProtocolError('Provider decisionRequest options must be an array.');
     }
@@ -210,6 +233,8 @@ function structuredSystemPrompt(
     '',
     '# AXIS AGENT RUNTIME PROTOCOL',
     'Respond only with the requested JSON object. Set complete=true when the turn is finished. Otherwise request one or more tools from the exact catalog below, or emit decisionRequest when user input/approval is required before continuing. Never invent a tool name. Tool results will be appended to the transcript and you will be invoked again.',
+    'Every field in the response schema is required. Use null for absent text, reasoningSummary, decisionRequest, decisionRequest.id, decisionRequest.options, and option descriptions.',
+    'For every tool call, encode arguments as a JSON object string matching that tool inputSchema. Do not put a raw object in toolCalls[].arguments.',
     'If reasoningSummary is supplied, include only a concise reasoning summary, never hidden chain-of-thought.',
     '',
     '# TOOL CATALOG',
