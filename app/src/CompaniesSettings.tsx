@@ -64,14 +64,25 @@ export function CompaniesSettings() {
 
   async function load() {
     // Bring legacy Project/Account identities into the canonical store before
-    // listing it so existing users never see an apparently empty Companies page.
+    // listing it so existing users never see an apparently empty Contexts page.
     await api('/api/companies/context');
     const { companies: next } = await api<{ companies: CompanyDefinition[] }>('/api/companies?archived=all');
     setCompanies(next);
   }
 
+  function openEditor(company: CompanyDefinition | null) {
+    setEditing(company);
+    setName(company?.name ?? '');
+    setDescription(company?.description ?? '');
+    setColor(company?.color ?? '#64748B');
+    setIcon(company?.icon ?? 'building-2');
+    setNotice(undefined);
+  }
+
   useEffect(() => {
-    void load().catch((error) => setNotice(error instanceof Error ? error.message : String(error)));
+    void load()
+      .then(() => openEditor(null))
+      .catch((error) => setNotice(error instanceof Error ? error.message : String(error)));
   }, []);
 
   const active = useMemo(
@@ -88,15 +99,6 @@ export function CompaniesSettings() {
     return source.filter((company) => !needle || [company.name, company.description ?? '']
       .some((value) => value.toLocaleLowerCase().includes(needle)));
   }, [active, archived, query, view]);
-
-  function openEditor(company: CompanyDefinition | null) {
-    setEditing(company);
-    setName(company?.name ?? '');
-    setDescription(company?.description ?? '');
-    setColor(company?.color ?? '#64748B');
-    setIcon(company?.icon ?? 'building-2');
-    setNotice(undefined);
-  }
 
   function closeEditor() {
     setEditing(undefined);
@@ -188,20 +190,20 @@ export function CompaniesSettings() {
     }
   }
 
-  return <div className="focused-settings-page connections-settings-page">
+  return <div className="focused-settings-page connections-settings-page context-settings-page">
     <header>
-      <div><h1>Companies</h1><p>Keep company identities stable while their name, appearance and lifecycle remain editable on this device.</p></div>
-      <button type="button" className="settings-save-button" onClick={() => openEditor(null)}><Plus size={14} />Add company</button>
+      <div><h1>Contexts</h1><p>Create, organize, archive or permanently delete the work contexts shown in the sidebar.</p></div>
+      <button type="button" className="settings-save-button" onClick={() => openEditor(null)}><Plus size={14} />Add context</button>
     </header>
 
-    <nav className="connections-surface-tabs" aria-label="Company status">
+    <nav className="connections-surface-tabs" aria-label="Context status">
       <button type="button" className={view === 'active' ? 'active' : ''} onClick={() => setView('active')}>Active <span>{active.length}</span></button>
       <button type="button" className={view === 'archived' ? 'active' : ''} onClick={() => setView('archived')}>Archived <span>{archived.length}</span></button>
     </nav>
 
     <section className="connector-browser">
       <div className="connector-toolbar">
-        <label className="connector-search"><Search size={14} /><input aria-label="Search companies" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search companies" /></label>
+        <label className="connector-search"><Search size={14} /><input aria-label="Search contexts" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search contexts" /></label>
       </div>
       {notice ? <div className="settings-inline-message" role="status">{notice}</div> : null}
       <div className="connection-list">
@@ -231,19 +233,19 @@ export function CompaniesSettings() {
             </div>
           </article>;
         })}
-        {visible.length === 0 ? <div className="settings-empty-state connection-empty-state">{query.trim() ? 'No companies match your search.' : view === 'active' ? 'No companies yet. Add one to create a stable work boundary.' : 'No archived companies.'}</div> : null}
+        {visible.length === 0 ? <div className="settings-empty-state connection-empty-state">{query.trim() ? 'No contexts match your search.' : view === 'active' ? 'No contexts yet. Add one to create a stable work boundary.' : 'No archived contexts.'}</div> : null}
       </div>
     </section>
 
     {editing !== undefined ? <div className="nested-settings-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) closeEditor(); }}>
       <form className="nested-settings-dialog connection-create-dialog" onSubmit={(event) => void save(event)}>
-        <header className="lc-shell-modal-title"><div><h2>{editing ? 'Edit company' : 'Add company'}</h2><p>The internal company ID is generated once and never changes when you rename this company.</p></div><button type="button" onClick={closeEditor} aria-label="Close"><X size={17} /></button></header>
+        <header className="lc-shell-modal-title"><div><h2>{editing ? 'Edit context' : 'Add context'}</h2><p>The internal Context ID is generated once and remains stable when the display name changes.</p></div><button type="button" onClick={closeEditor} aria-label="Close"><X size={17} /></button></header>
         <label><span>Name</span><input required autoFocus maxLength={160} value={name} onChange={(event) => setName(event.target.value)} placeholder="Acme Engineering" /></label>
-        <label><span>Description <small>optional</small></span><textarea rows={4} maxLength={2000} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this company context is for" /></label>
+        <label><span>Description <small>optional</small></span><textarea rows={4} maxLength={2000} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this context is for" /></label>
         <label><span>Color</span><input type="color" value={color} onChange={(event) => setColor(event.target.value.toUpperCase())} /></label>
-        <label><span>Icon</span><UiSelect ariaLabel="Company icon" value={icon} options={iconOptions} onChange={(value) => setIcon(value as CompanyIconId)} /></label>
+        <label><span>Icon</span><UiSelect ariaLabel="Context icon" value={icon} options={iconOptions} onChange={(value) => setIcon(value as CompanyIconId)} /></label>
         {notice ? <div className="settings-inline-message" role="status">{notice}</div> : null}
-        <div className="nested-settings-dialog-actions"><button type="button" onClick={closeEditor}>Cancel</button><button className="settings-save-button" disabled={busy === 'save'}>{busy === 'save' ? 'Saving…' : editing ? 'Save company' : 'Create company'}</button></div>
+        <div className="nested-settings-dialog-actions"><button type="button" onClick={closeEditor}>Cancel</button><button className="settings-save-button" disabled={busy === 'save'}>{busy === 'save' ? 'Saving…' : editing ? 'Save context' : 'Create context'}</button></div>
       </form>
     </div> : null}
 
