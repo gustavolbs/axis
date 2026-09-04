@@ -6,10 +6,12 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import {
+  type AgentExecutionTarget,
   type AgentLifecycleEvent,
   type AxisTool
 } from '../src/agent-runtime/index.js';
 import { AgentProductRuntime } from '../src/agent-product-runtime.js';
+import { JobWorktreeManager, type ManagedJobWorktree } from '../src/job-worktree-manager.js';
 import type { StandaloneJobManager } from '../src/standalone-job-manager.js';
 import { withCancellationSignal, OperationCancelledError, currentCancellationSignal } from '../src/cancellation.js';
 import {
@@ -228,6 +230,8 @@ function product(input: {
   extraTools?: readonly AxisTool[];
   sharedConnectionIds?: string[];
   jobManager?: StandaloneJobManager;
+  executionTarget?: AgentExecutionTarget;
+  executionTargetKind?: 'desktop' | 'worker';
 }): AgentProductRuntime {
   const projects = new Map(input.projects.map((item) => [item.id, item]));
   const connections = new Map(input.connections.map((item) => [item.id, item]));
@@ -278,7 +282,9 @@ function product(input: {
     memoryStore: input.memoryStore,
     browserBackend: false,
     extraTools: input.extraTools,
-    executionTargetId: 'desktop',
+    executionTargetId: input.executionTarget?.id ?? 'desktop',
+    executionTarget: input.executionTarget,
+    executionTargetKind: input.executionTargetKind,
     jobManager: input.jobManager
   });
 }
@@ -291,6 +297,7 @@ function engineerInput(input: {
   modelSelection?: ProjectEngineerInput['modelSelection'];
   goal?: string;
   workspace?: string;
+  managedWorktree?: ManagedJobWorktree;
 }): ProjectEngineerInput {
   return {
     projectId: input.project.id,
@@ -299,7 +306,8 @@ function engineerInput(input: {
     interactionMode: input.mode ?? 'cowork',
     budgetJobId: input.sessionId,
     modelSelection: input.modelSelection ?? input.project.defaultModel,
-    ...(input.companyId ? { companyId: input.companyId } : {})
+    ...(input.companyId ? { companyId: input.companyId } : {}),
+    ...(input.managedWorktree ? { managedWorktree: input.managedWorktree } : {})
   } as ProjectEngineerInput;
 }
 
@@ -710,6 +718,51 @@ test('P1 gate: product catalog does not advertise managed worktrees before an ex
   }
 });
 
+test('product AgentRuntime composes the managed task worktree as the exact session root', async () => {
+  const directory = temp('p1-worktree-root');
+  const repo = path.join(directory, 'repo');
+  fs.mkdirSync(repo);
+  fs.writeFileSync(path.join(repo, 'readme.txt'), 'source\n');
+  initializeRepo(repo);
+  const selected = project({
+    id: 'p1-root-project', companyId: 'company-a', workspace: repo,
+    connectionId: 'openai-a', providerFamily: 'openai', modelId: 'gpt-test'
+  });
+  const selectedConnection = connection({ id: 'openai-a', providerFamily: 'openai', companyId: 'company-a' });
+  const worktrees = new JobWorktreeManager(path.join(directory, 'state', 'worktrees'));
+  const managed = await worktrees.prepare({
+    jobId: 'p1-root-job', companyId: 'company-a', projectId: selected.id,
+    sourceWorkspace: repo, signal: new AbortController().signal
+  });
+  assert.ok(managed);
+  fs.writeFileSync(path.join(managed.workspace, 'readme.txt'), 'task-root\n');
+  const provider = new ScriptedProvider('openai-a', 'gpt-test', (_request, invocation) =>
+    invocation === 1
+      ? call('read', 'read_file', { rootId: `project:${selected.id}`, path: 'readme.txt' })
+      : complete()
+  );
+  const runtime = product({
+    projects: [selected], connections: [selectedConnection],
+    providers: new Map([['openai-a', provider]])
+  });
+  const events: AgentLifecycleEvent[] = [];
+  runtime.subscribeAgentLifecycle((event) => events.push(event));
+  try {
+    const result = await runtime.executeEngineer(engineerInput({
+      project: selected, sessionId: 'p1-root-job', workspace: managed.workspace, managedWorktree: managed
+    }));
+    assert.equal(result.status, 'success');
+    const readResult = events.find((event) => event.type === 'tool.result' && event.result.callId === 'read');
+    assert.equal(readResult?.type, 'tool.result');
+    assert.match(JSON.stringify(readResult?.result.output), /task-root/);
+    assert.equal(fs.readFileSync(path.join(repo, 'readme.txt'), 'utf8'), 'source\n');
+  } finally {
+    fs.writeFileSync(path.join(managed.workspace, 'readme.txt'), 'source\n');
+    await worktrees.cleanup(managed, new AbortController().signal);
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('durable checkpoint persists paused decision sessions and restores them on restart', async () => {
   const directory = temp('checkpoint');
   const stateDir = path.join(directory, 'state');
@@ -930,7 +983,7 @@ test('mutation ledger tracks committed and started-unknown mutations persistentl
   }
 });
 
-test('pendingCheckpoint and mutationLedger are cleared on terminal state (success/cancelled/failed)', async () => {
+test('a forged persisted checkpoint fails closed instead of starting a fresh mutating session', async () => {
   const directory = temp('checkpoint-clear');
   const stateDir = path.join(directory, 'state');
   fs.mkdirSync(stateDir, { recursive: true });
@@ -972,7 +1025,7 @@ test('pendingCheckpoint and mutationLedger are cleared on terminal state (succes
     });
 
     // Manually set a checkpoint to simulate paused state.
-    jobs.setPendingCheckpoint(sessionId, {
+    await jobs.setPendingCheckpoint(sessionId, {
       sessionId,
       companyId: 'company-a',
       connectionId: 'openai-a',
@@ -985,11 +1038,51 @@ test('pendingCheckpoint and mutationLedger are cleared on terminal state (succes
     });
 
     const input = engineerInput({ project: selected, sessionId, goal: 'Clear test', workspace: repo });
-    await runtime.executeEngineer(input);
-
-    const cleared = jobs.getPendingCheckpoint(sessionId);
-    assert.equal(cleared, undefined, 'Checkpoint should be cleared after success');
+    await assert.rejects(() => runtime.executeEngineer(input), /checkpoint no longer matches Company\/Project authority/);
+    assert.ok(jobs.getPendingCheckpoint(sessionId), 'Invalid checkpoint must remain visible for explicit recovery.');
+    await jobs.setPendingCheckpoint(sessionId, jobs.getPendingCheckpoint(sessionId));
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('AgentProductRuntime composes the explicitly selected Worker target into the real tool loop', async () => {
+  const repo = temp('worker-product');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  initializeRepo(repo);
+  const selected = project({
+    id: 'worker-project', companyId: 'company-a', workspace: repo,
+    connectionId: 'openai-a', providerFamily: 'openai', modelId: 'gpt-test'
+  });
+  const selectedConnection = connection({ id: 'openai-a', providerFamily: 'openai', companyId: 'company-a' });
+  let localToolRuns = 0;
+  let workerRuns = 0;
+  const tool: AxisTool = {
+    definition: {
+      name: 'axis_worker_probe', description: 'Worker composition probe.', inputSchema: { type: 'object' },
+      requiredCapabilities: ['axis.test.worker'], requiredPermissions: ['workspace.read'],
+      effect: 'read', mutationRisk: 'none', retryOnFailure: 'safe'
+    },
+    async execute() { localToolRuns += 1; return { output: { location: 'desktop' } }; }
+  };
+  const target: AgentExecutionTarget & { supports(name: string): boolean } = {
+    id: 'worker-a',
+    supports: (name) => name === tool.definition.name,
+    async execute(_tool, context) {
+      workerRuns += 1;
+      assert.equal(context.session.executionTarget.kind, 'worker');
+      return { output: { location: 'worker' } };
+    }
+  };
+  const runtime = product({
+    projects: [selected], connections: [selectedConnection],
+    providers: new Map([['openai-a', new ScriptedProvider('openai-a', 'gpt-test', (_request, invocation) =>
+      invocation === 1 ? call('worker-call', 'axis_worker_probe', {}) : complete('worker done'))]]),
+    extraTools: [tool], executionTarget: target, executionTargetKind: 'worker'
+  });
+  const result = await runtime.executeEngineer(engineerInput({ project: selected, sessionId: 'worker-product-session' }));
+  assert.equal(result.status, 'success');
+  assert.equal(workerRuns, 1);
+  assert.equal(localToolRuns, 0);
+  assert.equal(runtime.effectiveRuntimeContext('worker-product-session')?.execution.kind, 'worker');
 });

@@ -5,6 +5,9 @@ import {
   buildAgentSessionContext,
   negotiateEffectiveCapabilities,
   providerModelCapabilityOffer,
+  compactAgentTranscript,
+  measureAgentContext,
+  type AgentContextUsage,
   type AgentDecisionRequest,
   type AgentDecisionResolution,
   type AgentLifecycleEvent,
@@ -14,6 +17,7 @@ import {
   type AgentResourceBinding,
   type AgentRoot,
   type AgentSessionContext,
+  type AgentExecutionTarget,
   type AxisTool
 } from './agent-runtime/index.js';
 import { createAgentProviderAdapterForConnection } from './agent-provider-adapters/index.js';
@@ -31,7 +35,7 @@ import {
   createGitTools
 } from './agent-tools/git/index.js';
 import type { McpHost } from './agent-tools/mcp/index.js';
-import { createProcessTools } from './agent-tools/process/index.js';
+import { createProcessTools, type ManagedProcessRegistry } from './agent-tools/process/index.js';
 import { currentCancellationSignal } from './cancellation.js';
 import { ClaudeAccountProfileStore } from './claude-account-profiles.js';
 import {
@@ -94,8 +98,12 @@ export interface AgentProductRuntimeOptions {
   readonly claudeProfiles?: ClaudeAccountProfileStore;
   readonly memoryStore?: ProjectMemoryStore;
   readonly browserBackend?: BrowserBackend | false;
+  readonly processRegistry?: ManagedProcessRegistry;
   readonly mcpHost?: McpHost;
   readonly executionTargetId?: string;
+  /** Exact product-selected target implementation. Omit for desktop execution. */
+  readonly executionTarget?: AgentExecutionTarget;
+  readonly executionTargetKind?: 'desktop' | 'worker';
   readonly policyStore?: RuntimePolicyStore;
   readonly securityAuditSink?: RuntimeSecurityAuditSink;
   /** Product/plugin extension point. Tools still pass normal capability/permission/resource gates. */
@@ -227,9 +235,21 @@ function rootsFor(
   companyId: string,
   project: ProjectDefinition | undefined,
   workspace: string,
-  mode: AgentProductInteractionMode
+  mode: AgentProductInteractionMode,
+  managedWorktree?: ProjectEngineerInput['managedWorktree']
 ): AgentRoot[] {
-  const rootPath = project?.workspace.trim() || workspace.trim();
+  if (managedWorktree) {
+    if (
+      !project ||
+      managedWorktree.companyId !== companyId ||
+      managedWorktree.projectId !== project.id ||
+      managedWorktree.sourceWorkspace !== project.workspace ||
+      managedWorktree.workspace !== workspace
+    ) {
+      throw new Error('Managed worktree does not match the immutable Project authority.');
+    }
+  }
+  const rootPath = managedWorktree?.workspace.trim() || project?.workspace.trim() || workspace.trim();
   if (!rootPath) return [];
   return [{
     id: project ? `project:${project.id}` : 'workspace:personal',
@@ -311,6 +331,7 @@ const PRODUCT_UNCOMPOSED_GIT_TOOLS = new Set<string>([
 function baseTools(
   roots: readonly AgentRoot[],
   backend: BrowserBackend | false | undefined,
+  processRegistry: ManagedProcessRegistry | undefined,
   extraTools: readonly AxisTool[] = []
 ): AxisTool[] {
   const gitTools = createGitTools().tools.filter(
@@ -318,7 +339,7 @@ function baseTools(
   );
   const tools = [
     ...createFilesystemP12Tools(),
-    ...createProcessTools().tools,
+    ...createProcessTools({ registry: processRegistry }).tools,
     ...gitTools,
     ...browserTools(backend),
     ...extraTools
@@ -508,6 +529,8 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
   private readonly memoryRecorder: ReturnType<typeof createProjectMemoryLifecycleSink>;
   private readonly claudeProfiles: ClaudeAccountProfileStore;
   private readonly targetId: string;
+  private readonly target: AgentExecutionTarget;
+  private readonly targetKind: 'desktop' | 'worker';
   private readonly policyEngine: RuntimePolicyEngine;
   private readonly securityAuditLifecycle?: (event: AgentLifecycleEvent) => void;
 
@@ -519,7 +542,9 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       )
     });
     this.claudeProfiles = options.claudeProfiles ?? new ClaudeAccountProfileStore();
-    this.targetId = options.executionTargetId?.trim() || 'desktop';
+    this.targetId = options.executionTarget?.id ?? (options.executionTargetId?.trim() || 'desktop');
+    this.target = options.executionTarget ?? new LocalAgentExecutionTarget(this.targetId);
+    this.targetKind = options.executionTargetKind ?? 'desktop';
     const policyStore = options.policyStore ?? new RuntimePolicyStore();
     this.policyEngine = options.securityAuditSink
       ? new AuditedRuntimePolicyEngine(policyStore, options.securityAuditSink)
@@ -536,6 +561,32 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
 
   effectiveRuntimeContext(sessionId: string): EffectiveRuntimeContext | undefined {
     return this.effectiveContexts.get(sessionId);
+  }
+
+  contextUsage(sessionId: string): AgentContextUsage | undefined {
+    const transcript = this.pending.get(sessionId)?.transcript
+      ?? this.options.jobManager?.getPendingCheckpoint(sessionId)?.transcript;
+    return transcript ? measureAgentContext(transcript) : undefined;
+  }
+
+  async compactSessionContext(sessionId: string, maxBytes = 128_000): Promise<AgentContextUsage> {
+    if (!Number.isFinite(maxBytes) || maxBytes < 4_096) {
+      throw new Error('Manual context compaction budget must be at least 4096 bytes.');
+    }
+    const pending = this.pending.get(sessionId);
+    const checkpoint = this.options.jobManager?.getPendingCheckpoint(sessionId);
+    const transcript = pending?.transcript ?? checkpoint?.transcript;
+    if (!transcript) throw new Error(`Agent session ${sessionId} has no durable transcript to compact.`);
+    const projection = compactAgentTranscript(transcript, maxBytes, true);
+    if (pending) pending.transcript = projection.messages;
+    if (checkpoint && this.options.jobManager) {
+      await this.options.jobManager.setPendingCheckpoint(sessionId, {
+        ...checkpoint,
+        transcript: projection.messages,
+        checkpointAt: new Date().toISOString()
+      });
+    }
+    return projection.after;
   }
 
   resolveAgentDecision(sessionId: string, resolution: AgentDecisionResolution): void {
@@ -654,7 +705,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       modelId: selection.modelId,
       executionTarget: {
         id: this.targetId,
-        kind: 'desktop',
+        kind: this.targetKind,
         mode: 'inference-only'
       },
       roots: [],
@@ -761,7 +812,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     if (!connection) throw new Error(`Unknown provider connection: ${selection.connectionId}`);
     if (project) assertProjectConnection(project, mode, connection, this.options.providers);
 
-    const roots = rootsFor(companyId, project, input.workspace, mode);
+    const roots = rootsFor(companyId, project, input.workspace, mode, input.managedWorktree);
     const resources = resourcesFor(
       companyId,
       project,
@@ -779,7 +830,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
       modelId: selection.modelId,
       executionTarget: {
         id: this.targetId,
-        kind: 'desktop',
+        kind: this.targetKind,
         mode: roots.length ? 'workspace' : 'inference-only'
       },
       roots,
@@ -789,7 +840,11 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     });
 
     const transport = await this.resolveTransport(project, connection, selection.modelId, companyId);
-    let tools = baseTools(roots, this.options.browserBackend, this.options.extraTools);
+    let tools = baseTools(roots, this.options.browserBackend, this.options.processRegistry, this.options.extraTools);
+    if (this.targetKind === 'worker') {
+      const target = this.target as AgentExecutionTarget & { supports?: (toolName: string) => boolean };
+      tools = tools.filter((tool) => target.supports?.(tool.definition.name) === true);
+    }
     if (mode === 'chat') tools = tools.filter(chatToolAllowed);
 
     const composeContext = (
@@ -818,7 +873,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
         modelId: selection.modelId,
         executionTarget: {
           id: this.targetId,
-          kind: 'desktop',
+          kind: this.targetKind,
           mode: roots.length ? 'workspace' : 'inference-only'
         },
         roots,
@@ -862,7 +917,7 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     const permissionGate = new RuntimePolicyPermissionGate(this.policyEngine);
     const runtime = new AgentRuntime({
       tools: new ToolRegistry(tools),
-      executionTargets: [new LocalAgentExecutionTarget(this.targetId)],
+      executionTargets: [this.target],
       permissionGate,
       lifecycle: [(event: AgentLifecycleEvent) => {
         const safeEvent = redactAgentLifecycleEvent(event);
@@ -992,9 +1047,9 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
 
   /**
    * Try to compose a session from a previously persisted checkpoint (post-restart).
-   * Returns undefined if no jobManager is configured, no checkpoint exists, or the
-   * checkpoint cannot be validated against the current Company/Connection/Project
-   * graph. In those cases the caller will fall back to a fresh compose.
+   * Returns undefined only when no checkpoint exists. A persisted checkpoint that
+   * no longer matches current authority fails closed; it is never replaced by a
+   * fresh session that could replay an uncertain mutation under different scope.
    */
   private async composeFromCheckpoint(
     input: ProductEngineerInput,
@@ -1012,12 +1067,13 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
     const snapshot = this.options.companyContext();
     const project = input.projectId ? this.options.projects.getProject(input.projectId) : undefined;
     const companyId = canonicalCompanyId(snapshot, project, input.companyId);
-    if (checkpoint.companyId !== companyId) return undefined;
-    if (checkpoint.projectId !== input.projectId) return undefined;
+    if (checkpoint.companyId !== companyId || checkpoint.projectId !== input.projectId) {
+      throw new Error('Persisted AgentRuntime checkpoint no longer matches Company/Project authority; recovery is paused.');
+    }
 
     // Re-look up the connection view to confirm it still exists in the same Company.
     const connection = this.options.connections.view(checkpoint.connectionId);
-    if (!connection) return undefined;
+    if (!connection) throw new Error('Persisted AgentRuntime checkpoint Connection is no longer available; recovery is paused.');
     if (project) {
       // Re-assert canonical project connection scope - it may have changed since checkpoint.
       try {
@@ -1028,13 +1084,29 @@ export class AgentProductRuntime implements AgentProductLifecycleSource {
           this.options.providers
         );
       } catch {
-        return undefined;
+        throw new Error('Persisted AgentRuntime checkpoint Connection is no longer authorized for this Project; recovery is paused.');
       }
     }
 
     // Compose a fresh session, then re-attach the transcript, turnIndex, decisionRequest, resolution
     // so runtime.run() resumes exactly where the user left off (or where the decision was made).
     const composed = await this.compose(input, sessionId);
+    const original = checkpoint.sessionContext;
+    const sameRoots = JSON.stringify(original.roots) === JSON.stringify(composed.context.roots);
+    const sameResources = JSON.stringify(original.resources) === JSON.stringify(composed.context.resources);
+    if (
+      original.sessionId !== composed.context.sessionId ||
+      original.companyId !== composed.context.companyId ||
+      original.project?.id !== composed.context.project?.id ||
+      original.connection.id !== composed.context.connection.id ||
+      original.modelId !== composed.context.modelId ||
+      original.executionTarget.id !== composed.context.executionTarget.id ||
+      original.executionTarget.kind !== composed.context.executionTarget.kind ||
+      original.executionTarget.mode !== composed.context.executionTarget.mode ||
+      !sameRoots || !sameResources
+    ) {
+      throw new Error('Persisted AgentRuntime checkpoint authority changed (model, target, root, or resource); recovery is paused.');
+    }
     const restoredResolution = checkpoint.resolution ?? (
       checkpoint.decisionRequest && input.userGuidance
         ? resolutionFromCheckpointGuidance(checkpoint.decisionRequest, input.userGuidance)

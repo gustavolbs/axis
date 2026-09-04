@@ -3,6 +3,7 @@ export * from './exec-tool.js';
 export {
   PROCESS_LIST_TOOL_NAME,
   PROCESS_POLL_TOOL_NAME,
+  PROCESS_RESIZE_TOOL_NAME,
   PROCESS_SIGNAL_TOOL_NAME,
   PROCESS_START_TOOL_NAME,
   PROCESS_STDIN_TOOL_NAME,
@@ -10,6 +11,7 @@ export {
   PROCESS_WAIT_TOOL_NAME,
   ProcessListTool,
   ProcessPollTool,
+  ProcessResizeTool,
   ProcessSignalTool,
   ProcessStartTool,
   ProcessStdinTool,

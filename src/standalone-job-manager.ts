@@ -8,6 +8,7 @@ import {
   withCancellationSignal
 } from './cancellation.js';
 import type { ExecutionBackend } from './execution-runtime.js';
+import { JobWorktreeManager, type ManagedJobWorktree } from './job-worktree-manager.js';
 import type { LocalEngineerResult } from './local-engineer.js';
 import type { EngineeringProgress } from './engineering-progress.js';
 import type { PremiumDecisionRequest, PremiumEngineerResult } from './premium-agent.js';
@@ -41,6 +42,7 @@ export type StandaloneReasoningEffort = 'auto' | ReasoningEffort;
 export type StandaloneInteractionMode = 'chat' | 'cowork';
 
 export interface StandaloneJobInput {
+  companyId?: string;
   projectId?: string;
   workspace: string;
   goal: string;
@@ -134,6 +136,7 @@ export interface MutationLedgerEntry {
   readonly startedAt: string;
   readonly resolvedAt?: string;
   readonly resolvedBy?: 'user' | 'agent' | 'unknown';
+  readonly retryDecision?: 'retry-confirmed' | 'accept-committed' | 'cancel';
 }
 
 export interface StandaloneJobSnapshot {
@@ -168,6 +171,11 @@ export interface StandaloneJobSnapshot {
    * committed/rolled-back from started-unknown mutations on recovery.
    */
   mutationLedger?: MutationLedgerEntry[];
+  worktree?: ManagedJobWorktree;
+  recoveryState?: {
+    readonly kind: 'indeterminate-mutation';
+    readonly callIds: readonly string[];
+  };
 }
 
 type WaitingInput = {
@@ -269,7 +277,9 @@ function snapshot(job: JobInternal): StandaloneJobSnapshot {
     rounds: job.rounds,
     events: [...job.events],
     pendingCheckpoint: job.pendingCheckpoint,
-    mutationLedger: job.mutationLedger ? [...job.mutationLedger] : undefined
+    mutationLedger: job.mutationLedger ? [...job.mutationLedger] : undefined,
+    worktree: job.worktree,
+    recoveryState: job.recoveryState
   };
 }
 
@@ -307,6 +317,7 @@ export class StandaloneJobManager {
   private readonly listeners = new Set<JobListener>();
   private persistTail: Promise<void> = Promise.resolve();
   private readonly lastActivityPublish = new Map<string, { action: string; at: number }>();
+  private readonly worktrees: JobWorktreeManager;
 
   constructor(
     private execution: Pick<
@@ -314,7 +325,11 @@ export class StandaloneJobManager {
       'executeEngineer' | 'prepareEscalation' | 'consultEscalation'
     >,
     private readonly stateDir?: string
-  ) {}
+  ) {
+    this.worktrees = new JobWorktreeManager(
+      stateDir ? path.join(stateDir, 'worktrees') : undefined
+    );
+  }
 
   /**
    * Complete the jobs → product execution → AgentRuntime cycle after all objects
@@ -353,6 +368,17 @@ export class StandaloneJobManager {
     }
 
     for (const job of this.jobs.values()) {
+      const unresolved = job.mutationLedger?.filter((entry) =>
+        (entry.mutationStatus === 'started' || entry.mutationStatus === 'unknown') && !entry.resolvedAt
+      ) ?? [];
+      if (unresolved.length > 0) {
+        job.status = 'waiting-guidance';
+        job.recoveryState = { kind: 'indeterminate-mutation', callIds: unresolved.map((entry) => entry.callId) };
+        this.emit(job, 'guidance', 'App restarted after an indeterminate mutation; explicit recovery confirmation is required', {
+          callIds: unresolved.map((entry) => entry.callId)
+        });
+        continue;
+      }
       if (job.status === 'queued' || job.status === 'running') {
         job.status = 'queued';
         this.emit(job, 'status', 'App restarted; resuming job from durable checkpoint');
@@ -427,7 +453,9 @@ export class StandaloneJobManager {
   listRestorablePausedJobs(): readonly StandaloneJobSnapshot[] {
     return this.list().filter((job) => {
       if (job.status === 'waiting-decision') return true;
-      if (job.mutationLedger?.some((entry) => entry.mutationStatus === 'started' || entry.mutationStatus === 'unknown')) {
+      if (job.mutationLedger?.some((entry) =>
+        (entry.mutationStatus === 'started' || entry.mutationStatus === 'unknown') && !entry.resolvedAt
+      )) {
         return true;
       }
       return false;
@@ -504,6 +532,9 @@ export class StandaloneJobManager {
     if (job.status === 'running' || job.status === 'queued') {
       job.controller?.abort();
       job.waiting?.resolve('');
+    }
+    if (job.worktree) {
+      await this.worktrees.cleanup(job.worktree, new AbortController().signal);
     }
     this.jobs.delete(id);
     this.schedulePersist();
@@ -618,6 +649,9 @@ export class StandaloneJobManager {
     const job = this.requireJob(id);
     if (job.status !== 'waiting-guidance') throw new Error('Job is not waiting for guidance.');
     if (!guidance.trim()) throw new Error('guidance is required.');
+    if (job.recoveryState?.kind === 'indeterminate-mutation') {
+      throw new Error('Indeterminate mutations require an explicit recovery decision before the job can resume.');
+    }
     job.guidance = mergeGuidance(job.guidance, guidance);
     job.escalationPlan = undefined;
     const waiting = job.waiting?.kind === 'guidance' ? job.waiting : undefined;
@@ -629,6 +663,46 @@ export class StandaloneJobManager {
       job.controller = new AbortController();
       void this.run(job);
     }
+    return snapshot(job);
+  }
+
+  resolveIndeterminateMutation(
+    id: string,
+    decision: 'retry-confirmed' | 'accept-committed' | 'cancel'
+  ): StandaloneJobSnapshot {
+    const job = this.requireJob(id);
+    if (job.recoveryState?.kind !== 'indeterminate-mutation') {
+      throw new Error('Job has no indeterminate mutation recovery pending.');
+    }
+    const now = new Date().toISOString();
+    const affected = new Set(job.recoveryState.callIds);
+    job.mutationLedger = (job.mutationLedger ?? []).map((entry) => affected.has(entry.callId)
+      ? {
+          ...entry,
+          mutationStatus: decision === 'accept-committed' ? 'committed' : entry.mutationStatus,
+          resolvedAt: now,
+          resolvedBy: 'user',
+          retryDecision: decision
+        }
+      : entry);
+    job.recoveryState = undefined;
+    if (decision === 'cancel') {
+      job.status = 'cancelled';
+      this.emit(job, 'cancelled', 'Job cancelled during indeterminate mutation recovery');
+      return snapshot(job);
+    }
+    job.guidance = mergeGuidance(
+      job.guidance,
+      decision === 'accept-committed'
+        ? 'The user confirmed the previously indeterminate mutation committed. Inspect current state and do not repeat it.'
+        : 'The user explicitly confirmed retry after an indeterminate mutation. Inspect current state before making further changes.'
+    );
+    job.status = 'running';
+    job.controller = new AbortController();
+    this.emit(job, 'guidance', decision === 'accept-committed'
+      ? 'User confirmed the indeterminate mutation committed'
+      : 'User explicitly authorized recovery retry');
+    void this.run(job);
     return snapshot(job);
   }
 
@@ -844,6 +918,7 @@ export class StandaloneJobManager {
       await withCancellationSignal(controller.signal, async () => {
         throwIfCancelled();
         job.status = 'running';
+        await this.ensureCoworkWorktree(job, controller.signal);
         this.emit(job, 'status', isChat
           ? 'Direct chat started'
           : job.rounds > 0 ? 'Local agent resumed' : 'Local agent started');
@@ -856,6 +931,7 @@ export class StandaloneJobManager {
           job.rounds = 1;
           const input: ProjectEngineerInput = {
             ...job.input,
+            managedWorktree: job.worktree,
             goal: currentTurn.content,
             userGuidance: job.guidance,
             budgetJobId: job.id,
@@ -901,6 +977,7 @@ export class StandaloneJobManager {
           job.rounds = round;
           const input: ProjectEngineerInput = {
             ...job.input,
+            managedWorktree: job.worktree,
             userGuidance: job.guidance,
             budgetJobId: job.id
           };
@@ -997,5 +1074,26 @@ export class StandaloneJobManager {
       job.controller = undefined;
       void this.schedulePersist();
     }
+  }
+
+  private async ensureCoworkWorktree(job: JobInternal, signal: AbortSignal): Promise<void> {
+    if (job.input.interactionMode === 'chat') return;
+    if (!this.worktrees.enabled) return;
+    const companyId = job.input.companyId?.trim();
+    if (!companyId) {
+      throw new Error('Cowork job is missing canonical Company ownership for managed worktree creation.');
+    }
+    const worktree = await this.worktrees.prepare({
+      jobId: job.id,
+      companyId,
+      projectId: job.input.projectId,
+      sourceWorkspace: job.worktree?.sourceWorkspace ?? job.input.workspace,
+      existing: job.worktree,
+      signal
+    });
+    if (!worktree) return;
+    job.worktree = worktree;
+    job.input.workspace = worktree.workspace;
+    await this.schedulePersist();
   }
 }

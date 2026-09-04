@@ -1,6 +1,6 @@
 # P1 Multi-Company Agent Runtime Gate
 
-Date: 2026-09-03
+Date: 2026-09-04
 Branch: `test/p1-multicompany-agent-runtime-gate`
 Baseline: `main` at `686e7dd53baab56214973865c0e71b209ece1c5c`
 
@@ -25,14 +25,14 @@ A green CI run is required for this branch, but green CI does not change this ga
 | --- | --- | --- | --- |
 | 1 | Chat and Cowork use the same `AgentRuntime` | PASS | `AgentProductRuntime` is the single product composition path. `test/agent-product-runtime.test.ts` exercises Chat and Cowork through the same instance while changing only scoped authority/tool catalogs. |
 | 2 | Real engineering loop | PASS for local runtime/tool integration; live-provider matrix PARTIAL | `test/agent-product-runtime.test.ts` drives search → read → edit → failing real process validation → repair → passing validation → real Git diff against a temporary repository. Filesystem, process and Git are real local implementations; the provider transport is scripted, so this does not by itself prove every live Account/API transport. |
-| 3 | Safe parallel Git/worktrees | FAIL at product composition | The Git tool layer has real managed worktree create/list/remove, source-checkout protection, dirty-tree preservation behavior, ownership locks and same-repository checks. The product session currently freezes only the Project checkout root; it does not allocate a per-task managed worktree checkout as the task root. Advertising/using worktrees from the normal product agent therefore cannot satisfy the end-to-end requirement yet. |
+| 3 | Safe parallel Git/worktrees | PASS | Cowork creates or recovers a Company/Project/job-owned checkout before AgentRuntime composition, persists and revalidates its exact root across restart, isolates jobs, preserves the source checkout, and refuses cleanup when dirty or unmerged work remains. |
 | 4 | Company isolation E2E | PASS for canonical runtime/tool boundaries; live UI/provider matrix PARTIAL | Product composition rejects forged Company and cross-Project Connection selection before credentials/provider execution. Filesystem, process, Git, MCP, browser, memory and runtime-policy suites contain cross-Company negative coverage. A single live matrix spanning every external provider/resource is not present in CI. |
 | 5 | Connection isolation E2E | PARTIAL | Connection identity is immutable and distinct even for the same provider/auth family; native adapter tests cover Account/API-key architecture and no silent model/connection fallback. CI does not exercise two real Claude/ChatGPT accounts or two real API keys simultaneously because live credentials are intentionally absent. |
 | 6 | Account/API Key same architecture | PARTIAL | Claude Account, OpenAI API Key, Anthropic API Key and Ollama enter through `AgentProviderAdapter`. ChatGPT/Codex Account remains fail-closed under G2; therefore the complete Account/API-key acceptance matrix is not yet satisfied. |
-| 7 | Local/shared inference keeps Company/resource scope | PASS for Ollama/shared-local policy; Local Worker FAIL | Shared Ollama transport stays Company-neutral while each session remains Company-scoped. `AgentProductRuntime`, however, currently constructs `LocalAgentExecutionTarget` for the product path and does not execute tools through a real Local Worker `AgentExecutionTarget`; exact worker-vs-desktop execution is therefore not proven end-to-end. |
+| 7 | Local/shared inference keeps Company/resource scope | PASS | Shared Ollama remains Company-neutral while sessions stay Company-scoped. The product now composes an authenticated Local Worker target that executes eligible native tools with runtime-issued authority, revalidates root/Company/capabilities, returns lifecycle, propagates cancellation, and never falls back to desktop. |
 | 8 | Approvals before mutations | PARTIAL | In-process ask → pause, deny → zero execution and approve → exactly one matching mutation are covered through the product path. Pending approval checkpoints and resolutions now persist durably; full restarted product/UI acceptance evidence remains outstanding. |
 | 9 | Project Memory cross-provider, same Project | PARTIAL | Project Memory persists provider-neutral lifecycle handoffs and is partitioned by Company + Project + repository identity; same physical path in another Company is denied by scope. Product tests prove lifecycle handoff retrieval, but the full live Provider X session → process restart → Provider Y product session scenario is not automated with real providers. Raw chain-of-thought is not part of the canonical protocol. |
-| 10 | Crash/restart never duplicates mutations | PARTIAL | Tool contracts preserve `mutationStatus: unknown` when commit/rollback cannot be proven and avoid unsafe automatic retry. Product sessions now persist canonical transcript, authority, pending decision and mutation ledger state; managed-worktree identity and resumable background-process metadata still need end-to-end integration. |
+| 10 | Crash/restart never duplicates mutations | PARTIAL | Product sessions persist transcript, authority, target, worktree, pending decision and mutation ledger. Unresolved started/unknown mutations pause after restart until explicit retry/accept/cancel, and authority mismatch fails closed. Local background-process metadata/output also persists, but a live handle restores as an explicit indeterminate orphan rather than an unsafe fake reattachment. |
 | 11 | No hidden provider filesystem/shell/MCP | PASS for admitted adapters; ChatGPT/Codex blocked | Generic inference adapters require provider-managed tool execution to be disabled; Claude Account uses the canonical Account protocol; hidden/unrecognized provider tool calls fail closed. ChatGPT/Codex Account stays outside the runtime because its provider-managed tool surface cannot yet be proven suppressible/interceptable. |
 | 12 | Final CI green | PENDING until PR CI | Required commands are `npm run release:validate` and `npm run check`; PR CI runs the full check on Linux and Windows plus Electron build/visual smoke/package validation on macOS. |
 
@@ -71,23 +71,17 @@ These tests are meaningful because the filesystem/process/Git implementations ex
 
 ## Worktree finding
 
-The managed Git worktree backend is not the same thing as product-level worktree orchestration.
-
-A product agent session currently starts with the Project checkout root frozen in `AgentSessionContext`. A managed worktree is created later by a tool call, but the immutable session cannot dynamically promote that new checkout into an exact Git root. Simply exposing the worktree storage directory would be unsafe/incomplete: filesystem/process could traverse into it while Git exact-root checks would still reject the storage directory itself as the managed checkout.
-
-Required P1 fix: allocate/recover the task worktree before the mutating agent session is composed, bind that exact checkout as the session workspace root, persist its ownership identity with the job, and make cleanup an explicit job lifecycle operation. Until that exists, the main checkout cannot be considered protected by the real Cowork product path.
+Cowork allocates or recovers a managed checkout before its mutating AgentRuntime session is composed. The job persists its Company/Project/repository/job ownership lock and passes only that exact checkout as the session root; delete is an explicit cleanup lifecycle operation. The remaining gap is full renderer/restart retention evidence rather than the former product-composition blocker.
 
 ## Restart finding
 
-`AgentProductRuntime` and `AgentProductExecutionBridge` keep pending approvals and active turn state in process-local maps. `StandaloneJobManager` persists conversation/job state, but it does not reconstruct the exact canonical pending tool call + permission fingerprint + runtime checkpoint after an app restart.
+`AgentProductRuntime` and `AgentProductExecutionBridge` still keep the live pending approval continuation in process-local maps. `StandaloneJobManager` now persists and rehydrates the exact checkpoint payload needed to rebuild authority, transcript, pending decision/resolution and mutation state after an app restart; full renderer-driven continuation evidence remains outstanding.
 
-Implemented in the product runtime: a restart-safe checkpoint persists immutable session authority, transcript, pending decision/resolution and mutation ledger state; recovery distinguishes resolved entries from `started`/`unknown` entries and does not automatically replay uncertain mutations. Managed-worktree identity and resumable background-process metadata remain required for the full gate.
+Implemented in the product runtime: a restart-safe checkpoint persists immutable session authority, transcript, pending decision/resolution and mutation ledger state; recovery distinguishes resolved entries from `started`/`unknown` entries and does not automatically replay uncertain mutations. Managed-worktree identity and bounded background-process metadata are durable. Safe reattachment to a still-live OS process/PTY remains required for the full gate; until then, restart exposes an indeterminate orphan and disables stdin/signal/resize control.
 
 ## Exact execution-target finding
 
-The frozen runtime supports `AgentExecutionTarget`, but the product composition currently installs a `LocalAgentExecutionTarget` under the configured target ID. Renaming the ID is not equivalent to executing through Local Worker.
-
-Required P1 fix: resolve the exact trusted execution-target implementation before session start, compose its capabilities into the immutable context, and fail explicitly if that target is unavailable. No desktop/worker fallback may occur silently.
+The product resolves the trusted `RemoteWorkerAgentExecutionTarget` before session start and composes only its supported filesystem, foreground-process and Git-read capabilities into immutable authority. The authenticated per-call protocol carries non-secret session/root/tool identity plus an explicit runtime grant, reconstructs a bounded checkout, revalidates scope on the Worker, propagates cancellation, applies content mutations by compare-and-swap, and returns progress/activity/result to the canonical lifecycle. Unsupported durable-state categories are absent from the remote catalog and never fall back to desktop.
 
 ## Live-provider finding
 
@@ -101,19 +95,17 @@ The macOS CI runs real Electron rendering and visual smoke for the canonical run
 
 ## Blockers, priority order
 
-1. **P0 — product task worktree orchestration:** create/recover a managed worktree before Cowork mutation and bind the exact checkout root to the session; preserve dirty main checkout and enforce per-job ownership/cleanup.
-2. **P0 — real Local Worker execution target:** compose an actual worker `AgentExecutionTarget`; exact target failure must remain fail-closed with no desktop fallback.
-3. **P0 — G2 / ChatGPT-Codex Account:** keep blocked until all model-visible provider tools can be suppressed or intercepted before execution.
-4. **P1 — live Connection matrix harness:** prove two same-provider Accounts, two same-provider API Keys and Account + API Key using real configured Connections without leaking secrets.
-5. **P1 — live product UI evidence:** drive the canonical runtime UI with the actual product lifecycle for the full engineering loop, not only isolated canonical fixtures.
+1. **P0 — G2 / ChatGPT-Codex Account:** keep blocked until all model-visible provider tools can be suppressed or intercepted before execution.
+2. **P1 — live Connection matrix harness:** prove two same-provider Accounts, two same-provider API Keys and Account + API Key using real configured Connections without leaking secrets.
+3. **P1 — live product UI evidence:** drive the canonical runtime UI with the actual product lifecycle for the full engineering loop, not only isolated canonical fixtures.
 
 ## What is explicitly not claimed
 
 - Direct Git-tool worktree tests are **not** called product-level worktree PASS.
 - Scripted provider adapters are **not** called live Account/API-key PASS.
 - Electron fixture rendering is **not** called full live-provider UI PASS.
-- Durable conversation storage is **not** called exact runtime-checkpoint recovery.
-- A Local Worker ID on a local execution target is **not** called Local Worker execution.
+- Durable checkpoint unit coverage is **not** called full renderer-driven runtime recovery.
+- Local Worker BASE covers the tested eligible tool set; it does **not** claim remote background processes or Git index/ref/worktree mutations whose durable state cannot yet be transported losslessly.
 - The accepted G2 blocker is **not** treated as proof that ChatGPT/Codex Account passed the runtime gate.
 
 P1 remains **FAIL** until the P0 blockers above are resolved and the required real-product evidence is collected.

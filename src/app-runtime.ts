@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { AgentLifecycleEvent } from './agent-runtime/index.js';
+import type { AgentExecutionTarget, AgentLifecycleEvent } from './agent-runtime/index.js';
+import { ManagedProcessRegistry } from './agent-tools/process/index.js';
 import { AgentProductExecutionBridge } from './agent-product-execution.js';
 import { AgentProductRuntime } from './agent-product-runtime.js';
 import type { ExecutionBackend } from './execution-runtime.js';
@@ -24,6 +25,9 @@ import { projectChatDefaultModelSelection } from './project-chat-default.js';
 import { ProjectProviderRuntime } from './project-provider-runtime.js';
 import type { ModelSelection, CreateProjectInput } from './project-store.js';
 import { ProviderConnectionRuntime } from './provider-connections.js';
+import { RemoteWorkerAgentExecutionTarget } from './remote-agent-execution-target.js';
+import { remoteAxisToolNames } from './remote-axis-tool-handler.js';
+import { RemoteWorkerClient } from './remote-worker-client.js';
 import {
   ProviderSettingsStore,
   type ProviderRuntimeSettingsPatch
@@ -227,6 +231,9 @@ export class DesktopAppRuntime {
     connections: this.connections
   });
   private readonly usage = new UsageDashboard();
+  private readonly processRegistry = new ManagedProcessRegistry({
+    stateFile: path.join(path.dirname(this.config.runStorePath), 'sessions', 'managed-processes.json')
+  });
   private workerTimer?: NodeJS.Timeout;
   private readonly catalogCache = new Map<string, { at: number; value: Promise<unknown> }>();
 
@@ -249,12 +256,28 @@ export class DesktopAppRuntime {
       placeholderExecution,
       path.join(path.dirname(this.config.runStorePath), 'sessions')
     );
+    const supportedRemoteTools = remoteAxisToolNames();
+    const productTarget: AgentExecutionTarget & { supports(toolName: string): boolean } = this.config.remoteWorkerUrl
+      ? new RemoteWorkerAgentExecutionTarget(
+          'local-worker',
+          new RemoteWorkerClient(this.config),
+          supportedRemoteTools
+        )
+      : {
+          id: 'local-worker',
+          supports: (toolName) => supportedRemoteTools.includes(toolName),
+          execute: async () => {
+            throw new Error('Local Worker is the selected execution target but no Worker URL is configured.');
+          }
+        };
     const runtime = new AgentProductRuntime({
       companyContext: () => this.companySnapshot(),
       projects: this.projects,
       connections: this.connections,
       providers: this.personalProviders,
-      executionTargetId: 'desktop',
+      executionTarget: productTarget,
+      executionTargetKind: 'worker',
+      processRegistry: this.processRegistry,
       jobManager: jobs
     });
     const execution = new AgentProductExecutionBridge(runtime);
@@ -532,6 +555,16 @@ export class DesktopAppRuntime {
     if (method === 'GET' && jobMatch) {
       return { job: this.requirePersonalJobAccess(jobMatch[1]) };
     }
+    const contextMatch = /^\/jobs\/([A-Za-z0-9-]+)\/context$/.exec(pathname);
+    if (contextMatch) {
+      this.requirePersonalJobAccess(contextMatch[1]);
+      if (method === 'GET') return { usage: this.agentRuntime.contextUsage(contextMatch[1]) ?? null };
+      if (method === 'POST') {
+        const body = objectBody(request.body ?? {});
+        const maxBytes = typeof body.maxBytes === 'number' ? body.maxBytes : undefined;
+        return { usage: await this.agentRuntime.compactSessionContext(contextMatch[1], maxBytes) };
+      }
+    }
     const followUpMatch = /^\/jobs\/([A-Za-z0-9-]+)\/follow-up$/.exec(pathname);
     if (method === 'POST' && followUpMatch) {
       const body = objectBody(request.body);
@@ -628,6 +661,17 @@ export class DesktopAppRuntime {
           guidanceMatch[1],
           requiredString(body, 'guidance')
         ))
+      };
+    }
+    const recoveryMatch = /^\/jobs\/([A-Za-z0-9-]+)\/mutation-recovery$/.exec(pathname);
+    if (method === 'POST' && recoveryMatch) {
+      const body = objectBody(request.body);
+      const decision = body.decision;
+      if (decision !== 'retry-confirmed' && decision !== 'accept-committed' && decision !== 'cancel') {
+        throw new Error('decision must be retry-confirmed, accept-committed, or cancel.');
+      }
+      return {
+        job: this.scopedJob(this.jobs.resolveIndeterminateMutation(recoveryMatch[1], decision))
       };
     }
     const escalationMatch = /^\/jobs\/([A-Za-z0-9-]+)\/escalate$/.exec(pathname);

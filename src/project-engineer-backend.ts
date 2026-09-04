@@ -81,6 +81,13 @@ export type ProjectEngineerInput = LocalEngineerInput & {
   routingPolicy?: RoutingPolicy;
   modelSelection?: ModelSelection;
   reasoningEffort?: 'auto' | ReasoningEffort;
+  /** Trusted product-managed checkout selected before immutable session composition. */
+  managedWorktree?: {
+    readonly companyId: string;
+    readonly projectId?: string;
+    readonly sourceWorkspace: string;
+    readonly workspace: string;
+  };
 };
 
 export interface ProjectEscalationOption {

@@ -6,6 +6,14 @@ import type {
 } from './local-engineer.js';
 import type { OllamaGeneration, OllamaThinkingLevel } from './ollama.js';
 import type { LocalExecutionPlan, LocalExecutionPlanResult } from './orchestrator.js';
+import type {
+  AgentSessionContext,
+  ToolActivity,
+  ToolCall,
+  ToolDefinition,
+  ToolExecutionOutput,
+  ToolProgress
+} from './agent-runtime/index.js';
 
 export const REMOTE_WORKER_PROTOCOL_VERSION = 1 as const;
 
@@ -52,6 +60,8 @@ export interface RemoteWorkerHealth {
   bootstrap: string;
   scheduler?: unknown;
   ollama: unknown;
+  /** Exact native AxisTool names accepted by /v1/axis-tool. */
+  axisTools?: readonly string[];
 }
 
 export interface RemoteChatRuntime {
@@ -116,6 +126,45 @@ export interface RemoteEngineerResponse {
 export interface RemoteErrorResponse {
   protocolVersion: typeof REMOTE_WORKER_PROTOCOL_VERSION;
   error: string;
+}
+
+export type RemoteAxisToolLifecycleEvent =
+  | { readonly type: 'started'; readonly at: string }
+  | { readonly type: 'progress'; readonly progress: ToolProgress; readonly at: string }
+  | { readonly type: 'activity'; readonly activity: ToolActivity; readonly at: string }
+  | { readonly type: 'completed'; readonly at: string };
+
+/**
+ * One runtime-authorized native tool invocation. Provider credentials and
+ * Connection secrets are intentionally absent: the Worker is an execution
+ * destination, never a provider or Company authority source.
+ */
+export interface RemoteAxisToolRequest {
+  readonly protocolVersion: typeof REMOTE_WORKER_PROTOCOL_VERSION;
+  readonly requestId: string;
+  readonly executionId: string;
+  readonly cancellationId: string;
+  readonly deadlineAt: string;
+  readonly attempt: number;
+  readonly session: AgentSessionContext;
+  readonly tool: ToolDefinition;
+  readonly call: ToolCall;
+  readonly workspace: RemoteWorkspaceSnapshot;
+  readonly authorization: {
+    readonly grantedByCanonicalRuntime: true;
+    readonly permissions: readonly string[];
+    readonly capabilities: readonly string[];
+  };
+}
+
+export interface RemoteAxisToolResponse {
+  readonly protocolVersion: typeof REMOTE_WORKER_PROTOCOL_VERSION;
+  readonly requestId: string;
+  readonly executionId: string;
+  readonly state: 'completed-no-mutation' | 'completed-mutated';
+  readonly output: ToolExecutionOutput;
+  readonly changes: readonly RemoteFileChange[];
+  readonly lifecycle: readonly RemoteAxisToolLifecycleEvent[];
 }
 
 export function assertProtocolVersion(value: unknown): void {

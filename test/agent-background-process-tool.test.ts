@@ -18,7 +18,9 @@ import {
   PROCESS_EXEC_PERMISSION,
   ProcessListTool,
   ProcessPollTool,
+  ProcessResizeTool,
   ProcessStartTool,
+  ProcessStdinTool,
   ProcessTerminateTool,
   ProcessWaitTool,
   ProcessWhichTool,
@@ -236,6 +238,63 @@ test('process_wait reports clean completion and final mutation status', async ()
   }
 });
 
+test('PTY background process supports terminal detection, resize and interactive stdin', async () => {
+  const root = await tempWorkspace();
+  const registry = new ManagedProcessRegistry({ killGraceMs: 20 });
+  const start = new ProcessStartTool({ registry });
+  const poll = new ProcessPollTool(registry);
+  const resize = new ProcessResizeTool(registry);
+  const stdin = new ProcessStdinTool(registry);
+  const wait = new ProcessWaitTool(registry);
+  const owner = session(root);
+  let processId = '';
+
+  const source = [
+    "process.stdout.write('tty:' + process.stdout.isTTY + ':' + process.stdout.columns + 'x' + process.stdout.rows + '\\n');",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', value => { if (value.includes('size')) { process.stdout.write('size:' + process.stdout.columns + 'x' + process.stdout.rows + '\\n'); process.exit(0); } });"
+  ].join(' ');
+
+  try {
+    const started = backgroundOutput((await execute(start, owner, {
+      ...startInput(source),
+      terminal: true,
+      columns: 90,
+      rows: 30
+    })).output);
+    processId = started.processId;
+    assert.equal(started.terminalMode, 'pty');
+    assert.equal(started.columns, 90);
+    assert.equal(started.rows, 30);
+
+    const initial = await waitForOutput(poll, owner, processId, /tty:true:90x30/);
+    const resized = backgroundOutput((await execute(resize, owner, {
+      processId,
+      columns: 120,
+      rows: 40,
+      stdoutOffset: initial.nextStdoutOffset
+    })).output);
+    assert.equal(resized.columns, 120);
+    assert.equal(resized.rows, 40);
+
+    await execute(stdin, owner, {
+      processId,
+      data: 'size\n',
+      stdoutOffset: resized.nextStdoutOffset
+    });
+    const finished = backgroundOutput((await execute(wait, owner, {
+      processId,
+      stdoutOffset: resized.nextStdoutOffset
+    })).output);
+    assert.equal(finished.status, 'exited');
+    assert.match(finished.stdout, /size:120x40/);
+    assert.equal(finished.stderr, '');
+  } finally {
+    if (processId) await registry.terminate(owner, processId).catch(() => undefined);
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('cancelling a wait does not kill the background process', async () => {
   const root = await tempWorkspace();
   const registry = new ManagedProcessRegistry({ killGraceMs: 20 });
@@ -315,6 +374,45 @@ test('terminateSession provides the cancellation hook needed by future runtime c
     assert.equal(registry.snapshotFor(owner, second.processId).status, 'terminated');
   } finally {
     await registry.terminateSession(owner.sessionId);
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('durable registry restores live process metadata as an indeterminate orphan without credentials', async () => {
+  const root = await tempWorkspace();
+  const stateFile = path.join(root, '.axis', 'managed-processes.json');
+  const firstRegistry = new ManagedProcessRegistry({ stateFile, killGraceMs: 20 });
+  const start = new ProcessStartTool({
+    registry: firstRegistry,
+    environment: { ...process.env, AXIS_TEST_PARENT_VALUE: 'parent-value-must-not-persist' }
+  });
+  const owner = session(root);
+  let processId = '';
+
+  try {
+    const started = backgroundOutput((await execute(start, owner, {
+      ...startInput("process.stdout.write('durable-ready\\n'); setInterval(() => {}, 1000);"),
+      env: { AXIS_TEST_OVERRIDE_VALUE: 'override-value-must-not-persist' }
+    })).output);
+    processId = started.processId;
+    await waitForOutput(new ProcessPollTool(firstRegistry), owner, processId, /durable-ready/);
+
+    const journal = await fs.readFile(stateFile, 'utf8');
+    assert.doesNotMatch(journal, /parent-value-must-not-persist|override-value-must-not-persist/);
+
+    const restoredRegistry = new ManagedProcessRegistry({ stateFile, killGraceMs: 20 });
+    const restored = restoredRegistry.snapshotFor(owner, processId);
+    assert.equal(restored.status, 'orphaned');
+    assert.equal(restored.restartState, 'orphaned-indeterminate');
+    assert.equal(restored.stdinOpen, false);
+    assert.match(restored.error ?? '', /attachment and mutation outcome are indeterminate/);
+    assert.match(restored.stdout, /durable-ready/);
+    await assert.rejects(
+      () => restoredRegistry.writeStdin(owner, processId, 'unsafe retry'),
+      /stdin is available only while running/
+    );
+  } finally {
+    if (processId) await firstRegistry.terminate(owner, processId).catch(() => undefined);
     await fs.rm(root, { recursive: true, force: true });
   }
 });

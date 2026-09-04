@@ -3,7 +3,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isCancellationError, withCancellationSignal } from './cancellation.js';
+import { currentCancellationSignal, isCancellationError, withCancellationSignal } from './cancellation.js';
 import { loadConfig } from './config.js';
 import { executeAgenticCodeTask } from './executor.js';
 import {
@@ -19,11 +19,13 @@ import { currentProgressJobId } from './progress-context.js';
 import { executePremiumLocalAgent, type PremiumEngineerResult } from './premium-agent.js';
 import { executeLocalCodePlan } from './orchestrator.js';
 import { reportProgress } from './progress-context.js';
+import { executeRemoteAxisTool, remoteAxisToolNames } from './remote-axis-tool-handler.js';
 import {
   REMOTE_WORKER_PROTOCOL_VERSION,
   assertProtocolVersion,
   type RemoteChatRequest,
   type RemoteEngineerRequest,
+  type RemoteAxisToolRequest,
   type RemotePlanRequest,
   type RemoteTaskRequest,
   type RemoteWorkspaceSnapshot
@@ -227,6 +229,7 @@ async function health(response: ServerResponse): Promise<void> {
       scheduler: scheduler.snapshot(),
       repoIntelligence: repoIntelligenceStatus(),
       research: researchStatus(),
+      axisTools: remoteAxisToolNames(),
       ollama: ollamaHealth
     });
   } catch (error) {
@@ -514,6 +517,13 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   }
 
   const body = await readJsonBody(request);
+  if (request.url === '/v1/axis-tool') {
+    const signal = currentCancellationSignal();
+    if (!signal) throw new Error('Remote AxisTool request is missing cancellation context.');
+    const result = await executeRemoteAxisTool(body as unknown as RemoteAxisToolRequest, config, signal);
+    json(response, 200, result as unknown as Record<string, unknown>);
+    return;
+  }
   if (request.url === '/v1/chat') {
     await handleChat(body, response);
     return;

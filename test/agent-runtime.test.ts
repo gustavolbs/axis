@@ -382,3 +382,74 @@ test('runtime never falls back to a different provider, model or execution targe
   assert.equal(missingTarget.error?.code, 'execution_target_unavailable');
   assert.match(missingTarget.error?.message ?? '', /will not silently fall back/);
 });
+
+test('scheduler runs independent reads together and serializes mutations', async () => {
+  let activeReads = 0;
+  let peakReads = 0;
+  const order: string[] = [];
+  const tool = (name: string, effect: AxisTool['definition']['effect']): AxisTool => ({
+    definition: {
+      name,
+      description: name,
+      inputSchema: { type: 'object' },
+      requiredCapabilities: ['axis.test.read'],
+      requiredPermissions: ['workspace.read'],
+      effect,
+      mutationRisk: effect === 'read' ? 'none' : 'definite',
+      retryOnFailure: effect === 'read' ? 'safe' : 'after-confirmation'
+    },
+    async execute() {
+      order.push(`${name}:start`);
+      if (effect === 'read') {
+        activeReads += 1;
+        peakReads = Math.max(peakReads, activeReads);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        activeReads -= 1;
+      }
+      order.push(`${name}:end`);
+      return { output: name, mutationStatus: effect === 'read' ? 'not-applicable' : 'committed' };
+    }
+  });
+  const adapter: AgentProviderAdapter = {
+    connectionId: 'connection-primary', providerFamily: 'openai', modelId: 'model-test',
+    capabilities: { streaming: false, toolProtocol: 'native' },
+    async invoke(request) {
+      return request.messages.some((message) => message.role === 'tool')
+        ? { text: 'done', toolCalls: [], stopReason: 'complete' }
+        : { toolCalls: [
+            { id: 'read-a', name: 'read_a', arguments: {} },
+            { id: 'read-b', name: 'read_b', arguments: {} },
+            { id: 'mutate', name: 'mutate', arguments: {} },
+            { id: 'read-c', name: 'read_c', arguments: {} }
+          ], stopReason: 'tool_calls' };
+    }
+  };
+  const runtime = new AgentRuntime({ tools: [
+    tool('read_a', 'read'), tool('read_b', 'read'), tool('mutate', 'mutation'), tool('read_c', 'read')
+  ] });
+  const result = await runtime.run(runInput(context(), adapter));
+  assert.equal(result.status, 'completed');
+  assert.equal(peakReads, 2);
+  assert.ok(order.indexOf('mutate:start') > order.indexOf('read-b:end'));
+  assert.deepEqual(order, [
+    'read_a:start', 'read_b:start', 'read_a:end', 'read_b:end',
+    'mutate:start', 'mutate:end', 'read_c:start', 'read_c:end'
+  ]);
+});
+
+test('runtime stops an unproductive repeated tool loop with evidence', async () => {
+  const loopAdapter: AgentProviderAdapter = {
+    connectionId: 'connection-primary', providerFamily: 'openai', modelId: 'model-test',
+    capabilities: { streaming: false, toolProtocol: 'native' },
+    async invoke() {
+      return { toolCalls: [{ id: 'loop-call', name: 'probe_context', arguments: { same: true } }], stopReason: 'tool_calls' };
+    }
+  };
+  const result = await new AgentRuntime({ tools: [probeTool] }).run(runInput(context(), loopAdapter, {
+    limits: { maxRepeatedToolCalls: 2 }
+  }));
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error?.code, 'unproductive_tool_loop');
+  assert.match(result.error?.message ?? '', /same arguments 3 times/);
+  assert.deepEqual(result.error?.details, { toolName: 'probe_context', repetitions: 3 });
+});

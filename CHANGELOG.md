@@ -2,6 +2,21 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.26.0] - 2026-09-04
+
+### Added
+- Cowork jobs now receive an owned managed Git worktree before AgentRuntime composition, preserving dirty source checkouts and supporting exact recovery and cleanup.
+- AgentRuntime now schedules independent read/validation tool calls concurrently while serializing commands and mutations, and detects unproductive repeated-call loops.
+- Local Worker is now a real product `AgentExecutionTarget`: runtime-authorized filesystem reads/writes, foreground processes, and Git reads execute through the authenticated Worker with cancellation, bounded checkout reconstruction, lifecycle replay, and compare-and-swap mutation application.
+- AgentRuntime now compacts provider-facing transcript context automatically while preserving durable history, decisions, errors, and current tool state; paused sessions also expose manual compaction and usage APIs.
+- Background commands can now run in a real PTY with interactive stdin and resize controls; bounded process metadata/output persists across restart and unresolved live handles recover explicitly as indeterminate orphans.
+
+### Fixed
+- Canonical tool and provider timeouts now reliably abort pending operations even when no other event-loop work is active.
+- Restart recovery now pauses indeterminate mutations for an explicit retry/accept/cancel decision and refuses checkpoints whose Company, Project, Connection, model, target, root, or resources changed.
+- Managed worktree cleanup now preserves dirty or unmerged work instead of force-removing it.
+- macOS installs now prepare the native PTY spawn helper with executable permissions.
+
 ## [0.25.0] - 2026-09-04
 
 ### Added

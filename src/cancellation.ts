@@ -35,14 +35,22 @@ export function throwIfCancelled(signal: AbortSignal | undefined = currentCancel
 export function requestAbortSignal(
   timeoutMs: number,
   explicit?: AbortSignal
-): { signal: AbortSignal; callerSignals: AbortSignal[] } {
+): { signal: AbortSignal; callerSignals: AbortSignal[]; dispose: () => void } {
   const callerSignals = [explicit, currentCancellationSignal()].filter(
     (signal): signal is AbortSignal => Boolean(signal)
   );
-  const timeout = AbortSignal.timeout(Math.max(1, timeoutMs));
+  // AbortSignal.timeout() uses an unref'd timer in Node. That lets the process
+  // exit while a tool is awaiting only its abort event, leaving the turn pending.
+  // Keep this timer referenced until callers finish, then dispose it explicitly.
+  const timeoutController = new AbortController();
+  const timer = setTimeout(
+    () => timeoutController.abort(new OperationCancelledError(`Operation timed out after ${timeoutMs}ms.`)),
+    Math.max(1, timeoutMs)
+  );
   return {
-    signal: AbortSignal.any([...callerSignals, timeout]),
-    callerSignals
+    signal: AbortSignal.any([...callerSignals, timeoutController.signal]),
+    callerSignals,
+    dispose: () => clearTimeout(timer)
   };
 }
 

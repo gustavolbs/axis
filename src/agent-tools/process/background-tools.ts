@@ -23,6 +23,7 @@ export const PROCESS_POLL_TOOL_NAME = 'process_poll';
 export const PROCESS_WAIT_TOOL_NAME = 'process_wait';
 export const PROCESS_STDIN_TOOL_NAME = 'process_stdin';
 export const PROCESS_SIGNAL_TOOL_NAME = 'process_signal';
+export const PROCESS_RESIZE_TOOL_NAME = 'process_resize';
 export const PROCESS_TERMINATE_TOOL_NAME = 'process_terminate';
 export const PROCESS_LIST_TOOL_NAME = 'process_list';
 export const PROCESS_EXEC_CAPABILITY = 'axis.process.exec';
@@ -31,6 +32,8 @@ export const PROCESS_EXEC_PERMISSION = 'process.exec';
 const START_TIMEOUT_MS = 15_000;
 const CONTROL_TIMEOUT_MS = 30_000;
 const MAX_STDIN_CHARS = 64 * 1024;
+const DEFAULT_TERMINAL_COLUMNS = 80;
+const DEFAULT_TERMINAL_ROWS = 24;
 
 export interface BackgroundProcessToolOptions {
   readonly registry?: ManagedProcessRegistry;
@@ -72,6 +75,13 @@ function cursorFrom(input: ProcessControlInput): ManagedProcessCursor {
     stdoutOffset: input.stdoutOffset,
     stderrOffset: input.stderrOffset
   };
+}
+
+function terminalDimension(value: unknown, label: string, minimum: number, maximum: number): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${label} must be an integer from ${minimum} to ${maximum}.`);
+  }
+  return value;
 }
 
 function redactDisplayArgument(arg: string): string {
@@ -157,6 +167,9 @@ export class ProcessStartTool extends RegistryTool implements AxisTool {
         rootId: { type: 'string', minLength: 1 },
         cwd: { type: 'string', minLength: 1 },
         mutation: { type: 'string', enum: ['read-only', 'workspace'] },
+        terminal: { type: 'boolean' },
+        columns: { type: 'integer', minimum: 20, maximum: 500 },
+        rows: { type: 'integer', minimum: 5, maximum: 300 },
         env: { type: 'object', additionalProperties: { type: 'string' }, maxProperties: 128 }
       }
     },
@@ -179,6 +192,21 @@ export class ProcessStartTool extends RegistryTool implements AxisTool {
 
   async execute(context: ToolExecutionContext): Promise<ToolExecutionOutput> {
     const input: ProcessExecInput = parseProcessExecInput(context.call.arguments);
+    const terminal = context.call.arguments.terminal;
+    if (terminal !== undefined && typeof terminal !== 'boolean') {
+      throw new Error('process_start terminal must be a boolean.');
+    }
+    if (terminal !== true && (context.call.arguments.columns !== undefined || context.call.arguments.rows !== undefined)) {
+      throw new Error('process_start columns and rows require terminal: true.');
+    }
+    const terminalOptions = terminal === true ? {
+      columns: context.call.arguments.columns === undefined
+        ? DEFAULT_TERMINAL_COLUMNS
+        : terminalDimension(context.call.arguments.columns, 'process_start columns', 20, 500),
+      rows: context.call.arguments.rows === undefined
+        ? DEFAULT_TERMINAL_ROWS
+        : terminalDimension(context.call.arguments.rows, 'process_start rows', 5, 300)
+    } : undefined;
     const scope = await resolveProcessScope(context.session, input.rootId, input.cwd, input.mutation);
     this.policy.authorize({
       command: input.command,
@@ -212,7 +240,8 @@ export class ProcessStartTool extends RegistryTool implements AxisTool {
       rootId: input.rootId,
       mutation: input.mutation,
       env: environment.env,
-      signal: context.signal
+      signal: context.signal,
+      terminal: terminalOptions
     });
     const status = processMutationStatus(snapshot);
 
@@ -237,9 +266,53 @@ export class ProcessStartTool extends RegistryTool implements AxisTool {
         rootId: snapshot.rootId,
         cwd: snapshot.cwd,
         executionTargetId: snapshot.executionTargetId,
+        terminalMode: snapshot.terminalMode,
         inheritedEnvironmentKeyCount: environment.inheritedKeys.length,
         droppedEnvironmentKeyCount: environment.droppedKeys.length,
         overriddenEnvironmentKeys: environment.overriddenKeys
+      }
+    };
+  }
+}
+
+export class ProcessResizeTool extends RegistryTool implements AxisTool {
+  readonly definition: ToolDefinition = {
+    name: PROCESS_RESIZE_TOOL_NAME,
+    description: 'Resize a running PTY terminal owned by this exact immutable Axis session.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['processId', 'columns', 'rows'],
+      properties: {
+        processId: { type: 'string', minLength: 1 },
+        columns: { type: 'integer', minimum: 20, maximum: 500 },
+        rows: { type: 'integer', minimum: 5, maximum: 300 },
+        stdoutOffset: { type: 'integer', minimum: 0 },
+        stderrOffset: { type: 'integer', minimum: 0 }
+      }
+    },
+    requiredCapabilities: [PROCESS_EXEC_CAPABILITY],
+    requiredPermissions: [PROCESS_EXEC_PERMISSION],
+    effect: 'command',
+    mutationRisk: 'none',
+    retryOnFailure: 'safe',
+    timeoutMs: 5_000
+  };
+
+  async execute(context: ToolExecutionContext): Promise<ToolExecutionOutput> {
+    const control = parseControlInput(context.call.arguments);
+    const columns = terminalDimension(context.call.arguments.columns, 'process_resize columns', 20, 500);
+    const rows = terminalDimension(context.call.arguments.rows, 'process_resize rows', 5, 300);
+    const snapshot = this.registry.resize(context.session, control.processId, columns, rows, cursorFrom(control));
+    return {
+      output: output(snapshot),
+      mutationStatus: 'not-applicable',
+      retry: 'safe',
+      metadata: {
+        processId: snapshot.processId,
+        columns,
+        rows,
+        executionTargetId: snapshot.executionTargetId
       }
     };
   }
@@ -490,6 +563,7 @@ export function createProcessBackgroundTools(
       new ProcessWaitTool(registry),
       new ProcessStdinTool(registry),
       new ProcessSignalTool(registry),
+      new ProcessResizeTool(registry),
       new ProcessTerminateTool(registry),
       new ProcessListTool(registry)
     ]

@@ -546,6 +546,8 @@ export class OllamaClient {
       throw new Error(
         `Could not reach Ollama at ${this.config.ollamaBaseUrl}. Ensure Ollama is running. ${message}`
       );
+    } finally {
+      abort.dispose();
     }
 
     throwIfCancelled();
@@ -575,6 +577,8 @@ export class OllamaClient {
       throw new Error(
         `Could not reach Ollama at ${this.config.ollamaBaseUrl}. Ensure Ollama is running. ${message}`
       );
+    } finally {
+      abort.dispose();
     }
 
     throwIfCancelled();

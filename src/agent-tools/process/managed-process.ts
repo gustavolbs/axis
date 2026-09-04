@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import * as pty from 'node-pty';
+import type { IPty } from 'node-pty';
 
 import { OperationCancelledError, throwIfCancelled } from '../../cancellation.js';
 import type { AgentSessionContext } from '../../agent-runtime/index.js';
@@ -13,7 +17,8 @@ export type ManagedProcessStatus =
   | 'exited'
   | 'failed'
   | 'terminating'
-  | 'terminated';
+  | 'terminated'
+  | 'orphaned';
 
 export interface ManagedProcessCursor {
   readonly stdoutOffset?: number;
@@ -46,6 +51,10 @@ export interface ManagedProcessSnapshot extends ManagedProcessOutputSlice {
   readonly signal: NodeJS.Signals | null;
   readonly stdinOpen: boolean;
   readonly error?: string;
+  readonly terminalMode: 'pipes' | 'pty';
+  readonly columns?: number;
+  readonly rows?: number;
+  readonly restartState?: 'live' | 'orphaned-indeterminate';
 }
 
 export interface ManagedProcessStartRequest {
@@ -59,11 +68,14 @@ export interface ManagedProcessStartRequest {
   readonly mutation: ProcessMutationIntent;
   readonly env: NodeJS.ProcessEnv;
   readonly signal: AbortSignal;
+  readonly terminal?: { readonly columns: number; readonly rows: number; readonly name?: string };
 }
 
 export interface ManagedProcessRegistryOptions {
   readonly outputLimitBytes?: number;
   readonly killGraceMs?: number;
+  /** Durable metadata journal. Live processes restore as indeterminate orphans, never as reattached handles. */
+  readonly stateFile?: string;
 }
 
 interface OutputChunk {
@@ -128,6 +140,25 @@ class BoundedOutputLog {
       truncatedBeforeCursor
     };
   }
+
+  persist(): { readonly totalBytes: number; readonly retainedBase64: string } {
+    return {
+      totalBytes: this.totalBytes,
+      retainedBase64: Buffer.concat(this.chunks.map((chunk) => chunk.data)).toString('base64')
+    };
+  }
+
+  restore(value: { readonly totalBytes: number; readonly retainedBase64: string }): void {
+    const data = Buffer.from(value.retainedBase64, 'base64');
+    const retained = data.byteLength > this.limitBytes ? data.subarray(data.byteLength - this.limitBytes) : data;
+    this.totalBytes = Math.max(value.totalBytes, retained.byteLength);
+    this.retainedBytes = retained.byteLength;
+    this.chunks.length = 0;
+    if (retained.byteLength > 0) {
+      const start = this.totalBytes - retained.byteLength;
+      this.chunks.push({ start, end: this.totalBytes, data: retained });
+    }
+  }
 }
 
 interface ManagedProcessRecord {
@@ -142,7 +173,10 @@ interface ManagedProcessRecord {
   readonly startedAt: string;
   readonly stdout: BoundedOutputLog;
   readonly stderr: BoundedOutputLog;
-  readonly child: ChildProcess;
+  readonly child?: ChildProcess;
+  readonly terminal?: IPty;
+  readonly terminalMode: 'pipes' | 'pty';
+  readonly pid: number;
   readonly completion: Promise<void>;
   resolveCompletion: () => void;
   status: ManagedProcessStatus;
@@ -152,11 +186,36 @@ interface ManagedProcessRecord {
   error?: string;
   terminationRequested: boolean;
   stdinClosed: boolean;
+  columns?: number;
+  rows?: number;
 }
 
 const DEFAULT_OUTPUT_LIMIT_BYTES = 2_000_000;
 const DEFAULT_KILL_GRACE_MS = 250;
 const MAX_STDIN_CHUNK_BYTES = 64 * 1024;
+
+interface PersistedManagedProcessRecord {
+  readonly processId: string;
+  readonly ownerKey: string;
+  readonly sessionId: string;
+  readonly command: string;
+  readonly cwd: string;
+  readonly rootId: string;
+  readonly executionTargetId: string;
+  readonly mutation: ProcessMutationIntent;
+  readonly startedAt: string;
+  readonly completedAt?: string;
+  readonly pid: number;
+  readonly status: ManagedProcessStatus;
+  readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly error?: string;
+  readonly terminalMode: 'pipes' | 'pty';
+  readonly columns?: number;
+  readonly rows?: number;
+  readonly stdout: { readonly totalBytes: number; readonly retainedBase64: string };
+  readonly stderr: { readonly totalBytes: number; readonly retainedBase64: string };
+}
 
 function sessionOwnerKey(session: AgentSessionContext): string {
   return [
@@ -212,26 +271,40 @@ export class ManagedProcessRegistry {
   private readonly records = new Map<string, ManagedProcessRecord>();
   private readonly outputLimitBytes: number;
   private readonly killGraceMs: number;
+  private readonly stateFile?: string;
 
   constructor(options: ManagedProcessRegistryOptions = {}) {
     this.outputLimitBytes = Math.max(1, options.outputLimitBytes ?? DEFAULT_OUTPUT_LIMIT_BYTES);
     this.killGraceMs = Math.max(0, options.killGraceMs ?? DEFAULT_KILL_GRACE_MS);
+    this.stateFile = options.stateFile ? path.resolve(options.stateFile) : undefined;
+    this.restorePersistedRecords();
   }
 
   async start(request: ManagedProcessStartRequest): Promise<ManagedProcessSnapshot> {
     throwIfCancelled(request.signal);
     const invocation = resolveSpawnInvocation(request.command, [...request.args]);
-    const child = spawn(invocation.command, invocation.args, {
-      cwd: request.cwdPath,
-      shell: false,
-      env: request.env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
-      windowsHide: true
-    });
-
     let resolveCompletion = () => {};
     const completion = new Promise<void>((resolve) => { resolveCompletion = resolve; });
+    let child: ChildProcess | undefined;
+    let terminal: IPty | undefined;
+    if (request.terminal) {
+      terminal = pty.spawn(invocation.command, invocation.args, {
+        cwd: request.cwdPath,
+        env: Object.fromEntries(Object.entries(request.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
+        cols: request.terminal.columns,
+        rows: request.terminal.rows,
+        name: request.terminal.name ?? 'xterm-256color'
+      });
+    } else {
+      child = spawn(invocation.command, invocation.args, {
+        cwd: request.cwdPath,
+        shell: false,
+        env: request.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
+        windowsHide: true
+      });
+    }
     const record: ManagedProcessRecord = {
       processId: randomUUID(),
       ownerKey: sessionOwnerKey(request.session),
@@ -245,32 +318,71 @@ export class ManagedProcessRegistry {
       stdout: new BoundedOutputLog(this.outputLimitBytes),
       stderr: new BoundedOutputLog(this.outputLimitBytes),
       child,
+      terminal,
+      terminalMode: terminal ? 'pty' : 'pipes',
+      pid: terminal?.pid ?? child?.pid ?? 0,
       completion,
       resolveCompletion,
       status: 'starting',
       exitCode: null,
       signal: null,
       terminationRequested: false,
-      stdinClosed: false
+      stdinClosed: false,
+      columns: request.terminal?.columns,
+      rows: request.terminal?.rows
     };
     this.records.set(record.processId, record);
+    this.persistRecords();
 
-    child.stdout?.on('data', (chunk: Buffer | string) => record.stdout.append(chunk));
-    child.stderr?.on('data', (chunk: Buffer | string) => record.stderr.append(chunk));
-    child.once('error', (error) => {
+    if (terminal) {
+      terminal.onData((data) => {
+        record.stdout.append(data);
+        this.persistRecords();
+      });
+      terminal.onExit(({ exitCode }) => {
+        record.exitCode = exitCode;
+        record.status = record.terminationRequested ? 'terminated' : 'exited';
+        record.completedAt = new Date().toISOString();
+        record.stdinClosed = true;
+        this.persistRecords();
+        record.resolveCompletion();
+      });
+      record.status = 'running';
+      this.persistRecords();
+      if (request.signal.aborted) {
+        record.terminationRequested = true;
+        record.status = 'terminating';
+        terminal.kill();
+        throw new OperationCancelledError(`PTY start cancelled: ${request.command}`);
+      }
+      return this.snapshot(record, {});
+    }
+
+    const spawned = child!;
+    spawned.stdout?.on('data', (chunk: Buffer | string) => {
+      record.stdout.append(chunk);
+      this.persistRecords();
+    });
+    spawned.stderr?.on('data', (chunk: Buffer | string) => {
+      record.stderr.append(chunk);
+      this.persistRecords();
+    });
+    spawned.once('error', (error) => {
       record.status = record.terminationRequested ? 'terminated' : 'failed';
       record.error = error instanceof Error ? error.message : String(error);
       record.completedAt = new Date().toISOString();
       record.stdinClosed = true;
+      this.persistRecords();
       record.resolveCompletion();
     });
-    child.once('close', (exitCode, signal) => {
+    spawned.once('close', (exitCode, signal) => {
       if (record.status === 'failed') return;
       record.exitCode = exitCode;
       record.signal = signal;
       record.status = record.terminationRequested ? 'terminated' : 'exited';
       record.completedAt = new Date().toISOString();
       record.stdinClosed = true;
+      this.persistRecords();
       record.resolveCompletion();
     });
 
@@ -282,6 +394,7 @@ export class ManagedProcessRegistry {
         settled = true;
         cleanup();
         record.status = 'running';
+        this.persistRecords();
         resolve();
       };
       const fail = (error: unknown) => {
@@ -294,13 +407,13 @@ export class ManagedProcessRegistry {
         if (settled) return;
         record.terminationRequested = true;
         record.status = 'terminating';
-        void terminateProcessTree(child, this.killGraceMs).finally(() =>
+        void terminateProcessTree(spawned, this.killGraceMs).finally(() =>
           fail(new OperationCancelledError(`Background process start cancelled: ${request.command}`))
         );
       };
       request.signal.addEventListener('abort', onAbort, { once: true });
-      child.once('spawn', succeed);
-      child.once('error', fail);
+      spawned.once('spawn', succeed);
+      spawned.once('error', fail);
       if (request.signal.aborted) onAbort();
     });
 
@@ -352,15 +465,25 @@ export class ManagedProcessRegistry {
     if (record.status !== 'running') {
       throw new Error(`Process ${processId} is ${record.status}; stdin is available only while running.`);
     }
-    if (record.stdinClosed || !record.child.stdin || record.child.stdin.destroyed) {
+    if (record.stdinClosed || (!record.terminal && (!record.child?.stdin || record.child.stdin.destroyed))) {
       throw new Error(`Process ${processId} stdin is already closed.`);
     }
     if (Buffer.byteLength(data, 'utf8') > MAX_STDIN_CHUNK_BYTES) {
       throw new Error(`Process stdin chunk exceeds ${MAX_STDIN_CHUNK_BYTES} bytes.`);
     }
 
+    if (record.terminal) {
+      record.terminal.write(data);
+      if (end) {
+        record.stdinClosed = true;
+        record.terminal.write(process.platform === 'win32' ? '\x1a' : '\x04');
+      }
+      this.persistRecords();
+      return this.snapshot(record, cursor);
+    }
+
     await new Promise<void>((resolve, reject) => {
-      const stdin = record.child.stdin;
+      const stdin = record.child?.stdin;
       if (!stdin) {
         reject(new Error(`Process ${processId} has no writable stdin.`));
         return;
@@ -375,6 +498,7 @@ export class ManagedProcessRegistry {
           return;
         }
         record.stdinClosed = true;
+        this.persistRecords();
         stdin.end(resolve);
       };
       if (data) stdin.write(data, 'utf8', afterWrite);
@@ -394,12 +518,15 @@ export class ManagedProcessRegistry {
     if (record.status !== 'running') {
       throw new Error(`Process ${processId} is ${record.status}; signals require a running process.`);
     }
-    const pid = record.child.pid;
+    const pid = record.pid;
     if (!pid) throw new Error(`Process ${processId} has no operating-system pid.`);
 
     let sent = false;
     try {
-      if (process.platform === 'win32') sent = record.child.kill(signal);
+      if (record.terminal) {
+        record.terminal.kill(signal);
+        sent = true;
+      } else if (process.platform === 'win32') sent = record.child!.kill(signal);
       else {
         process.kill(-pid, signal);
         sent = true;
@@ -423,7 +550,9 @@ export class ManagedProcessRegistry {
       record.terminationRequested = true;
       record.status = 'terminating';
       record.stdinClosed = true;
-      await terminateProcessTree(record.child, this.killGraceMs);
+      this.persistRecords();
+      if (record.terminal) record.terminal.kill();
+      else await terminateProcessTree(record.child!, this.killGraceMs);
       await Promise.race([record.completion, delay(this.killGraceMs + 1_000)]);
     }
     return this.snapshot(record, cursor);
@@ -437,7 +566,9 @@ export class ManagedProcessRegistry {
       record.terminationRequested = true;
       record.status = 'terminating';
       record.stdinClosed = true;
-      await terminateProcessTree(record.child, this.killGraceMs);
+      this.persistRecords();
+      if (record.terminal) record.terminal.kill();
+      else await terminateProcessTree(record.child!, this.killGraceMs);
       await Promise.race([record.completion, delay(this.killGraceMs + 1_000)]);
     }));
     return owned.length;
@@ -448,7 +579,29 @@ export class ManagedProcessRegistry {
     if (record.status === 'starting' || record.status === 'running' || record.status === 'terminating') {
       throw new Error(`Process ${processId} is still running and cannot be removed.`);
     }
-    return this.records.delete(processId);
+    const removed = this.records.delete(processId);
+    if (removed) this.persistRecords();
+    return removed;
+  }
+
+  resize(
+    session: AgentSessionContext,
+    processId: string,
+    columns: number,
+    rows: number,
+    cursor: ManagedProcessCursor = {}
+  ): ManagedProcessSnapshot {
+    const record = this.requireOwned(session, processId);
+    if (!record.terminal) throw new Error(`Process ${processId} is not a PTY terminal.`);
+    if (record.status !== 'running') throw new Error(`PTY ${processId} is ${record.status}; resize requires a running terminal.`);
+    if (!Number.isInteger(columns) || columns < 20 || columns > 500 || !Number.isInteger(rows) || rows < 5 || rows > 300) {
+      throw new Error('PTY dimensions must be columns 20..500 and rows 5..300.');
+    }
+    record.terminal.resize(columns, rows);
+    record.columns = columns;
+    record.rows = rows;
+    this.persistRecords();
+    return this.snapshot(record, cursor);
   }
 
   private requireOwned(session: AgentSessionContext, processId: string): ManagedProcessRecord {
@@ -464,7 +617,7 @@ export class ManagedProcessRegistry {
     const stderr = record.stderr.read(cursor.stderrOffset);
     return {
       processId: record.processId,
-      pid: record.child.pid ?? 0,
+      pid: record.pid,
       status: record.status,
       command: record.command,
       cwd: record.cwd,
@@ -475,8 +628,12 @@ export class ManagedProcessRegistry {
       completedAt: record.completedAt,
       exitCode: record.exitCode,
       signal: record.signal,
-      stdinOpen: !record.stdinClosed && Boolean(record.child.stdin) && !record.child.stdin?.destroyed,
+      stdinOpen: !record.stdinClosed && (Boolean(record.terminal) || (Boolean(record.child?.stdin) && !record.child?.stdin?.destroyed)),
       error: record.error,
+      terminalMode: record.terminalMode,
+      columns: record.columns,
+      rows: record.rows,
+      restartState: record.status === 'orphaned' ? 'orphaned-indeterminate' : 'live',
       stdout: stdout.text,
       stderr: stderr.text,
       nextStdoutOffset: stdout.nextOffset,
@@ -486,5 +643,84 @@ export class ManagedProcessRegistry {
       stdoutRetainedFromOffset: stdout.retainedFromOffset,
       stderrRetainedFromOffset: stderr.retainedFromOffset
     };
+  }
+
+  private restorePersistedRecords(): void {
+    if (!this.stateFile || !fs.existsSync(this.stateFile)) return;
+    const parsed = JSON.parse(fs.readFileSync(this.stateFile, 'utf8')) as { records?: PersistedManagedProcessRecord[] };
+    if (!Array.isArray(parsed.records)) throw new Error(`Invalid managed-process journal: ${this.stateFile}`);
+    for (const item of parsed.records) {
+      if (!item || typeof item.processId !== 'string' || typeof item.ownerKey !== 'string') {
+        throw new Error(`Invalid managed-process record in ${this.stateFile}`);
+      }
+      let resolveCompletion = () => {};
+      const completion = new Promise<void>((resolve) => { resolveCompletion = resolve; });
+      const wasLive = item.status === 'starting' || item.status === 'running' || item.status === 'terminating';
+      const stdout = new BoundedOutputLog(this.outputLimitBytes);
+      const stderr = new BoundedOutputLog(this.outputLimitBytes);
+      stdout.restore(item.stdout);
+      stderr.restore(item.stderr);
+      const record: ManagedProcessRecord = {
+        processId: item.processId,
+        ownerKey: item.ownerKey,
+        sessionId: item.sessionId,
+        command: item.command,
+        cwd: item.cwd,
+        rootId: item.rootId,
+        executionTargetId: item.executionTargetId,
+        mutation: item.mutation,
+        startedAt: item.startedAt,
+        completedAt: item.completedAt,
+        stdout,
+        stderr,
+        pid: item.pid,
+        completion,
+        resolveCompletion,
+        status: wasLive ? 'orphaned' : item.status,
+        exitCode: item.exitCode,
+        signal: item.signal,
+        error: wasLive
+          ? 'Axis restarted while this process was live; attachment and mutation outcome are indeterminate.'
+          : item.error,
+        terminationRequested: false,
+        stdinClosed: true,
+        terminalMode: item.terminalMode,
+        columns: item.columns,
+        rows: item.rows
+      };
+      resolveCompletion();
+      this.records.set(record.processId, record);
+    }
+    this.persistRecords();
+  }
+
+  private persistRecords(): void {
+    if (!this.stateFile) return;
+    const records: PersistedManagedProcessRecord[] = [...this.records.values()].map((record) => ({
+      processId: record.processId,
+      ownerKey: record.ownerKey,
+      sessionId: record.sessionId,
+      command: record.command,
+      cwd: record.cwd,
+      rootId: record.rootId,
+      executionTargetId: record.executionTargetId,
+      mutation: record.mutation,
+      startedAt: record.startedAt,
+      completedAt: record.completedAt,
+      pid: record.pid,
+      status: record.status,
+      exitCode: record.exitCode,
+      signal: record.signal,
+      error: record.error,
+      terminalMode: record.terminalMode,
+      columns: record.columns,
+      rows: record.rows,
+      stdout: record.stdout.persist(),
+      stderr: record.stderr.persist()
+    }));
+    fs.mkdirSync(path.dirname(this.stateFile), { recursive: true });
+    const temporary = `${this.stateFile}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, `${JSON.stringify({ version: 1, records })}\n`, { mode: 0o600 });
+    fs.renameSync(temporary, this.stateFile);
   }
 }

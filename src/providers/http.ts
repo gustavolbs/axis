@@ -87,6 +87,8 @@ export async function fetchWithProviderErrors(
     throw new ProviderError(providerId, `${providerId} request failed: ${message}`, {
       retryable: true
     });
+  } finally {
+    abort.dispose();
   }
   throwIfCancelled();
   if (!response.ok) await throwProviderHttpError(providerId, response, secrets);

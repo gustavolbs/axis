@@ -9,6 +9,7 @@ import {
 } from '../cancellation.js';
 import { ProviderError } from '../providers/types.js';
 import { capabilityUnavailableReason } from './capabilities.js';
+import { compactAgentTranscript } from './context-management.js';
 import {
   AgentRuntimeError,
   freezeAgentSessionContext,
@@ -92,6 +93,10 @@ class AgentDecisionPause extends Error {
 export interface AgentRuntimeLimits {
   readonly maxModelCycles: number;
   readonly maxToolCalls: number;
+  /** Stops a provider that keeps issuing the same ineffective call forever. */
+  readonly maxRepeatedToolCalls: number;
+  /** Unified provider-facing transcript budget; full durable history is retained. */
+  readonly maxContextBytes: number;
   readonly providerTimeoutMs: number;
   readonly toolTimeoutMs: number;
 }
@@ -133,6 +138,8 @@ export interface AgentRuntimeOptions {
 const DEFAULT_LIMITS: AgentRuntimeLimits = Object.freeze({
   maxModelCycles: 32,
   maxToolCalls: 64,
+  maxRepeatedToolCalls: 4,
+  maxContextBytes: 512_000,
   providerTimeoutMs: 120_000,
   toolTimeoutMs: 120_000
 });
@@ -226,6 +233,33 @@ function resultMessage(result: ToolResult): string {
   }
 }
 
+function stableCallKey(call: ToolCall): string {
+  try {
+    const stable = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(stable);
+      if (value && typeof value === 'object') {
+        return Object.fromEntries(
+          Object.entries(value as Record<string, unknown>)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, nested]) => [key, stable(nested)])
+        );
+      }
+      return value;
+    };
+    return `${call.name}:${JSON.stringify(stable(call.arguments))}`;
+  } catch {
+    return `${call.name}:unserializable`;
+  }
+}
+
+function canRunConcurrently(tool: AxisTool | undefined): boolean {
+  return Boolean(
+    tool &&
+    tool.definition.mutationRisk === 'none' &&
+    (tool.definition.effect === 'read' || tool.definition.effect === 'validation')
+  );
+}
+
 export class AgentRuntime {
   readonly tools: ToolRegistry;
   readonly executionTargets: ExecutionTargetRegistry;
@@ -254,6 +288,7 @@ export class AgentRuntime {
     let toolCallCount = 0;
     let finalText: string | undefined;
     let decisionRequest: AgentDecisionRequest | undefined;
+    const repeatedCalls = new Map<string, number>();
     const messages: AgentMessage[] = [...(input.transcript ?? [])];
     const toolResults: ToolResult[] = [];
 
@@ -601,6 +636,8 @@ export class AgentRuntime {
           }, turnId);
         }
         return result;
+      } finally {
+        abort.dispose();
       }
     };
 
@@ -619,13 +656,32 @@ export class AgentRuntime {
       const abort = requestAbortSignal(runLimits.providerTimeoutMs, input.signal);
       let response;
       try {
+        const projection = compactAgentTranscript(messages, runLimits.maxContextBytes);
+        if (projection.compacted) {
+          emitter.emit({
+            type: 'context.compacted',
+            beforeBytes: projection.before.bytes,
+            afterBytes: projection.after.bytes,
+            removedMessageCount: projection.removedMessageCount,
+            manual: false
+          }, turnId);
+        }
+        if (projection.after.bytes > runLimits.maxContextBytes) {
+          const error = failure(
+            'limit', 'context_budget_exceeded',
+            `Protected transcript state exceeds the ${runLimits.maxContextBytes}-byte context budget.`,
+            'never', { contextBytes: projection.after.bytes }
+          );
+          emitter.emit({ type: 'error', error }, turnId);
+          return finish('failed', error);
+        }
         response = await withCancellationSignal(abort.signal, async () => {
           throwIfCancelled(abort.signal);
           const value = await input.provider.invoke({
             context,
             turnId,
             systemPrompt: input.systemPrompt ?? '',
-            messages,
+            messages: projection.messages,
             tools: providerTools,
             timeoutMs: runLimits.providerTimeoutMs
           }, {
@@ -651,6 +707,8 @@ export class AgentRuntime {
           : providerFailure(caught);
         emitter.emit({ type: 'error', error }, turnId);
         return finish('failed', error);
+      } finally {
+        abort.dispose();
       }
 
       emitter.emit({
@@ -681,34 +739,63 @@ export class AgentRuntime {
         return finish('completed');
       }
 
-      for (const call of response.toolCalls) {
-        toolCallCount += 1;
-        if (toolCallCount > runLimits.maxToolCalls) {
-          const error = failure(
-            'limit',
-            'tool_call_limit',
-            `Agent turn exceeded the ${runLimits.maxToolCalls} tool-call limit.`
-          );
-          emitter.emit({ type: 'error', error }, turnId);
-          return finish('failed', error);
-        }
-        let result: ToolResult;
-        try {
-          result = await executeTool(call);
-        } catch (caught) {
-          if (caught instanceof AgentDecisionPause) {
-            decisionRequest = caught.request;
-            finalText = caught.request.prompt;
-            return finish('paused');
+      const executeScheduled = async (calls: readonly ToolCall[]): Promise<ToolResult[]> => {
+        const results: ToolResult[] = [];
+        let concurrent: ToolCall[] = [];
+        const flush = async (): Promise<void> => {
+          if (concurrent.length === 0) return;
+          results.push(...await Promise.all(concurrent.map((call) => executeTool(call))));
+          concurrent = [];
+        };
+        for (const call of calls) {
+          toolCallCount += 1;
+          if (toolCallCount > runLimits.maxToolCalls) {
+            throw new AgentRuntimeError(failure(
+              'limit', 'tool_call_limit',
+              `Agent turn exceeded the ${runLimits.maxToolCalls} tool-call limit.`
+            ));
           }
-          const error = failure(
-            'execution',
-            'tool_dispatch_error',
-            caught instanceof Error ? caught.message : String(caught)
-          );
-          emitter.emit({ type: 'error', error, callId: call.id, toolName: call.name }, turnId);
-          return finish('failed', error);
+          const key = stableCallKey(call);
+          const count = (repeatedCalls.get(key) ?? 0) + 1;
+          repeatedCalls.set(key, count);
+          if (count > runLimits.maxRepeatedToolCalls) {
+            throw new AgentRuntimeError(failure(
+              'limit', 'unproductive_tool_loop',
+              `Agent repeated ${call.name} with the same arguments ${count} times without changing course.`,
+              'never', { toolName: call.name, repetitions: count }
+            ));
+          }
+          if (canRunConcurrently(this.tools.get(call.name))) {
+            concurrent.push(call);
+          } else {
+            await flush();
+            results.push(await executeTool(call));
+          }
         }
+        await flush();
+        return results;
+      };
+
+      let results: ToolResult[];
+      try {
+        results = await executeScheduled(response.toolCalls);
+      } catch (caught) {
+        if (caught instanceof AgentDecisionPause) {
+          decisionRequest = caught.request;
+          finalText = caught.request.prompt;
+          return finish('paused');
+        }
+        const error = caught instanceof AgentRuntimeError
+          ? caught.failure
+          : failure(
+              'execution', 'tool_dispatch_error',
+              caught instanceof Error ? caught.message : String(caught)
+            );
+        emitter.emit({ type: 'error', error }, turnId);
+        return finish('failed', error);
+      }
+      for (const [index, result] of results.entries()) {
+        const call = response.toolCalls[index]!;
         toolResults.push(result);
         messages.push({
           id: randomUUID(),

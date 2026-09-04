@@ -20,6 +20,28 @@ Local Coder.app
 
 The Windows worker is infrastructure for the standalone app. It is not a control plane, UI host, MCP server or product entrypoint.
 
+## Canonical AxisTool execution target
+
+`POST /v1/axis-tool` is the product AgentRuntime execution boundary. The desktop
+performs capability, runtime-policy and permission decisions first, then sends one
+bounded grant containing request/execution/cancellation identity, deadline, exact
+non-secret session authority, tool definition/call and a Git workspace snapshot.
+The Worker revalidates protocol, Company/Project/root consistency, target kind,
+tool definition, required permissions and capabilities before invoking its native
+tool registry. Provider/API credentials are never part of this envelope.
+
+The currently negotiated remote catalog covers bounded filesystem read/search/stat,
+atomic file create/write/edit/patch, foreground process execution/tool discovery,
+and Git status/diff/branch/commit reads. Background processes and Git index/ref/
+worktree mutations remain explicitly unavailable because their durable state cannot
+yet be represented by the content-delta transport. There is no desktop fallback.
+
+Each operation reconstructs the authorized checkout, emits canonical progress and
+activity records, collects bounded content changes and returns them for compare-and-
+swap application on the source checkout. HTTP cancellation aborts the Worker signal
+and descendant foreground process tree. A disconnect during a mutating call remains
+indeterminate to the runtime and therefore requires confirmation before retry.
+
 ## Why not edit the Mac filesystem remotely
 
 Direct SMB/SSHFS editing introduces avoidable failure modes:

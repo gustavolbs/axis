@@ -13,6 +13,8 @@ import {
   REMOTE_WORKER_PROTOCOL_VERSION,
   assertProtocolVersion,
   type RemoteChatResponse,
+  type RemoteAxisToolRequest,
+  type RemoteAxisToolResponse,
   type RemoteEngineerResponse,
   type RemotePlanResponse,
   type RemoteTaskResponse,
@@ -60,6 +62,26 @@ export class RemoteWorkerClient {
 
   async health(): Promise<RemoteWorkerHealth> {
     return await this.request<RemoteWorkerHealth>('/v1/health', undefined, 'GET');
+  }
+
+  async executeAxisTool(
+    workspacePath: string,
+    request: Omit<RemoteAxisToolRequest, 'protocolVersion' | 'workspace'>
+  ): Promise<RemoteAxisToolResponse> {
+    throwIfCancelled();
+    const workspace = await prepareRemoteWorkspace(workspacePath, [], this.config);
+    const response = await this.request<RemoteAxisToolResponse>('/v1/axis-tool', {
+      protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+      ...request,
+      workspace
+    });
+    assertProtocolVersion(response.protocolVersion);
+    if (response.requestId !== request.requestId || response.executionId !== request.executionId) {
+      throw new RemoteWorkerError('Remote AxisTool response identity mismatch.', false);
+    }
+    throwIfCancelled();
+    await applyRemoteChanges(workspacePath, [...response.changes], this.config);
+    return response;
   }
 
   async chat(
@@ -201,6 +223,8 @@ export class RemoteWorkerClient {
         `Could not reach remote local-coder worker at ${redactRuntimeUrlForDisplay(this.baseUrl)}. ${message}`,
         true
       );
+    } finally {
+      abort.dispose();
     }
     throwIfCancelled();
 

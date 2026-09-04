@@ -337,6 +337,7 @@ export type AgentLifecycleEvent = LifecycleBase & (
   | { readonly type: 'provider.started'; readonly connectionId: string; readonly modelId: string }
   | { readonly type: 'provider.progress'; readonly progress: AgentProgress }
   | { readonly type: 'provider.completed'; readonly stopReason: string; readonly toolCallCount: number }
+  | { readonly type: 'context.compacted'; readonly beforeBytes: number; readonly afterBytes: number; readonly removedMessageCount: number; readonly manual: boolean }
   | { readonly type: 'permission.requested'; readonly call: ToolCall; readonly permissions: readonly string[] }
   | { readonly type: 'permission.resolved'; readonly callId: string; readonly allowed: boolean; readonly reason?: string }
   | { readonly type: 'decision.requested'; readonly request: AgentDecisionRequest; readonly call?: ToolCall }

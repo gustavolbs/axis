@@ -1,6 +1,6 @@
 # Paridade funcional com Codex e Claude Desktop
 
-Baseline pesquisado: **2026-09-02**. Estado de implementação re-auditado em **2026-09-03**, após os PRs #75–#88 e o P1 Multi-Company AgentRuntime Gate. Este documento é o checklist atual de implementação para que o Axis centralize, em um aplicativo local-first, o trabalho agêntico realizado com Ollama, Local Worker no Windows, Accounts e conexões autenticadas por API Key.
+Baseline pesquisado: **2026-09-02**. Estado de implementação re-auditado em **2026-09-04**, após os PRs #75–#88 e o P1 Multi-Company AgentRuntime Gate. Este documento é o checklist atual de implementação para que o Axis centralize, em um aplicativo local-first, o trabalho agêntico realizado com Ollama, Local Worker no Windows, Accounts e conexões autenticadas por API Key.
 
 ## P1 Gate real — 2026-09-03
 
@@ -23,11 +23,9 @@ Baseline pesquisado: **2026-09-02**. Estado de implementação re-auditado em **
 
 ### Blockers para P1 PASS
 
-1. **P0 — product task worktree orchestration:** compor/reabrir managed worktree por job antes da sessão mutativa e tornar esse checkout o root exato do AgentRuntime.
-2. **P0 — real Local Worker execution target:** executar tools pelo `AgentExecutionTarget` real do Worker, em vez de apenas usar configuração/health/model discovery.
-3. **P0 — ChatGPT/Codex Account G2:** continuar fail-closed até todos os provider-managed model-visible tools poderem ser suprimidos ou interceptados antes da execução.
-4. **P1 — live Connection matrix:** provar opt-in duas Accounts, duas API Keys do mesmo provider e Account + API Key com Connections reais, mantendo evidência redigida.
-5. **P1 — live full-loop UI evidence:** dirigir a Runtime UI pelo engineering loop de produto completo, não apenas por fixtures canônicas.
+1. **P0 — ChatGPT/Codex Account G2:** continuar fail-closed até todos os provider-managed model-visible tools poderem ser suprimidos ou interceptados antes da execução.
+2. **P1 — live Connection matrix:** provar opt-in duas Accounts, duas API Keys do mesmo provider e Account + API Key com Connections reais, mantendo evidência redigida.
+3. **P1 — live full-loop UI evidence:** dirigir a Runtime UI pelo engineering loop de produto completo, não apenas por fixtures canônicas.
 
 Nenhum item abaixo é marcado como BASE apenas porque existe um tipo, mock ou fixture. Quando a camada de runtime existe mas falta composição/UX/E2E, o status permanece PARCIAL ou BLOCKER.
 
@@ -70,20 +68,20 @@ Paridade funcional significa que o usuário pode entregar uma intenção aberta,
 - [ ] PARCIAL — Capabilities/autenticação/model metadata são representados canonicamente; a UI ainda não exibe toda a matriz de limites, multimodalidade, MCPs e restrições por model.
 - [x] BASE — Capabilities nativas do Axis, ofertas do provider/model e restrictions de Company/Project/session são separadas e negociadas; deny explícito vence.
 - [ ] PARCIAL — O tool catalog efetivo é recalculado pela sessão; falta UX completa de diff/preview antes de trocar Connection/model/target.
-- [ ] BLOCKER — Local Worker possui configuração, health e model discovery, mas ainda não é um `AgentExecutionTarget` real no product AgentRuntime.
+- [x] BASE — Local Worker é um `AgentExecutionTarget` real no product AgentRuntime para filesystem read/write, processo foreground e Git read; categorias sem transporte durável equivalente (background process e mutações de índice/ref/worktree Git) são removidas do catálogo remoto e falham sem fallback local.
 - [ ] PARCIAL — Não há fallback silencioso de model/target no runtime canônico; ainda faltam UX explícitas de retry/escolha de outro target compatível.
 - [x] BASE — Capability/Connection/model incompatível falha explicitamente sem trocar Company, Account, API Key ou model silenciosamente.
 - [x] BASE — O agente descobre dinamicamente arquivos e comandos sem lista final de `editableFiles` antes da exploração.
 - [x] BASE — O loop continua após read/search/command/error/diff/validation e pode reparar após uma falha real de teste.
-- [ ] AUSENTE — Scheduler de tool calls paralelas independentes com serialização explícita de mutações conflitantes.
+- [x] BASE — Scheduler do AgentRuntime executa leituras/validações independentes em paralelo, preserva a ordem dos resultados e serializa comandos/mutações; cobertura inclui sobreposição real e barreira antes/depois da mutação.
 - [ ] PARCIAL — Existem timeouts, bounded reads/output/processes e limites de tool específicos; falta orçamento unificado por turno para tokens/tool calls/bytes/processos/repetição.
 - [ ] PARCIAL — Lifecycle emite provider/tool progress, reads, mutations, commands e validations; nem todos os providers possuem streaming equivalente.
 - [ ] PARCIAL — Cancellation é propagada por provider/process/MCP/browser e process tree; subagents e restart-safe cancellation ainda não existem.
 - [ ] PARCIAL — Retry/mutation contracts distinguem safe/after-confirmation/unknown e evitam retry inseguro; falta política de retry de produto mais completa.
-- [ ] AUSENTE — Detector explícito de loops improdutivos com intervenção baseada em evidência.
-- [ ] BLOCKER — Restart ainda não restaura o checkpoint canônico de pending tool/approval/mutation/background process.
-- [ ] AUSENTE — Compactação automática da janela de contexto preservando tool state/decisions/tarefas pendentes.
-- [ ] AUSENTE — Ação manual de compactação e indicador completo da janela de contexto.
+- [x] BASE — AgentRuntime detecta chamadas repetidas com os mesmos argumentos, encerra o loop com erro `unproductive_tool_loop` e registra ferramenta, contagem e evidência dos argumentos repetidos.
+- [ ] PARCIAL — Checkpoint canônico preserva authority, transcript, decision, execution target, worktree e mutation ledger; restart pausa mutação indeterminada e rejeita troca de authority, mas resumable background process e evidência UI E2E ainda faltam.
+- [x] BASE — Compactação automática usa orçamento provider-facing por bytes, preserva o turno atual/decisions/errors/tool state e mantém o transcript durável completo.
+- [ ] PARCIAL — Ação manual e medição de contexto existem na API de sessões pausadas; falta compor o comando e o indicador canônico completo no renderer.
 - [x] DECISÃO — Connection e model são imutáveis dentro de uma sessão canônica; troca deve recompor/abrir uma sessão/handoff explícito, em vez de mutar identidade no meio do turn.
 - [ ] AUSENTE — Modos de transcript resumo/normal/verboso com expansão individual de reads/edits/commands/MCPs.
 - [ ] AUSENTE — Fila de mensagens com `steer now` versus `next turn`.
@@ -117,8 +115,8 @@ Paridade funcional significa que o usuário pode entregar uma intenção aberta,
 ## P1.3 — Shell, processos e ambiente
 
 - [x] BASE — `process_exec` argv-only com root-scoped cwd, filtered env, timeout, incremental output, exit code e mutation semantics.
-- [ ] AUSENTE — PTY persistente para comandos interativos.
-- [ ] PARCIAL — stdin, signals, poll/wait/terminate existem para process handles; PTY resize não existe porque PTY ainda não existe.
+- [x] BASE — Runtime local possui PTY real para comandos interativos, com ownership imutável por sessão e journal durável; execução PTY remota continua bloqueada até existir workspace/handle remoto durável.
+- [x] BASE — stdin, signals, poll/wait/terminate e PTY resize existem para process handles locais; handles vivos encontrados após restart são marcados como órfãos indeterminados, nunca fingidos como reanexados.
 - [x] BASE — Background processes com stable IDs, session ownership, poll/wait/stdin/signal/terminate/list.
 - [ ] PARCIAL — stdout/stderr incremental e truncation gaps existem; search/download do log completo ainda falta.
 - [x] BASE — `process_which`/PATH diagnostics usam o ambiente exato visível ao Axis.
@@ -154,7 +152,7 @@ Paridade funcional significa que o usuário pode entregar uma intenção aberta,
 - [x] BASE — Vários Claude Accounts, ChatGPT/Codex profiles e várias API Keys do mesmo provider permanecem Connections distintas.
 - [x] BASE — Account e API Key usam a mesma abstração de Connection; API Key lifecycle possui add/test/edit/rotate/disable/remove e secrets ficam no Keychain.
 - [ ] PARCIAL — Model discovery funciona para providers suportados; fallback catalog configurável e metadata completa de preço/capability por Connection/model ainda faltam.
-- [ ] BLOCKER — Local Worker existe como configuração/health/model source, mas não como execution target real de tools no AgentProductRuntime.
+- [x] BASE — Local Worker entra no `AgentProductRuntime` como execution target real, com concessão explícita do runtime, protocolo secret-free, autenticação bearer, root/Company revalidation, cancellation e sem fallback desktop.
 - [ ] PARCIAL — Connection Center mostra identidade/authKind/Company/provider/status; inventário completo de MCPs/skills/plugins/agents/capabilities por model ainda falta.
 - [ ] PARCIAL — Project defaults/policies cobrem Connection/model; Company/target/mode/fallback defaults completos ainda faltam.
 - [x] DECISÃO — O runtime canônico não faz fallback silencioso entre Connections; mudança de identity/cost deve ser explícita/recomposta.
@@ -164,7 +162,7 @@ Paridade funcional significa que o usuário pode entregar uma intenção aberta,
 - [ ] PARCIAL — Effective Context canônico e secret-free existe; falta inspector UI completo e origens para recursos ainda não implementados.
 - [ ] PARCIAL — Project instructions e runtime policies permitem parte das peculiaridades por Company/Project; glossário/templates/workflow/app policy ricos ainda faltam.
 - [ ] AUSENTE — Project templates por Company instalando instructions/skills/MCPs/agents/validations.
-- [ ] PARCIAL — Browser/process/worktree/memory possuem isolation keys/ownership; product worktree orchestration e attachment isolation completo ainda faltam.
+- [ ] PARCIAL — Browser/process/worktree/memory possuem isolation keys/ownership; Cowork agora cria/reabre worktree por job antes da sessão, mas attachment isolation completo ainda falta.
 - [x] BASE — Cross-Company Project/Connection/root/filesystem/process/Git/MCP/browser/Memory/resource access falha closed nos boundaries canônicos.
 - [x] BASE — O mesmo physical workspace não pode ser associado conflitivamente a Companies sem mecanismo explícito.
 - [x] BASE — Work Hub é global com `All` + filtros Company/Personal e mantém provenance `companyId`/`connectionId`/`sourceId`.
@@ -184,9 +182,9 @@ Paridade funcional significa que o usuário pode entregar uma intenção aberta,
 - [ ] PARCIAL — Cowork possui review/reparo adversarial, mas review on-demand com findings inline/severity/fix action ainda falta.
 - [ ] PARCIAL — `git_stage`/`git_unstage` existem para paths; revert e stage/unstage por hunk/UX completa ainda faltam.
 - [ ] PARCIAL — Branch creation existe; rename branch e commit creation com message review ainda faltam.
-- [ ] PARCIAL — Git layer protege source checkout e testa dirty-source/worktree isolation; o product path ainda não inicia mutating task em worktree automático.
+- [x] BASE — Git layer e Cowork product path criam/reabrem um worktree automático isolado por job, preservam source dirty, persistem lock/ownership no restart e recusam cleanup destrutivo de dirty/unmerged work.
 - [ ] AUSENTE — Merge/rebase conflict resolver visual com approval.
-- [ ] BLOCKER — Managed worktree create/list/remove existe, mas product Cowork ainda não compõe worktree por job como root da sessão.
+- [x] BASE — Cowork compõe o worktree por job como root exato e imutável da sessão, recupera o vínculo persistido e falha fechado quando o checkout/ownership não pode ser provado.
 - [ ] AUSENTE — Escolha explícita “usar checkout atual” versus worktree com risco/authority claros.
 - [ ] PARCIAL — Worktree removal/ownership cleanup existe; snapshot/restore/retention/archive completo ainda falta.
 - [ ] AUSENTE — Handoff seguro entre checkout e worktree.
@@ -196,13 +194,13 @@ Paridade funcional significa que o usuário pode entregar uma intenção aberta,
 
 - [ ] PARCIAL — “Corrija o bug de login” já executa search→read→edit→test fail→repair→test pass→Git diff com tools locais reais; ainda falta live-provider matrix.
 - [ ] PARCIAL — Ask/deny/approve funciona; steering durante turn e inline diff comments ainda faltam.
-- [ ] BLOCKER — Duas sessões do mesmo repo ainda não usam worktree task-root automático no product path.
+- [ ] PARCIAL — Cowork usa task-root worktree automático; a prova de duas sessões simultâneas pelo renderer ainda falta.
 - [ ] PARCIAL — Company isolation passa nos boundaries canônicos; falta a matriz live cobrindo todas as Connections/resources.
 - [ ] PARCIAL — Mesmo-provider Account identity/profile isolation existe, mas duas Accounts reais não são exercitadas no gate e ChatGPT/Codex Account está bloqueado.
 - [ ] PARCIAL — Múltiplas API Key Connections são distintas por construção; falta prova live opt-in com duas keys reais do mesmo provider.
 - [ ] PARCIAL — Account e API Key compartilham arquitetura sem compartilhar credential; falta matriz live completa e recursos P2 ainda ausentes.
-- [ ] BLOCKER — Local Worker ainda não executa o AgentRuntime como target real.
-- [ ] BLOCKER — Crash/restart não restaura exact runtime checkpoint sem risco de replay.
+- [x] BASE — Local Worker executa AxisTools elegíveis pelo AgentRuntime real, devolvendo progress/activity/result ao lifecycle canônico.
+- [ ] PARCIAL — Crash/restart restaura approval, target, worktree, mutation ledger e journal limitado de processos; estado incerto exige decisão explícita e nunca recompõe authority diferente, mas reanexação segura de processo/PTY vivo ainda falta.
 - [ ] BLOCKER — ChatGPT/Codex Account permanece fail-closed sob G2.
 
 ---
@@ -244,7 +242,7 @@ Paridade funcional significa que o usuário pode entregar uma intenção aberta,
 
 ## P2.3 — Sessões paralelas, subagentes e coordenação
 
-- [ ] PARCIAL — Várias jobs/sessions existem, mas resource-aware scheduler + automatic worktree isolation ainda não.
+- [ ] PARCIAL — Várias jobs/sessions existem e Cowork cria worktree por job; scheduler resource-aware completo ainda não.
 - [ ] PARCIAL — Company/Project grouping/filtering existe; filtro deliberado cross-Company por status/Connection/authKind/environment ainda não.
 - [ ] AUSENTE — Duas sessions side-by-side.
 - [ ] AUSENTE — Draggable/resizable panes completas.
@@ -433,11 +431,9 @@ Antes de ampliar o roadmap, testar o app pós-#88 pelo caminho real e corrigir r
 
 ## Marco 1 — Fechar os P0 do P1 Gate
 
-1. Product task worktree orchestration.
-2. Durable runtime checkpoint/restart.
-3. Real Local Worker `AgentExecutionTarget`.
+1. Real Local Worker `AgentExecutionTarget`.
 2. Manter G2 fail-closed até existir upstream contract seguro; reavaliar quando Codex expuser tool isolation suficiente.
-5. Criar live Connection matrix opt-in e live full-loop UI evidence.
+3. Criar live Connection matrix opt-in e live full-loop UI evidence.
 
 O P1 só muda para PASS depois desses pontos e do novo gate.
 

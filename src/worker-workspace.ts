@@ -262,6 +262,62 @@ async function collectChanges(
   return changes;
 }
 
+const MAX_TOOL_WORKSPACE_FILES = 50_000;
+
+async function workspaceFileInventory(
+  workspace: string,
+  config: LocalCoderConfig
+): Promise<Map<string, string>> {
+  const listed = await runChecked(
+    'git',
+    ['-C', workspace, 'ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', '.'],
+    { timeoutMs: config.remoteWorkerTimeoutMs }
+  );
+  const names = listed.stdout.toString('utf8').split('\0').filter(Boolean);
+  if (names.length > MAX_TOOL_WORKSPACE_FILES) {
+    throw new Error(`Remote tool workspace contains ${names.length} files; maximum is ${MAX_TOOL_WORKSPACE_FILES}.`);
+  }
+  const inventory = new Map<string, string>();
+  for (const protocolPath of names) {
+    const absolute = resolveWorkspacePath(workspace, fromProtocolPath(protocolPath));
+    const stat = await fs.lstat(absolute);
+    if (!stat.isFile() || stat.isSymbolicLink()) continue;
+    if (stat.size > config.maxFileBytes) continue;
+    inventory.set(protocolPath, hashWorkspaceContent((await fs.readFile(absolute)).toString('utf8'))!);
+  }
+  return inventory;
+}
+
+async function collectInventoryChanges(
+  workspace: string,
+  before: ReadonlyMap<string, string>,
+  config: LocalCoderConfig
+): Promise<RemoteFileChange[]> {
+  const after = await workspaceFileInventory(workspace, config);
+  const paths = [...new Set([...before.keys(), ...after.keys()])].sort();
+  const changes: RemoteFileChange[] = [];
+  let resultBytes = 0;
+  for (const protocolPath of paths) {
+    if (before.get(protocolPath) === after.get(protocolPath)) continue;
+    const absolute = resolveWorkspacePath(workspace, fromProtocolPath(protocolPath));
+    let contentBase64: string | null = null;
+    if (after.has(protocolPath)) {
+      const content = await fs.readFile(absolute);
+      resultBytes += content.byteLength;
+      if (resultBytes > config.remoteMaxDeltaBytes) {
+        throw new Error(`Remote tool result exceeds ${config.remoteMaxDeltaBytes} bytes.`);
+      }
+      contentBase64 = content.toString('base64');
+    }
+    changes.push({
+      path: protocolPath,
+      beforeSha256: before.get(protocolPath) ?? null,
+      contentBase64
+    });
+  }
+  return changes;
+}
+
 async function cleanupWorktree(mirrorPath: string, worktreePath: string): Promise<void> {
   try {
     await runProcess('git', [`--git-dir=${mirrorPath}`, 'worktree', 'remove', '--force', worktreePath], {
@@ -304,6 +360,39 @@ export async function withWorkerWorkspace<T>(
     const result = await run(workspace);
     const changes = await collectChanges(workspace, snapshot, config);
     return { result, changes };
+  } finally {
+    await cleanupWorktree(mirrorPath, worktreePath);
+  }
+}
+
+/** Execute one canonical AxisTool against a reconstructed checkout and return
+ * every bounded content mutation, including files selected dynamically by a
+ * process rather than declared ahead of time. */
+export async function withWorkerToolWorkspace<T>(
+  snapshot: RemoteWorkspaceSnapshot,
+  config: LocalCoderConfig,
+  run: (workspace: string) => Promise<T>
+): Promise<{ result: T; changes: RemoteFileChange[] }> {
+  const repoKey = repoCacheKey(snapshot.repositoryUrl);
+  const mirrorPath = path.join(config.workerStatePath, 'repos', `${repoKey}.git`);
+  const worktreePath = path.join(config.workerStatePath, 'worktrees', randomUUID());
+  await ensureMirror(snapshot.repositoryUrl, mirrorPath, config);
+  await createWorktree(mirrorPath, worktreePath, snapshot.baseSha, config.remoteWorkerTimeoutMs);
+  try {
+    await applyWorkspaceDelta(worktreePath, snapshot, config);
+    const relativeWorkspace = snapshot.workspaceRelativePath
+      ? fromProtocolPath(snapshot.workspaceRelativePath)
+      : '';
+    const workspace = relativeWorkspace
+      ? resolveWorkspacePath(worktreePath, relativeWorkspace)
+      : worktreePath;
+    const stat = await fs.stat(workspace);
+    if (!stat.isDirectory()) throw new Error(`Remote workspace is not a directory: ${workspace}`);
+    await verifyExpectedFiles(workspace, snapshot, config);
+    await bootstrapWorkspace(worktreePath, config);
+    const before = await workspaceFileInventory(workspace, config);
+    const result = await run(workspace);
+    return { result, changes: await collectInventoryChanges(workspace, before, config) };
   } finally {
     await cleanupWorktree(mirrorPath, worktreePath);
   }
