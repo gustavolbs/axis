@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEven
 import {
   Archive,
   ArrowUp,
+  Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Folder,
   FolderGit2,
   MoreHorizontal,
@@ -10,14 +13,12 @@ import {
   Pin,
   PinOff,
   Plus,
-  Settings2,
   Trash2,
   X,
   Zap
 } from 'lucide-react';
 
 import type { AdminProject, ModelSelection } from './app-types.js';
-import { ProjectConnectionsPanel } from './ProjectConnectionsPanel.js';
 import { ProjectGitReview } from './ProjectGitReview.js';
 
 export interface ProjectConversation {
@@ -26,6 +27,29 @@ export interface ProjectConversation {
   updatedAt: string;
   title?: string;
   input: { goal: string; projectId?: string; interactionMode?: 'chat' | 'cowork' };
+}
+
+interface CatalogModel {
+  id: string;
+  displayName: string;
+  available: boolean;
+}
+
+interface CatalogProvider {
+  id: string;
+  label?: string;
+  providerFamily?: 'ollama' | 'anthropic' | 'openai';
+  auth?: 'local' | 'api-key' | 'claude-account' | 'chatgpt-account';
+  organizationLabel?: string;
+  kind: 'local' | 'cloud';
+  ready: boolean;
+  reason?: string;
+  models: CatalogModel[];
+}
+
+interface ProjectCatalog {
+  defaultModel: ModelSelection;
+  providers: CatalogProvider[];
 }
 
 const PINNED_PROJECTS_KEY = 'local-coder.pinned-projects';
@@ -53,18 +77,6 @@ function folderName(workspace: string): string {
   return workspace.split(/[\\/]/).filter(Boolean).at(-1) ?? workspace;
 }
 
-function inheritedChatSelection(project: AdminProject): ModelSelection | undefined {
-  const policy = project.connectionPolicy;
-  const connectionId = policy?.chat.defaultConnectionId;
-  const modelId = policy?.chat.defaultModelId;
-  if (connectionId && modelId) return { mode: 'explicit', providerId: connectionId, modelId };
-  if (project.defaultModel.mode === 'explicit') return project.defaultModel;
-  if (project.defaultModel.mode === 'local-first') {
-    return { mode: 'explicit', providerId: 'ollama', modelId: project.defaultModel.modelId };
-  }
-  return undefined;
-}
-
 function pinnedProjectIds(): string[] {
   try {
     const value = JSON.parse(localStorage.getItem(PINNED_PROJECTS_KEY) ?? '[]') as unknown;
@@ -76,6 +88,57 @@ function pinnedProjectIds(): string[] {
 
 function projectInitiallyPinned(projectId: string): boolean {
   return pinnedProjectIds().includes(projectId);
+}
+
+function providerFallbackLabel(providerId: string): string {
+  if (providerId === 'anthropic') return 'Claude';
+  if (providerId === 'openai') return 'GPT';
+  if (providerId === 'ollama') return 'Ollama';
+  return providerId
+    .split(/[-_.]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+}
+
+function providerAuthLabel(provider: CatalogProvider): string {
+  if (provider.auth === 'api-key') return 'API key';
+  if (provider.auth === 'claude-account') return 'Claude account';
+  if (provider.auth === 'chatgpt-account') return 'ChatGPT account';
+  if (provider.auth === 'local' || provider.kind === 'local') return 'Local';
+  return 'Provider';
+}
+
+function providerDescription(provider: CatalogProvider): string {
+  if (provider.auth === 'local' || provider.kind === 'local') return 'Local model · stays on this computer';
+  if (provider.auth === 'api-key') return 'API key · provider model list updates live';
+  if (provider.auth === 'claude-account') return `Claude subscription${provider.organizationLabel ? ` · ${provider.organizationLabel}` : ''} · uses your CLI account`;
+  if (provider.auth === 'chatgpt-account') return `ChatGPT subscription${provider.organizationLabel ? ` · ${provider.organizationLabel}` : ''} · uses your CLI account`;
+  return `Use the selected ${provider.label ?? providerFallbackLabel(provider.id)} model directly`;
+}
+
+function selectionProviderId(selection: ModelSelection): string | undefined {
+  if (selection.mode === 'explicit') return selection.providerId;
+  if (selection.mode === 'local-first') return 'ollama';
+  return undefined;
+}
+
+function catalogHasSelection(catalog: ProjectCatalog, selection: ModelSelection): boolean {
+  const providerId = selectionProviderId(selection);
+  if (!providerId || selection.mode === 'auto') return false;
+  const provider = catalog.providers.find((item) => item.id === providerId && item.ready);
+  return Boolean(provider?.models.some((model) => model.id === selection.modelId && model.available));
+}
+
+function firstCatalogSelection(catalog: ProjectCatalog): ModelSelection {
+  if (catalog.defaultModel.mode !== 'auto' && catalogHasSelection(catalog, catalog.defaultModel)) return catalog.defaultModel;
+  const local = catalog.providers.find((provider) => provider.id === 'ollama' && provider.ready)?.models.find((model) => model.available);
+  if (local) return { mode: 'local-first', modelId: local.id };
+  for (const provider of catalog.providers) {
+    const model = provider.ready ? provider.models.find((candidate) => candidate.available) : undefined;
+    if (model) return { mode: 'explicit', providerId: provider.id, modelId: model.id };
+  }
+  return catalog.defaultModel;
 }
 
 export function ProjectDetail(props: {
@@ -94,10 +157,14 @@ export function ProjectDetail(props: {
   const [error, setError] = useState<string>();
   const [pinned, setPinned] = useState(() => projectInitiallyPinned(props.project.id));
   const [menuOpen, setMenuOpen] = useState(false);
-  const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [projectName, setProjectName] = useState(props.project.name);
+  const [catalog, setCatalog] = useState<ProjectCatalog>();
+  const [catalogRefreshNonce, setCatalogRefreshNonce] = useState(0);
+  const [modelSelection, setModelSelection] = useState<ModelSelection>(props.project.defaultModel);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelMenuProvider, setModelMenuProvider] = useState<string>();
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const conversations = useMemo(() => props.conversations
     .filter((job) => job.input.projectId === props.project.id)
@@ -110,9 +177,11 @@ export function ProjectDetail(props: {
     setProjectName(props.project.name);
     setPinned(projectInitiallyPinned(props.project.id));
     setMenuOpen(false);
-    setConnectionsOpen(false);
     setRenameOpen(false);
     setDeleteOpen(false);
+    setModelSelection(props.project.defaultModel);
+    setModelMenuOpen(false);
+    setModelMenuProvider(undefined);
     setError(undefined);
   }, [props.project.id]);
 
@@ -123,13 +192,43 @@ export function ProjectDetail(props: {
     element.style.height = `${Math.min(element.scrollHeight, Math.min(320, window.innerHeight * 0.4))}px`;
   }, [goal]);
 
-  const chatSelection = inheritedChatSelection(props.project);
+  useEffect(() => {
+    let cancelled = false;
+    void api<{ catalog: ProjectCatalog }>(`/api/projects/${encodeURIComponent(props.project.id)}/catalog`)
+      .then(({ catalog: next }) => {
+        if (cancelled) return;
+        setCatalog(next);
+        setModelSelection((current) => catalogHasSelection(next, current) ? current : firstCatalogSelection(next));
+      })
+      .catch((next) => {
+        if (cancelled) return;
+        setCatalog(undefined);
+        setError(next instanceof Error ? next.message : String(next));
+      });
+    return () => { cancelled = true; };
+  }, [props.project.id, catalogRefreshNonce]);
+
+  useEffect(() => {
+    function closeModelMenu(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest('.model-menu-anchor')) return;
+      setModelMenuOpen(false);
+      setModelMenuProvider(undefined);
+    }
+    document.addEventListener('pointerdown', closeModelMenu);
+    return () => document.removeEventListener('pointerdown', closeModelMenu);
+  }, []);
+
   const companyLabel = props.project.companyName ?? props.project.companyId;
-  const modelLabel = mode === 'chat'
-    ? props.project.connectionPolicy?.chat.defaultConnectionId ?? (chatSelection?.mode === 'explicit' ? chatSelection.providerId : 'Auto')
-    : props.project.defaultModel.mode === 'explicit'
-      ? props.project.defaultModel.providerId
-      : props.project.defaultModel.mode === 'local-first' ? 'Local-first' : 'Auto';
+  const selectedProviderId = selectionProviderId(modelSelection);
+  const selectedProvider = catalog?.providers.find((provider) => provider.id === selectedProviderId);
+  const selectedModelId = modelSelection.mode === 'auto' ? undefined : modelSelection.modelId;
+  const selectedModel = selectedProvider?.models.find((model) => model.id === selectedModelId);
+  const modelLabel = modelSelection.mode === 'local-first'
+    ? 'Local-first'
+    : selectedProvider?.label ?? (selectedProviderId ? providerFallbackLabel(selectedProviderId) : 'Auto');
+  const activeMenuProviderId = modelMenuProvider === 'local-first' ? 'ollama' : modelMenuProvider;
+  const activeMenuProvider = catalog?.providers.find((provider) => provider.id === activeMenuProviderId);
 
   function togglePin() {
     const nextPinned = !pinned;
@@ -157,10 +256,12 @@ export function ProjectDetail(props: {
           interactionMode: mode,
           maxRepairRounds: 1,
           reasoningEffort: 'auto',
-          modelSelection: mode === 'chat' ? chatSelection : props.project.defaultModel
+          modelSelection
         }
       });
       setGoal('');
+      setModelMenuOpen(false);
+      setModelMenuProvider(undefined);
       props.onCreated(job);
     } catch (next) {
       setError(next instanceof Error ? next.message : String(next));
@@ -178,6 +279,14 @@ export function ProjectDetail(props: {
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
     void submitGoal();
+  }
+
+  function chooseModel(providerId: string, modelId: string, localFirst = false) {
+    setModelSelection(localFirst
+      ? { mode: 'local-first', modelId }
+      : { mode: 'explicit', providerId, modelId });
+    setModelMenuOpen(false);
+    setModelMenuProvider(undefined);
   }
 
   function cancelInstructions() {
@@ -292,7 +401,6 @@ export function ProjectDetail(props: {
         <button aria-label="More project options" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={19} /></button>
         {menuOpen ? <div className="lc-shell-row-menu" role="menu" aria-label={`Actions for ${props.project.name}`}>
           <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setProjectName(props.project.name); setRenameOpen(true); }}>Rename…<Pencil size={16} /></button>
-          <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setConnectionsOpen(true); }}>Model & connections<Settings2 size={16} /></button>
           <div className="lc-shell-row-menu-separator" role="separator" />
           <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); void archiveProject(); }}>Archive<Archive size={16} /></button>
           <button type="button" role="menuitem" className="danger" onClick={() => { setMenuOpen(false); setDeleteOpen(true); }}>Delete…<Trash2 size={16} /></button>
@@ -327,9 +435,57 @@ export function ProjectDetail(props: {
               </div>
               <div className="composer-toolbar-right">
                 <div className="composer-menu-anchor model-menu-anchor">
-                  <button className="model-effort-trigger" type="button" title={`${companyLabel} · ${modelLabel}`} onClick={() => setConnectionsOpen(true)} aria-haspopup="dialog">
-                    <Zap size={13} strokeWidth={1.7} /><span>{modelLabel}</span><ChevronDown size={13} strokeWidth={1.6} />
+                  <button
+                    className="model-effort-trigger"
+                    type="button"
+                    title={`${companyLabel} · ${modelLabel}${selectedModel ? ` · ${selectedModel.displayName}` : ''}`}
+                    aria-haspopup="menu"
+                    aria-expanded={modelMenuOpen}
+                    onClick={() => {
+                      setModelMenuProvider(undefined);
+                      if (!modelMenuOpen) setCatalogRefreshNonce((value) => value + 1);
+                      setModelMenuOpen((open) => !open);
+                    }}
+                  >
+                    <Zap size={13} strokeWidth={1.7} />
+                    <span>{modelLabel}</span>
+                    {selectedModel ? <><span className="model-trigger-dot">·</span><span>{selectedModel.displayName}</span></> : null}
+                    <ChevronDown size={13} strokeWidth={1.6} />
                   </button>
+                  {modelMenuOpen ? <div className="lc-agent-popover model-popover" role="menu">
+                    {modelMenuProvider && activeMenuProvider ? <>
+                      <button className="popover-back" type="button" onClick={() => setModelMenuProvider(undefined)}><ChevronLeft size={16} /><strong>{modelMenuProvider === 'local-first' ? 'Local-first models' : `${activeMenuProvider.label ?? providerFallbackLabel(activeMenuProvider.id)} models`}</strong></button>
+                      <div className="popover-separator" />
+                      {activeMenuProvider.models.map((model) => {
+                        const selected = modelSelection.mode !== 'auto'
+                          && modelSelection.modelId === model.id
+                          && (modelMenuProvider === 'local-first'
+                            ? modelSelection.mode === 'local-first'
+                            : modelSelection.mode === 'explicit' && modelSelection.providerId === activeMenuProvider.id);
+                        return <button key={`${modelMenuProvider}:${model.id}`} type="button" className={selected ? 'selected' : ''} disabled={!activeMenuProvider.ready || !model.available} title={!activeMenuProvider.ready || !model.available ? activeMenuProvider.reason ?? 'Provider unavailable' : undefined} onClick={() => chooseModel(activeMenuProvider.id, model.id, modelMenuProvider === 'local-first')}>
+                          <span><strong>{model.displayName}</strong><small>{activeMenuProvider.label ?? providerFallbackLabel(activeMenuProvider.id)}</small></span>
+                          {selected ? <Check size={16} /> : null}
+                        </button>;
+                      })}
+                      {activeMenuProvider.models.length === 0 ? <div className="model-menu-note">No models are available for this provider.</div> : null}
+                    </> : <>
+                      <div className="model-provider-label">Provider or account</div>
+                      {(catalog?.providers ?? []).flatMap((provider) => {
+                        const ready = provider.ready && provider.models.some((model) => model.available);
+                        const selected = modelSelection.mode === 'explicit' && modelSelection.providerId === provider.id;
+                        const rows = [<button key={provider.id} type="button" className={selected ? 'selected' : ''} disabled={!ready} title={!ready ? provider.reason : undefined} onClick={() => setModelMenuProvider(provider.id)}>
+                          <span><strong>{provider.label ?? providerFallbackLabel(provider.id)}<em>{providerAuthLabel(provider)}</em></strong><small>{providerDescription(provider)}{ready ? '' : ` · ${provider.reason ?? 'unavailable'}`}</small></span>
+                          {ready ? <ChevronRight size={16} /> : null}
+                        </button>];
+                        if (provider.id === 'ollama') rows.push(<button key="local-first" type="button" className={modelSelection.mode === 'local-first' ? 'selected' : ''} disabled={!ready} title={!ready ? provider.reason : undefined} onClick={() => setModelMenuProvider('local-first')}>
+                          <span><strong>Local-first<em>Local</em></strong><small>Start on Ollama; ask before bounded cloud escalation</small></span>
+                          {ready ? <ChevronRight size={16} /> : null}
+                        </button>);
+                        return rows;
+                      })}
+                      {!catalog ? <div className="model-menu-note">Loading available models…</div> : null}
+                    </>}
+                  </div> : null}
                 </div>
                 <button className="lc-agent-send-button" type="submit" disabled={!goal.trim() || busy} aria-label="Send task"><ArrowUp size={18} strokeWidth={2} /></button>
               </div>
@@ -373,13 +529,6 @@ export function ProjectDetail(props: {
         <div className="lc-shell-modal-title"><h2 className="dialog-title">Delete project</h2><button type="button" onClick={() => setDeleteOpen(false)} aria-label="Close"><X size={18} /></button></div>
         <p>“{props.project.name}” will be permanently deleted. A Project that still contains conversations cannot be deleted.</p>
         <div className="lc-shell-modal-actions"><button className="btn-secondary" type="button" onClick={() => setDeleteOpen(false)}>Cancel</button><button className="btn-secondary danger" type="button" onClick={() => void deleteProject()} disabled={busy}>{busy ? 'Deleting…' : 'Delete'}</button></div>
-      </section>
-    </div> : null}
-
-    {connectionsOpen ? <div className="lc-shell-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setConnectionsOpen(false); }}>
-      <section className="lc-shell-project-modal" role="dialog" aria-modal="true" aria-label="Project model and connections">
-        <div className="lc-shell-modal-title"><h2 className="dialog-title">Model & connections</h2><button type="button" onClick={() => setConnectionsOpen(false)} aria-label="Close"><X size={18} /></button></div>
-        <div className="global-search-results"><ProjectConnectionsPanel project={props.project} onProjectChanged={props.onProjectChanged} /></div>
       </section>
     </div> : null}
   </section>;
