@@ -31,6 +31,11 @@ test('chat provider selector is Connections -> Models with explicit auth badges'
 
   for (const variant of ['live', 'warn', 'good']) {
     assert.match(baseCss, new RegExp(`\\.status-pill\\.${variant}\\s*\\{`), `missing status-pill.${variant}`);
+    assert.match(
+      baseCss,
+      new RegExp(`\\.status-pill\\.model-auth-badge\\.${variant}\\s*\\{[\\s\\S]*?background:[^;]+!important;[\\s\\S]*?color:[^;]+!important;`),
+      `model auth badge ${variant} must override the later neutral status-pill rule with a semantic color`
+    );
   }
 });
 
