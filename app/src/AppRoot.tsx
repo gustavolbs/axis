@@ -668,13 +668,75 @@ function ArchivedView(props: {
   onDeleteProject: (project: AdminProject) => void;
 }) {
   const [visible, setVisible] = useState(ARCHIVED_PAGE_SIZE);
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLowerCase();
+  const filteredProjects = useMemo(() => props.projects.filter((project) => !needle
+    || project.name.toLowerCase().includes(needle)
+    || project.workspace.toLowerCase().includes(needle)
+    || (project.companyName ?? '').toLowerCase().includes(needle)), [needle, props.projects]);
+  const filteredJobs = useMemo(() => props.jobs.filter((job) => !needle
+    || jobTitle(job).toLowerCase().includes(needle)
+    || job.input.goal.toLowerCase().includes(needle)), [needle, props.jobs]);
+
+  useEffect(() => setVisible(ARCHIVED_PAGE_SIZE), [query]);
+
   const empty = props.jobs.length === 0 && props.projects.length === 0;
-  const shown = props.jobs.slice(0, Math.min(visible, props.jobs.length));
-  const remaining = props.jobs.length - shown.length;
-  return <div className="archived-page">
-    <h1 className="page-title">Archived</h1>
-    {empty ? <p className="archived-empty">Nothing archived. Archiving a chat or a project hides it from the sidebar without deleting it.</p> : null}
-    {props.projects.length ? <section className="archived-section"><h2>Projects</h2>{props.projects.map((project) => <div className="archived-row" key={project.id}><span className="archived-row-copy"><strong>{project.name}</strong><small>{project.workspace}</small></span><button className="btn-secondary" onClick={() => props.onRestoreProject(project)}><ArchiveRestore size={14} />Restore</button><button className="btn-secondary danger" onClick={() => props.onDeleteProject(project)}><Trash2 size={14} />Delete</button></div>)}</section> : null}
-    {props.jobs.length ? <section className="archived-section"><h2>Chats<small>{props.jobs.length}</small></h2>{shown.map((job) => <div className="archived-row" key={job.id}><button className="archived-row-open" onClick={() => props.onOpenJob(job)} title={jobTitle(job)}><span className="archived-row-copy"><strong>{jobTitle(job)}</strong><small>Archived {relative(job.archivedAt ?? job.updatedAt)} ago</small></span></button><button className="btn-secondary" onClick={() => props.onRestoreJob(job)}><ArchiveRestore size={14} />Restore</button><button className="btn-secondary danger" onClick={() => props.onDeleteJob(job)}><Trash2 size={14} />Delete</button></div>)}{remaining > 0 ? <button className="archived-more" onClick={() => setVisible((current) => current + ARCHIVED_PAGE_SIZE)}>Show {Math.min(remaining, ARCHIVED_PAGE_SIZE)} more<small>{remaining} left</small></button> : null}</section> : null}
-  </div>;
+  const noMatches = !empty && filteredJobs.length === 0 && filteredProjects.length === 0;
+  const shown = filteredJobs.slice(0, Math.min(visible, filteredJobs.length));
+  const remaining = filteredJobs.length - shown.length;
+
+  return <section className="lc-shell-projects-page page-shell" aria-label="Archived">
+    <header className="lc-shell-projects-header page-header">
+      <h1 className="page-title">Archived</h1>
+      <div className="lc-shell-project-actions">
+        <label className="lc-shell-project-search">
+          <Search size={17} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search archived" aria-label="Search archived items" />
+        </label>
+      </div>
+    </header>
+
+    {empty ? <div className="work-hub-empty large">
+      <Archive size={24} />
+      <strong>Nothing archived</strong>
+      <span>Archived chats and projects stay here until you restore or delete them.</span>
+    </div> : null}
+
+    {noMatches ? <div className="work-hub-empty large">
+      <Search size={24} />
+      <strong>No archived items found</strong>
+      <span>Try a different chat, project, workspace, or Company name.</span>
+    </div> : null}
+
+    {filteredProjects.length ? <section className="work-hub-section" aria-labelledby="archived-projects-heading">
+      <div className="work-hub-section-heading"><h3 id="archived-projects-heading">Projects ({filteredProjects.length})</h3></div>
+      <div className="work-hub-list">
+        {filteredProjects.map((project) => <div className="work-hub-item" key={project.id}>
+          <Folder size={15} />
+          <span className="work-hub-item-copy"><strong>{project.name}</strong><small>{project.workspace || 'Workspace not selected'}</small></span>
+          <div className="work-hub-actions">
+            <button type="button" className="btn-secondary" onClick={() => props.onRestoreProject(project)} aria-label={`Restore ${project.name}`}><ArchiveRestore size={14} />Restore</button>
+            <button type="button" className="btn-secondary" onClick={() => props.onDeleteProject(project)} aria-label={`Delete ${project.name}`}><Trash2 size={14} />Delete</button>
+          </div>
+        </div>)}
+      </div>
+    </section> : null}
+
+    {filteredJobs.length ? <section className="work-hub-section" aria-labelledby="archived-chats-heading">
+      <div className="work-hub-section-heading"><h3 id="archived-chats-heading">Chats ({filteredJobs.length})</h3></div>
+      <div className="work-hub-list">
+        {shown.map((job) => <div className="work-hub-item" key={job.id}>
+          <MessageSquare size={15} />
+          <button type="button" className="archived-row-open work-hub-item-copy" onClick={() => props.onOpenJob(job)} title={jobTitle(job)}>
+            <strong>{jobTitle(job)}</strong><small>Archived {relative(job.archivedAt ?? job.updatedAt)} ago</small>
+          </button>
+          <div className="work-hub-actions">
+            <button type="button" className="btn-secondary" onClick={() => props.onRestoreJob(job)} aria-label={`Restore ${jobTitle(job)}`}><ArchiveRestore size={14} />Restore</button>
+            <button type="button" className="btn-secondary" onClick={() => props.onDeleteJob(job)} aria-label={`Delete ${jobTitle(job)}`}><Trash2 size={14} />Delete</button>
+          </div>
+        </div>)}
+      </div>
+      {remaining > 0 ? <button className="archived-more" type="button" onClick={() => setVisible((current) => current + ARCHIVED_PAGE_SIZE)}>Show {Math.min(remaining, ARCHIVED_PAGE_SIZE)} more<small>{remaining} left</small></button> : null}
+    </section> : null}
+  </section>;
 }

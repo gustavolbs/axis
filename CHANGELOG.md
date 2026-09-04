@@ -9,6 +9,29 @@ All notable changes to Axis are recorded here. The format follows Keep a Changel
 - Added searchable MCP management in each Company, including connector identity marks, explicit health/auth status, refresh/reconnect actions, and custom remote MCP registration for Claude and ChatGPT/Codex accounts.
 - Added Company / Project / conversation breadcrumbs for Project chats while keeping Project and Company scope owned by shell navigation rather than duplicated composer selectors.
 
+## [0.23.4] - 2026-09-03
+
+### Fixed
+- Restored the Work Hub Calendar as a seven-day weekly time-grid agenda with all-day events, timed positioning, overlap lanes, week navigation, and a current-time marker while preserving Company scope and provenance.
+- Fixed calendar event detail tooltips so the hovered or keyboard-focused SVG event paints above neighboring event blocks instead of rendering its tooltip underneath them.
+- Fixed Work Hub calendar timezone drift by preserving offset-qualified source instants, rejecting ambiguous timed timestamps without an explicit UTC offset, rendering conversion only in the device timezone, and invalidating stale pre-fix calendar caches before re-sync.
+- Calendar sync date windows now use the machine's local calendar date instead of UTC date slicing, preventing the requested range itself from shifting around local evening hours.
+
+## [0.23.3] - 2026-09-03
+
+### Added
+- Added an Archived search field using the same compact search control as Projects, filtering archived chats and projects by title/name, workspace, Company, and original chat goal while preserving pagination and restore/delete actions.
+- Added an Anthropic-only wire adaptation that closes every object schema as required by Claude structured outputs while JSON-encoding open tool arguments and restoring them to canonical objects before Axis tool dispatch, preserving provider-neutral runtime semantics and arbitrary tool arguments.
+- Added regression coverage that verifies the Anthropic agent schema contains no open object schemas and that tool arguments round-trip back into the canonical Axis contract.
+
+### Changed
+- Archived search results reuse the existing Axis empty-state treatment when no items match instead of introducing a one-off search result surface.
+
+### Fixed
+- Fixed Anthropic API-key AgentRuntime turns failing with HTTP 400 on Claude Haiku 4.5 and other structured-output models because the canonical open `toolCalls[].arguments` object was sent directly as `additionalProperties: true`.
+
+## [0.23.2] - 2026-09-03
+
 ### Changed
 - Sidebar Contexts now use each Company’s configured icon and color and switching a Context updates the canonical desktop Company scope before Projects and conversations are loaded.
 - New Chat is always projectless Personal Chat; Project conversations are started from their Project surface and no longer expose a redundant Project selector in the composer.
