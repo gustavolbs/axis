@@ -3,19 +3,32 @@ import {
   Archive,
   ArrowLeft,
   ArrowUp,
+  CalendarClock,
   ChevronDown,
   Folder,
   MoreHorizontal,
+  Pause,
   Pencil,
-  Pin,
+  Play,
   Plus,
   Settings2,
+  Star,
   Trash2,
   X
 } from 'lucide-react';
 
 import type { AdminProject, ModelSelection } from './app-types.js';
 import { ProjectConnectionsPanel } from './ProjectConnectionsPanel.js';
+import { runProjectScheduledTask } from './project-schedule-runner.js';
+import {
+  PROJECT_SCHEDULES_CHANGED,
+  createProjectScheduledTask,
+  deleteProjectScheduledTask,
+  listProjectScheduledTasks,
+  updateProjectScheduledTask,
+  type ProjectScheduleDraft,
+  type ProjectScheduledTask
+} from './project-schedules.js';
 
 export interface ProjectConversation {
   id: string;
@@ -25,7 +38,7 @@ export interface ProjectConversation {
   input: { goal: string; projectId?: string; interactionMode?: 'chat' | 'cowork' };
 }
 
-const PINNED_PROJECTS_KEY = 'local-coder.pinned-projects';
+const STARRED_PROJECTS_KEY = 'local-coder.starred-projects';
 
 async function api<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const response = await fetch(url, {
@@ -64,13 +77,39 @@ function inheritedChatSelection(project: AdminProject): ModelSelection | undefin
   return undefined;
 }
 
-function isPinned(projectId: string): boolean {
+function storedStarredIds(): string[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(PINNED_PROJECTS_KEY) ?? '[]') as unknown;
-    return Array.isArray(parsed) && parsed.includes(projectId);
+    const parsed = JSON.parse(localStorage.getItem(STARRED_PROJECTS_KEY) ?? '[]') as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
   } catch {
-    return false;
+    return [];
   }
+}
+
+function isStarred(projectId: string): boolean {
+  return storedStarredIds().includes(projectId);
+}
+
+function blankSchedule(): ProjectScheduleDraft {
+  return { name: '', prompt: '', frequency: 'weekly', time: '09:00', weekday: 1, enabled: true };
+}
+
+function scheduleLabel(task: ProjectScheduledTask): string {
+  if (!task.enabled) return 'Paused';
+  if (task.frequency === 'manual') return 'Manual';
+  if (task.frequency === 'hourly') return 'Every hour';
+  const time = task.time ?? '09:00';
+  if (task.frequency === 'daily') return `Daily at ${time}`;
+  if (task.frequency === 'weekdays') return `Weekdays at ${time}`;
+  const day = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][task.weekday ?? 1];
+  return `${day} at ${time}`;
+}
+
+function nextRunLabel(task: ProjectScheduledTask): string {
+  if (task.lastError) return `Last run failed: ${task.lastError}`;
+  if (!task.enabled) return 'Paused';
+  if (!task.nextRunAt) return 'Run on demand';
+  return `Next ${new Date(task.nextRunAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
 }
 
 export function ProjectDetail(props: {
@@ -90,7 +129,12 @@ export function ProjectDetail(props: {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [projectName, setProjectName] = useState(props.project.name);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [pinned, setPinned] = useState(() => isPinned(props.project.id));
+  const [starred, setStarred] = useState(() => isStarred(props.project.id));
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<ProjectScheduledTask>();
+  const [scheduleDraft, setScheduleDraft] = useState<ProjectScheduleDraft>(blankSchedule);
+  const [scheduledTasks, setScheduledTasks] = useState<ProjectScheduledTask[]>(() => listProjectScheduledTasks(props.project.id));
+  const [runningScheduleId, setRunningScheduleId] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const conversations = useMemo(() => props.conversations
@@ -100,15 +144,24 @@ export function ProjectDetail(props: {
   useEffect(() => {
     setInstructions(props.project.instructions ?? '');
     setProjectName(props.project.name);
-    setPinned(isPinned(props.project.id));
+    setStarred(isStarred(props.project.id));
+    setScheduledTasks(listProjectScheduledTasks(props.project.id));
     setMenuOpen(false);
     setConnectionsOpen(false);
     setRenameOpen(false);
     setDeleteOpen(false);
+    setScheduleOpen(false);
+  }, [props.project.id]);
+
+  useEffect(() => {
+    const refresh = () => setScheduledTasks(listProjectScheduledTasks(props.project.id));
+    window.addEventListener(PROJECT_SCHEDULES_CHANGED, refresh);
+    return () => window.removeEventListener(PROJECT_SCHEDULES_CHANGED, refresh);
   }, [props.project.id]);
 
   const chatSelection = inheritedChatSelection(props.project);
-  const companyLabel = props.project.companyName ?? props.project.companyId;
+  const companyLabel = props.project.companyName ?? props.project.organizationName ?? props.project.companyId ?? props.project.organizationId ?? 'Personal';
+  const companyId = props.project.companyId || props.project.organizationId || 'personal';
   const modelLabel = mode === 'chat'
     ? props.project.connectionPolicy?.chat.defaultModelId
       ?? (chatSelection?.mode === 'explicit' ? chatSelection.modelId : 'Choose model')
@@ -120,7 +173,7 @@ export function ProjectDetail(props: {
     event.preventDefault();
     if (!goal.trim() || busy) return;
     if (mode === 'cowork' && !props.project.workspace) {
-      setError('Choose a project folder before starting Cowork.');
+      setError('Choose a Context folder before starting Cowork.');
       return;
     }
     if (mode === 'chat' && !chatSelection) {
@@ -177,7 +230,7 @@ export function ProjectDetail(props: {
   async function chooseProjectFolder() {
     if (busy) return;
     if (!window.lc) {
-      setError('Choosing a project folder is available in the Axis desktop app.');
+      setError('Choosing Context is available in the Axis desktop app.');
       return;
     }
     setBusy(true);
@@ -197,19 +250,73 @@ export function ProjectDetail(props: {
     }
   }
 
-  function togglePin() {
-    let ids: string[] = [];
+  function toggleStar() {
+    const ids = storedStarredIds();
+    const nextStarred = !starred;
+    const next = nextStarred ? [...new Set([...ids, props.project.id])] : ids.filter((id) => id !== props.project.id);
+    localStorage.setItem(STARRED_PROJECTS_KEY, JSON.stringify(next));
+    setStarred(nextStarred);
+    window.dispatchEvent(new CustomEvent('local-coder:starred-projects-changed'));
+  }
+
+  function openSchedule(task?: ProjectScheduledTask) {
+    setEditingSchedule(task);
+    setScheduleDraft(task ? {
+      name: task.name,
+      prompt: task.prompt,
+      frequency: task.frequency,
+      time: task.time ?? '09:00',
+      weekday: task.weekday ?? 1,
+      enabled: task.enabled
+    } : blankSchedule());
+    setScheduleOpen(true);
+    setError(undefined);
+  }
+
+  function saveSchedule(event: FormEvent) {
+    event.preventDefault();
     try {
-      const parsed = JSON.parse(localStorage.getItem(PINNED_PROJECTS_KEY) ?? '[]') as unknown;
-      if (Array.isArray(parsed)) ids = parsed.filter((item): item is string => typeof item === 'string');
-    } catch {
-      ids = [];
+      if (editingSchedule) updateProjectScheduledTask(editingSchedule.id, scheduleDraft);
+      else createProjectScheduledTask(props.project, scheduleDraft);
+      setScheduledTasks(listProjectScheduledTasks(props.project.id));
+      setScheduleOpen(false);
+      setEditingSchedule(undefined);
+    } catch (next) {
+      setError(next instanceof Error ? next.message : String(next));
     }
-    const nextPinned = !pinned;
-    const next = nextPinned ? [...new Set([...ids, props.project.id])] : ids.filter((id) => id !== props.project.id);
-    localStorage.setItem(PINNED_PROJECTS_KEY, JSON.stringify(next));
-    setPinned(nextPinned);
-    window.dispatchEvent(new CustomEvent('local-coder:pinned-projects-changed'));
+  }
+
+  async function runSchedule(task: ProjectScheduledTask) {
+    setRunningScheduleId(task.id);
+    setError(undefined);
+    try {
+      await runProjectScheduledTask(task.id);
+      setScheduledTasks(listProjectScheduledTasks(props.project.id));
+    } catch (next) {
+      setError(next instanceof Error ? next.message : String(next));
+    } finally {
+      setRunningScheduleId(undefined);
+    }
+  }
+
+  function toggleScheduleEnabled(task: ProjectScheduledTask) {
+    updateProjectScheduledTask(task.id, {
+      name: task.name,
+      prompt: task.prompt,
+      frequency: task.frequency,
+      time: task.time,
+      weekday: task.weekday,
+      enabled: !task.enabled
+    });
+    setScheduledTasks(listProjectScheduledTasks(props.project.id));
+    setScheduleOpen(false);
+  }
+
+  function removeSchedule(task: ProjectScheduledTask) {
+    deleteProjectScheduledTask(task.id);
+    setScheduledTasks(listProjectScheduledTasks(props.project.id));
+    setScheduleOpen(false);
+    setEditingSchedule(undefined);
   }
 
   async function renameProject(event: FormEvent) {
@@ -253,12 +360,10 @@ export function ProjectDetail(props: {
     setError(undefined);
     try {
       await api(`/api/projects/${encodeURIComponent(props.project.id)}`, { method: 'DELETE' });
-      const pinnedIds = JSON.parse(localStorage.getItem(PINNED_PROJECTS_KEY) ?? '[]') as unknown;
-      if (Array.isArray(pinnedIds)) {
-        localStorage.setItem(PINNED_PROJECTS_KEY, JSON.stringify(pinnedIds.filter((id) => id !== props.project.id)));
-      }
+      localStorage.setItem(STARRED_PROJECTS_KEY, JSON.stringify(storedStarredIds().filter((id) => id !== props.project.id)));
+      for (const task of scheduledTasks) deleteProjectScheduledTask(task.id);
       window.dispatchEvent(new CustomEvent('local-coder:projects-changed'));
-      window.dispatchEvent(new CustomEvent('local-coder:pinned-projects-changed'));
+      window.dispatchEvent(new CustomEvent('local-coder:starred-projects-changed'));
       props.onBack();
     } catch (next) {
       setError(next instanceof Error ? next.message : String(next));
@@ -268,12 +373,12 @@ export function ProjectDetail(props: {
     }
   }
 
-  return <section className="project-detail-page" data-company-id={props.project.companyId}>
+  return <section className="project-detail-page" data-company-id={companyId}>
     <button className="project-detail-breadcrumb" onClick={props.onBack}><ArrowLeft size={13} /> All projects</button>
     <header className="project-detail-header">
       <h1>{props.project.name}</h1>
       <div className="lc-shell-sort-anchor">
-        <button aria-label={pinned ? 'Unpin project' : 'Pin project'} aria-pressed={pinned} onClick={togglePin} title={pinned ? 'Unpin project' : 'Pin project'}><Pin size={17} fill={pinned ? 'currentColor' : 'none'} /></button>
+        <button aria-label={starred ? 'Remove project from favorites' : 'Favorite project'} aria-pressed={starred} onClick={toggleStar} title={starred ? 'Remove from favorites' : 'Favorite project'}><Star size={18} fill={starred ? 'currentColor' : 'none'} /></button>
         <button aria-label="More project options" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={19} /></button>
         {menuOpen ? <div className="lc-shell-row-menu" role="menu" aria-label={`Actions for ${props.project.name}`}>
           <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setProjectName(props.project.name); setRenameOpen(true); }}>Rename…<Pencil size={16} /></button>
@@ -290,7 +395,7 @@ export function ProjectDetail(props: {
         <form className="project-detail-composer" onSubmit={(event) => void submit(event)}>
           <textarea value={goal} onChange={(event) => setGoal(event.target.value)} placeholder={`Ask about ${props.project.name}…`} aria-label="Project prompt" />
           <div className="project-detail-composer-bar">
-            <button className="project-detail-plus" type="button" aria-label="Add project knowledge" title="Add project knowledge" onClick={() => void chooseProjectFolder()}><Plus size={18} /></button>
+            <button className="project-detail-plus" type="button" aria-label="Add Context" title="Add Context" onClick={() => void chooseProjectFolder()}><Plus size={18} /></button>
             <div className="project-detail-mode" aria-label="Project mode">
               <button type="button" className={mode === 'chat' ? 'active' : ''} aria-pressed={mode === 'chat'} onClick={() => setMode('chat')}>Chat</button>
               <button type="button" className={mode === 'cowork' ? 'active' : ''} aria-pressed={mode === 'cowork'} onClick={() => setMode('cowork')}>Cowork</button>
@@ -312,15 +417,51 @@ export function ProjectDetail(props: {
       <aside className="project-detail-panel">
         <section className="project-detail-instructions">
           <header><h2>Instructions</h2><button aria-label="Edit instructions" onClick={() => { setInstructions(props.project.instructions ?? ''); setInstructionsOpen(true); }}><Pencil size={15} /></button></header>
-          {instructionsOpen ? <div className="project-detail-instruction-editor"><textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} autoFocus /><div><button onClick={cancelInstructions}>Cancel</button><button onClick={() => void saveInstructions()} disabled={busy}>Save</button></div></div> : <p>{props.project.instructions || 'Add instructions that should apply to every chat in this project.'}</p>}
+          {instructionsOpen ? <div className="project-detail-instruction-editor"><textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} autoFocus /><div><button onClick={cancelInstructions}>Cancel</button><button onClick={() => void saveInstructions()} disabled={busy}>Save</button></div></div> : <p>{props.project.instructions || 'Add instructions that should apply to every conversation in this project.'}</p>}
         </section>
+
+        <section className="project-detail-context project-detail-scheduled">
+          <header><h2>Scheduled</h2><span><button aria-label="Add scheduled task" title="Add scheduled task" onClick={() => openSchedule()}><Plus size={17} /></button></span></header>
+          {scheduledTasks.length ? scheduledTasks.slice(0, 4).map((task) => <button className="project-detail-folder-card" key={task.id} onClick={() => openSchedule(task)}>
+            <strong>{task.name}</strong><small>{scheduleLabel(task)} · {nextRunLabel(task)}</small><CalendarClock size={17} />
+          </button>) : <p>Schedule recurring or on-demand work for this project.</p>}
+        </section>
+
         <section className="project-detail-context">
-          <header><h2>Project knowledge</h2><span><button aria-label="Add project knowledge" title="Choose project folder" onClick={() => void chooseProjectFolder()}><Plus size={17} /></button></span></header>
-          <div className="project-detail-context-meter"><i /><span>{props.project.workspace ? 'Project folder connected' : 'No project knowledge yet'}</span></div>
-          {props.project.workspace ? <><div className="project-detail-folder-card"><strong>{folderName(props.project.workspace)}</strong><small>Project folder · {companyLabel}</small><Folder size={17} /></div><p>Axis uses bounded context from this folder in project chats. Cowork can inspect, edit and validate it within the project boundary.</p></> : <p>Use + to choose the folder that should provide shared context for chats in this project.</p>}
+          <header><h2>Context</h2><span><button aria-label="Choose Context folder" title="Choose Context folder" onClick={() => void chooseProjectFolder()}><Plus size={17} /></button></span></header>
+          {props.project.workspace ? <><div className="project-detail-folder-card"><strong>{folderName(props.project.workspace)}</strong><small>Project folder · {companyLabel}</small><Folder size={17} /></div><p>Chat reads bounded project context. Cowork may inspect, edit and validate this folder within the Project boundary.</p></> : <p>Add the local folder that should provide shared context for this project.</p>}
+        </section>
+
+        <section className="project-detail-context project-detail-memory">
+          <header><h2>Memory</h2></header>
+          <div className="project-detail-context-meter"><i /><span>{props.project.workspace ? 'Enabled for this project' : 'Waiting for Context'}</span></div>
+          <p>{props.project.workspace ? `Axis retains scoped project handoffs for ${props.project.name} and reuses them across authorized Chat and Cowork sessions.` : 'Add Context so Memory can bind to an exact project root without crossing Company or Project boundaries.'}</p>
         </section>
       </aside>
     </div>
+
+    {scheduleOpen ? <div className="lc-shell-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setScheduleOpen(false); }}>
+      <form className="lc-shell-project-modal" onSubmit={saveSchedule}>
+        <div className="lc-shell-modal-title"><h2 className="dialog-title">{editingSchedule ? 'Edit scheduled task' : 'Schedule a task'}</h2><button type="button" onClick={() => setScheduleOpen(false)} aria-label="Close"><X size={18} /></button></div>
+        <label><span>Name</span><input value={scheduleDraft.name} onChange={(event) => setScheduleDraft((draft) => ({ ...draft, name: event.target.value }))} autoFocus required placeholder="Weekly project review" /></label>
+        <label><span>Prompt</span><textarea rows={5} value={scheduleDraft.prompt} onChange={(event) => setScheduleDraft((draft) => ({ ...draft, prompt: event.target.value }))} required placeholder="What should Axis do each time this task runs?" /></label>
+        <label><span>Frequency</span><select value={scheduleDraft.frequency} onChange={(event) => setScheduleDraft((draft) => ({ ...draft, frequency: event.target.value as ProjectScheduleDraft['frequency'] }))}>
+          <option value="manual">Manually</option><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="weekdays">Weekdays</option><option value="weekly">Weekly</option>
+        </select></label>
+        {['daily', 'weekdays', 'weekly'].includes(scheduleDraft.frequency) ? <label><span>Time</span><input type="time" value={scheduleDraft.time ?? '09:00'} onChange={(event) => setScheduleDraft((draft) => ({ ...draft, time: event.target.value }))} required /></label> : null}
+        {scheduleDraft.frequency === 'weekly' ? <label><span>Day</span><select value={scheduleDraft.weekday ?? 1} onChange={(event) => setScheduleDraft((draft) => ({ ...draft, weekday: Number(event.target.value) }))}>
+          <option value={1}>Monday</option><option value={2}>Tuesday</option><option value={3}>Wednesday</option><option value={4}>Thursday</option><option value={5}>Friday</option><option value={6}>Saturday</option><option value={0}>Sunday</option>
+        </select></label> : null}
+        <small>Runs as a real Project conversation using this Project's model, permissions, connections and Context. Local schedules run while Axis is open; overdue work is picked up on the next launch.</small>
+        {editingSchedule ? <div className="lc-shell-modal-actions">
+          <button className="btn-secondary danger" type="button" onClick={() => removeSchedule(editingSchedule)}><Trash2 size={14} /> Delete</button>
+          <button className="btn-secondary" type="button" onClick={() => toggleScheduleEnabled(editingSchedule)}>{editingSchedule.enabled ? <Pause size={14} /> : <Play size={14} />} {editingSchedule.enabled ? 'Pause' : 'Resume'}</button>
+          <button className="btn-secondary" type="button" onClick={() => void runSchedule(editingSchedule)} disabled={runningScheduleId === editingSchedule.id}><Play size={14} /> {runningScheduleId === editingSchedule.id ? 'Starting…' : 'Run now'}</button>
+        </div> : null}
+        {error ? <div className="lc-shell-inline-error lc-shell-modal-error">{error}</div> : null}
+        <div className="lc-shell-modal-actions"><button className="btn-secondary" type="button" onClick={() => setScheduleOpen(false)}>Cancel</button><button className="lc-shell-primary-button btn-primary" type="submit">{editingSchedule ? 'Save' : 'Create task'}</button></div>
+      </form>
+    </div> : null}
 
     {renameOpen ? <div className="lc-shell-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setRenameOpen(false); }}>
       <form className="lc-shell-project-modal" onSubmit={(event) => void renameProject(event)}>
