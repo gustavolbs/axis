@@ -2,6 +2,14 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.23.2] - 2026-09-03
+
+### Changed
+- Work Hub Sources now reuses the established Work Hub list, source icon, semantic status, Company provenance, retry, and contained error patterns instead of maintaining an unstyled parallel row treatment.
+
+### Fixed
+- Restored the Work Hub Sources visual hierarchy after the multi-company refactor left the renderer on class names with no matching shared styles, fixing collapsed metadata, uncontained sync-error strips, and inconsistent source status/action alignment.
+
 ## [0.23.1] - 2026-09-03
 
 ### Added
