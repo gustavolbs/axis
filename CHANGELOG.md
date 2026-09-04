@@ -2,6 +2,14 @@
 
 All notable changes to Axis are recorded here. The format follows Keep a Changelog and the app version follows Semantic Versioning.
 
+## [0.23.3] - 2026-09-03
+
+### Added
+- Added an Archived search field using the same compact search control as Projects, filtering archived chats and projects by title/name, workspace, Company, and original chat goal while preserving pagination and restore/delete actions.
+
+### Changed
+- Archived search results reuse the existing Axis empty-state treatment when no items match instead of introducing a one-off search result surface.
+
 ## [0.23.2] - 2026-09-03
 
 ### Changed
