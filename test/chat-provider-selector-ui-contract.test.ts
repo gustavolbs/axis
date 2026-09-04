@@ -22,7 +22,7 @@ test('chat provider selector is Connections -> Models with explicit auth badges'
   assert.match(surface, /return 'ACCOUNT'/);
   assert.match(surface, /if \(provider\.auth === 'local' \|\| provider\.kind === 'local'\) return 'LOCAL'/);
 
-  assert.match(surface, /className=\{`status-pill /);
+  assert.match(surface, /className=\{`model-auth-badge status-pill /);
   assert.match(surface, /mode\.authKind === 'api-key' \? 'live'/);
   assert.match(surface, /mode\.authKind === 'local' \? 'good'/);
   assert.match(surface, /mode\.authKind === 'claude-account' \|\| mode\.authKind === 'chatgpt-account' \? 'warn'/);
