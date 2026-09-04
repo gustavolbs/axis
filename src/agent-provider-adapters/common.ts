@@ -119,6 +119,23 @@ export function providerCapabilityOffer(
   );
 }
 
+function canonicalArguments(value: unknown, index: number): Record<string, unknown> {
+  let candidate = value;
+  if (typeof value === 'string') {
+    try {
+      candidate = JSON.parse(value) as unknown;
+    } catch (error) {
+      throw new AgentProviderProtocolError(
+        `Provider tool call ${index} arguments must contain valid JSON: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    throw new AgentProviderProtocolError(`Provider tool call ${index} arguments must decode to an object.`);
+  }
+  return candidate as Record<string, unknown>;
+}
+
 export function canonicalToolCall(
   item: unknown,
   index: number,
@@ -130,14 +147,10 @@ export function canonicalToolCall(
   const record = item as Record<string, unknown>;
   const name = typeof record.name === 'string' ? record.name.trim() : '';
   if (!name) throw new AgentProviderProtocolError(`Provider tool call ${index} has no tool name.`);
-  const args = record.arguments;
-  if (!args || typeof args !== 'object' || Array.isArray(args)) {
-    throw new AgentProviderProtocolError(`Provider tool call ${index} arguments must be an object.`);
-  }
   const rawId = typeof record.id === 'string' ? record.id.trim() : '';
   return {
     id: rawId || idFactory(),
     name,
-    arguments: args as Record<string, unknown>
+    arguments: canonicalArguments(record.arguments, index)
   };
 }
